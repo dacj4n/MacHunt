@@ -24,6 +24,7 @@ static LOG_ENABLED: OnceCell<bool> = OnceCell::new();
 static DB_PATH: OnceCell<PathBuf> = OnceCell::new();
 static DB_CONN: OnceCell<Arc<Mutex<Connection>>> = OnceCell::new();
 
+#[allow(dead_code)]
 static LAST_EVENT_ID: std::sync::atomic::AtomicU64 = 
     std::sync::atomic::AtomicU64::new(0);
 
@@ -109,6 +110,7 @@ fn db_insert_batch(entries: &[(String, PathBuf)]) {
       conn.execute_batch("PRAGMA synchronous=NORMAL;").ok();
   }
 
+  #[allow(dead_code)]
   fn save_last_event_id(event_id: u64) {
       let conn = get_db().lock();
       conn.execute(
@@ -117,6 +119,7 @@ fn db_insert_batch(entries: &[(String, PathBuf)]) {
       ).ok();
   }
 
+  #[allow(dead_code)]
   fn load_last_event_id() -> Option<u64> {
       let conn = get_db().lock();
       conn.query_row(
