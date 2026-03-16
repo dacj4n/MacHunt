@@ -1,162 +1,625 @@
-use crossbeam::channel::{unbounded, Receiver, Sender};
+use clap::{Parser, Subcommand};
+use dashmap::DashMap;
+use fuzzy_matcher::FuzzyMatcher;
+use notify::{EventKind, Watcher};
 use once_cell::sync::OnceCell;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
+use std::io::{Write, BufWriter, BufReader};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::collections::HashMap;
+use std::fs::{self, File};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 use walkdir::WalkDir;
+use rusqlite::{Connection, params};
+use parking_lot::Mutex;
 
-// 全局索引，使用OnceCell确保只初始化一次
-static FILE_INDEX: OnceCell<Arc<Mutex<HashMap<String, Vec<PathBuf>>>>> = OnceCell::new();
+static LOG_FILE: OnceCell<String> = OnceCell::new();
+static LOG_ENABLED: OnceCell<bool> = OnceCell::new();
 
-// 初始化文件索引
-fn init_index() {
-    let index = Arc::new(Mutex::new(HashMap::new()));
-    FILE_INDEX.set(index).unwrap();
+static DB_PATH: OnceCell<PathBuf> = OnceCell::new();
+static DB_CONN: OnceCell<Arc<Mutex<Connection>>> = OnceCell::new();
+
+fn set_db_path() {
+    let data_dir = std::env::current_dir().unwrap().join("data");
+    fs::create_dir_all(&data_dir).ok();
+    DB_PATH.set(data_dir.join("index.db")).unwrap();
 }
 
-// 获取文件索引
-fn get_index() -> &'static Arc<Mutex<HashMap<String, Vec<PathBuf>>>> {
+fn init_db() {
+    let path = DB_PATH.get().unwrap();
+    let conn = Connection::open(path).unwrap();
+
+    conn.execute_batch(
+        "
+        PRAGMA journal_mode=WAL;
+        PRAGMA synchronous=NORMAL;
+        PRAGMA cache_size=-65536;
+        PRAGMA temp_store=MEMORY;
+        PRAGMA mmap_size=268435456;
+        CREATE TABLE IF NOT EXISTS files (
+            id   INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL UNIQUE
+        );
+    ").unwrap();
+
+    DB_CONN.set(Arc::new(Mutex::new(conn))).unwrap();
+}
+
+fn db_create_index() {
+    let conn = get_db().lock();
+    println!("建立索引...");
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_name ON files(name);"
+    ).unwrap();
+}
+
+fn get_db() -> &'static Arc<Mutex<Connection>> {
+    DB_CONN.get().unwrap()
+}
+
+fn db_insert(name: &str, path: &PathBuf) {
+    let conn = get_db().lock();
+    conn.execute(
+        "INSERT OR IGNORE INTO files (name, path) VALUES (?1, ?2)",
+        params![name, path.to_string_lossy().as_ref()],
+    ).ok();
+}
+
+fn db_delete(path: &PathBuf) {
+    let conn = get_db().lock();
+    conn.execute(
+        "DELETE FROM files WHERE path = ?1",
+        params![path.to_string_lossy().as_ref()],
+    ).ok();
+}
+
+fn db_insert_batch(entries: &[(String, PathBuf)]) {
+      if entries.is_empty() { return; }
+      
+      let mut conn = get_db().lock();
+      
+      conn.execute_batch("PRAGMA synchronous=OFF;").ok();
+      
+      let tx = conn.transaction().unwrap();
+      {
+          let mut stmt = tx.prepare_cached(
+              "INSERT OR IGNORE INTO files (name, path) VALUES (?1, ?2)"
+          ).unwrap();
+          for (name, path) in entries {
+              stmt.execute(params![name, path.to_string_lossy().as_ref()]).ok();
+          }
+      }
+      tx.commit().unwrap();
+      
+      conn.execute_batch("PRAGMA synchronous=NORMAL;").ok();
+  }
+
+  #[derive(Serialize, Deserialize)]
+  #[allow(dead_code)]
+  struct IndexData {
+      files: HashMap<String, Vec<String>>,
+  }
+
+  #[derive(Parser)]
+#[command(name = "mac_find")]
+#[command(about = "macOS 全局文件搜索工具，类似 Everything")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    #[arg(short, long, default_value = ".")]
+    path: String,
+
+    #[arg(short, long)]
+    regex: bool,
+
+    #[arg(short, long)]
+    fuzzy: bool,
+    
+    #[arg(long)]
+    logs: bool,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    Build {
+        #[arg(short, long)]
+        path: Option<String>,
+    },
+    Watch,
+}
+
+static FILE_INDEX: OnceCell<Arc<DashMap<String, Vec<PathBuf>>>> = OnceCell::new();
+  static INDEX_PATH: OnceCell<PathBuf> = OnceCell::new();
+
+  #[allow(dead_code)]
+  fn get_index_path() -> &'static PathBuf {
+      INDEX_PATH.get().unwrap()
+  }
+
+  #[allow(dead_code)]
+  fn init_index() {
+      let index = Arc::new(DashMap::new());
+      FILE_INDEX.set(index).unwrap();
+  }
+
+  #[allow(dead_code)]
+  fn set_index_path() {
+      let current_dir = std::env::current_dir().unwrap();
+      let data_dir = current_dir.join("data");
+      
+      if !data_dir.exists() {
+          fs::create_dir_all(&data_dir).ok();
+      }
+      
+      let path = data_dir.join("index.json");
+      INDEX_PATH.set(path).unwrap();
+  }
+
+  fn load_index_from_db() -> bool {
+      let path = DB_PATH.get().unwrap();
+      if !path.exists() {
+          return false;
+      }
+      let start = Instant::now();
+      println!("从数据库加载索引...");
+
+      let conn = get_db().lock();
+      let mut stmt = conn
+          .prepare("SELECT name, path FROM files")
+          .unwrap();
+
+      let index = get_index();
+      let mut count = 0usize;
+
+      let rows = stmt.query_map([], |row| {
+          Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+      }).unwrap();
+
+      for row in rows {
+          let (name, path_str) = row.unwrap();
+          index.entry(name).or_default().push(PathBuf::from(path_str));
+          count += 1;
+      }
+
+      println!("加载完成，共 {} 条记录，耗时 {:?}", count, start.elapsed());
+      count > 0
+  }
+
+  fn get_index() -> &'static Arc<DashMap<String, Vec<PathBuf>>> {
     FILE_INDEX.get().unwrap()
 }
 
-// 并行遍历文件系统并构建索引
+#[allow(dead_code)]
+  fn load_index() -> bool {
+    let index_path = get_index_path();
+    if !index_path.exists() {
+        return false;
+    }
+
+    let start = Instant::now();
+    println!("正在从文件加载索引...");
+
+    match File::open(index_path) {
+        Ok(file) => {
+            let reader = BufReader::new(file);
+            let index_data: IndexData = match serde_json::from_reader(reader) {
+                Ok(data) => data,
+                Err(e) => {
+                    eprintln!("加载索引失败: {}", e);
+                    return false;
+                }
+            };
+
+            let index = get_index();
+            for (file_name, paths) in index_data.files {
+                let path_vec: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+                index.insert(file_name, path_vec);
+            }
+
+            let duration = start.elapsed();
+            println!("索引加载完成，耗时 {:?}", duration);
+            true
+        }
+        Err(e) => {
+            eprintln!("打开索引文件失败: {}", e);
+            false
+        }
+    }
+}
+
+const BATCH_SIZE: usize = 50000;
+
+fn get_timestamp() -> String {
+    let now = SystemTime::now();
+    let since_epoch = now.duration_since(UNIX_EPOCH).unwrap();
+    let timestamp = since_epoch.as_secs();
+    timestamp.to_string()
+}
+
+fn init_logging(enabled: bool) {
+    if enabled {
+        let log_file = format!("logs/mac_find_{}.log", get_timestamp());
+        LOG_FILE.set(log_file).unwrap();
+        LOG_ENABLED.set(true).unwrap();
+    } else {
+        LOG_ENABLED.set(false).unwrap();
+    }
+}
+
+fn log_message(message: &str) {
+    if *LOG_ENABLED.get().unwrap_or(&false) {
+        if let Some(log_file) = LOG_FILE.get() {
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_file)
+                .unwrap();
+            
+            let mut writer = BufWriter::new(file);
+            writeln!(writer, "{}", message).unwrap();
+        }
+    }
+}
+
+fn get_root_directories() -> Vec<PathBuf> {
+    let root = PathBuf::from("/");
+    let mut dirs = Vec::new();
+    
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let path_str = path.to_string_lossy();
+                if !matches!(
+                    path_str.as_ref(),
+                    "/dev" | "/proc" | "/sys"
+                    | "/private/var/vm"
+                    | "/private/var/run"
+                    | "/private/var/folders"
+                    | "/System/Volumes/Data"
+                    | "/System/Volumes/Preboot"
+                    | "/System/Volumes/Recovery"
+                    | "/System/Volumes/VM"
+                ) && !path_str.contains("/.Spotlight-V100")
+                && !path_str.contains("/.fseventsd")
+                {
+                    dirs.push(path);
+                }
+            }
+        }
+    }
+    
+    dirs
+}
+
+fn scan_root(root: PathBuf, tx: crossbeam::channel::Sender<Vec<(String, PathBuf)>>) {
+    let mut batch = Vec::with_capacity(BATCH_SIZE);
+
+    for entry in WalkDir::new(&root)
+        .follow_links(false)
+        .min_depth(1)
+        .into_iter()
+        .filter_entry(|e| {
+            let p = e.path();
+            let path_str = p.to_str().unwrap_or("");
+            !matches!(
+                path_str,
+                "/dev" | "/proc" | "/sys"
+                | "/private/var/vm"
+                | "/private/var/run"
+                | "/private/var/folders"
+                | "/System/Volumes/Data"
+                | "/System/Volumes/Preboot"
+                | "/System/Volumes/Recovery"
+                | "/System/Volumes/VM"
+            ) && !path_str.contains("/.Spotlight-V100")
+            && !path_str.contains("/.fseventsd")
+        })
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        if let Some(name) = entry.file_name().to_str() {
+            batch.push((name.to_lowercase(), entry.into_path()));
+            if batch.len() >= BATCH_SIZE {
+                tx.send(std::mem::replace(&mut batch, Vec::with_capacity(BATCH_SIZE)))
+                    .ok();
+            }
+        }
+    }
+    if !batch.is_empty() {
+        tx.send(batch).ok();
+    }
+}
+
 fn build_index() {
     let start = Instant::now();
     println!("开始构建文件索引...");
-    
-    // 获取需要遍历的目录
-    let roots = vec![
-        PathBuf::from("/"),
-        // 可以添加其他需要搜索的根目录
-    ];
-    
+
+    let t1 = Instant::now();
     let index = get_index().clone();
-    let (tx, rx): (Sender<(String, PathBuf)>, Receiver<(String, PathBuf)>) = unbounded();
-    
-    // 启动多个线程进行文件遍历
-    let mut handles = vec![];
-    for root in roots {
-        let tx = tx.clone();
-        let handle = thread::spawn(move || {
-            // 遍历文件系统，设置更大的缓冲区和并行度
-            for entry in WalkDir::new(root)
-                .follow_links(false)
-                .min_depth(1)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                let path = entry.path();
-                
-                // 排除重复的系统路径
-                if let Some(path_str) = path.to_str() {
-                    // 排除 /System/Volumes/Data/Users (实际就是 /Users)
-                    if path_str.starts_with("/System/Volumes/Data/Users/") {
-                        continue;
-                    }
-                    // 排除 /System/Volumes/Data/Applications (实际就是 /Applications)
-                    if path_str.starts_with("/System/Volumes/Data/Applications/") {
-                        continue;
-                    }
-                    // 排除 /System/Volumes/Data/Volumes (实际就是 /Volumes)
-                    if path_str.starts_with("/System/Volumes/Data/Volumes/") {
-                        continue;
-                    }
-                }
-                
-                if path.is_file() {
-                    if let Some(file_name) = path.file_name() {
-                        if let Some(file_name_str) = file_name.to_str() {
-                            let file_name_lower = file_name_str.to_lowercase();
-                            tx.send((file_name_lower, path.to_path_buf())).unwrap();
-                        }
-                    }
-                }
-            }
-        });
-        handles.push(handle);
-    }
-    
-    // 关闭发送端
+    let (tx, rx) = crossbeam::channel::bounded::<Vec<(String, PathBuf)>>(256);
+
+    let roots = get_root_directories();
+
+    let handles: Vec<_> = roots
+        .into_iter()
+        .map(|root| {
+            let tx = tx.clone();
+            thread::spawn(move || scan_root(root, tx))
+        })
+        .collect();
+
     drop(tx);
-    
-    // 接收并处理文件信息
-    let mut count = 0;
-    for (file_name, path) in rx {
-        let mut index = index.lock().unwrap();
-        // 同一文件名可能有多个路径，所以使用Vec存储
-        index.entry(file_name).or_insert_with(Vec::new).push(path);
-        count += 1;
-        
-        // 每处理10000个文件打印一次进度
-        if count % 10000 == 0 {
-            println!("已索引 {} 个文件...", count);
+
+    let mut local_map: std::collections::HashMap<String, Vec<PathBuf>> = std::collections::HashMap::with_capacity(500_000);
+    let mut count = 0usize;
+
+    for batch in rx {
+        count += batch.len();
+        for (name, path) in batch {
+            local_map.entry(name).or_default().push(path);
+        }
+        if count % 500_000 < BATCH_SIZE {
+            println!(
+                "已扫描 {} 个文件，耗时 {:?}",
+                count,
+                start.elapsed()
+            );
         }
     }
-    
-    // 等待所有线程完成
+
     for handle in handles {
         handle.join().unwrap();
     }
-    
+
+    println!("扫描耗时: {:?}", t1.elapsed());
+
+    let t2 = Instant::now();
+    for (k, v) in local_map {
+        index.insert(k.clone(), v.clone());
+        db_insert_batch(&v.into_iter().map(|p| (k.clone(), p)).collect::<Vec<_>>());
+    }
+    println!("写内存耗时: {:?}", t2.elapsed());
+
+    let t3 = Instant::now();
+    db_create_index();
+    println!("建索引耗时: {:?}", t3.elapsed());
+
     let duration = start.elapsed();
-    let total_files = index.lock().unwrap().values().map(|v| v.len()).sum::<usize>();
-    println!("索引构建完成，共索引 {} 个文件，耗时 {:?}", total_files, duration);
+    let total_files: usize = index.iter().map(|r| r.value().len()).sum();
+    println!("索引构建完成，共索引 {} 个文件，总耗时 {:?}", total_files, duration);
 }
 
-// 搜索文件
-fn search_files(pattern: &str) {
-    let start = Instant::now();
-    let index = get_index();
-    let index = index.lock().unwrap();
-    
-    // 构建正则表达式
-    let regex_pattern = format!("{}", pattern);
-    let regex = Regex::new(&regex_pattern).unwrap();
-    
-    // 搜索匹配的文件
+fn search_substring(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<PathBuf> {
     let mut results = vec![];
-    for (file_name, paths) in index.iter() {
-        if regex.is_match(file_name) {
-            results.extend(paths);
+    let query_lower = query.to_lowercase();
+    
+    for r in index.iter() {
+        let (file_name, paths) = r.pair();
+        if file_name.contains(&query_lower) {
+            results.extend(paths.clone());
         }
     }
     
+    results
+}
+
+fn search_regex(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str) -> Vec<PathBuf> {
+    let mut results = vec![];
+    
+    let regex = match Regex::new(pattern) {
+        Ok(re) => re,
+        Err(e) => {
+            eprintln!("正则表达式错误: {}", e);
+            return results;
+        }
+    };
+
+    for r in index.iter() {
+        let (file_name, paths) = r.pair();
+        if regex.is_match(file_name) {
+            results.extend(paths.clone());
+        }
+    }
+    
+    results
+}
+
+fn search_fuzzy(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<PathBuf> {
+    let mut results = vec![];
+    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
+    
+    for r in index.iter() {
+        let (file_name, paths) = r.pair();
+        if matcher.fuzzy_match(file_name, query).is_some() {
+            results.extend(paths.clone());
+        }
+    }
+    
+    results
+}
+
+fn search_files(query: &str, use_regex: bool, use_fuzzy: bool) {
+    let start = Instant::now();
+    let index = get_index();
+
+    let results = if use_regex {
+        search_regex(index, query)
+    } else if use_fuzzy {
+        search_fuzzy(index, query)
+    } else {
+        search_substring(index, query)
+    };
+
     let duration = start.elapsed();
     println!("搜索完成，找到 {} 个匹配文件，耗时 {:?}", results.len(), duration);
-    
-    // 打印搜索结果
+
     for path in results {
         println!("{}", path.display());
     }
 }
 
-// 实时搜索功能
+fn watch_changes() -> notify::RecommendedWatcher {
+    let index = get_index().clone();
+    let (tx, rx) = crossbeam::channel::unbounded::<notify::Result<notify::Event>>();
+
+    let mut watcher = notify::recommended_watcher(move |event| {
+        tx.send(event).unwrap();
+    })
+    .unwrap();
+
+    let watch_roots = vec!["/"];
+    for root in watch_roots {
+        let path = std::path::Path::new(root);
+        if path.exists() {
+            match watcher.watch(path, notify::RecursiveMode::Recursive) {
+                Ok(_) => println!("已开始监听: {}", root),
+                Err(e) => eprintln!("监听 {} 失败: {:?}", root, e),
+            }
+        }
+    }
+
+    thread::spawn(move || {
+        for event in rx {
+            let e = match event {
+                Ok(event) => event,
+                Err(e) => {
+                    eprintln!("监听错误: {:?}", e);
+                    continue;
+                }
+            };
+
+            for path in &e.paths {
+                let file_name_lower = match path.file_name().and_then(|n| n.to_str()) {
+                    Some(name) => name.to_lowercase(),
+                    None => continue,
+                };
+
+                match e.kind {
+                    EventKind::Create(_) => {
+                        if path.is_file() {
+                            let file_name_lower_clone = file_name_lower.clone();
+                            let path_clone = path.clone();
+                            let mut entry = index
+                                .entry(file_name_lower)
+                                .or_insert_with(Vec::new);
+                            if !entry.contains(&path) {
+                                entry.push(path.clone());
+                                db_insert(&file_name_lower_clone, &path_clone);
+                                if *LOG_ENABLED.get().unwrap_or(&false) {
+                                    log_message(&format!("[+] 新增: {}", path.display()));
+                                }
+                            }
+                        }
+                    }
+
+                    EventKind::Remove(_) => {
+                        let path_clone = path.clone();
+                        if let Some(mut paths) = index.get_mut(&file_name_lower) {
+                            paths.retain(|p| p != path);
+                            db_delete(&path_clone);
+                            if *LOG_ENABLED.get().unwrap_or(&false) {
+                                log_message(&format!("[-] 删除: {}", path.display()));
+                            }
+                            if paths.is_empty() {
+                                drop(paths);
+                                index.remove(&file_name_lower);
+                            }
+                        }
+                    }
+
+                    EventKind::Modify(_) | EventKind::Any => {
+                        let path_clone = path.clone();
+                        let file_name_lower_clone = file_name_lower.clone();
+                        if path.is_file() {
+                            let mut entry = index.entry(file_name_lower).or_default();
+                            if !entry.contains(&path) {
+                                entry.push(path.clone());
+                                db_insert(&file_name_lower_clone, &path_clone);
+                                if *LOG_ENABLED.get().unwrap_or(&false) {
+                                    log_message(&format!("[~] 变更/重命名到: {}", path.display()));
+                                }
+                            }
+                        } else {
+                            if let Some(mut paths) = index.get_mut(&file_name_lower) {
+                                paths.retain(|p| p != path);
+                                db_delete(&path_clone);
+                                if *LOG_ENABLED.get().unwrap_or(&false) {
+                                    log_message(&format!("[~] 变更/重命名离开: {}", path.display()));
+                                }
+                                if paths.is_empty() {
+                                    drop(paths);
+                                    index.remove(&file_name_lower);
+                                }
+                            }
+                        }
+                    }
+
+                    _ => {}
+                }
+            }
+        }
+    });
+
+    watcher
+}
+
 fn real_time_search() {
     println!("实时搜索模式，输入搜索词（按Ctrl+C退出）:");
-    
+
     loop {
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).unwrap();
         let input = input.trim();
-        
+
         if input.is_empty() {
             continue;
         }
-        
-        search_files(input);
+
+        search_files(input, false, false);
     }
 }
 
 fn main() {
-    // 初始化索引
+    set_index_path();
+    set_db_path();
+    init_db();
     init_index();
-    
-    // 构建文件索引
-    build_index();
-    
-    // 进入实时搜索模式
-    real_time_search();
+
+    let cli = Cli::parse();
+    init_logging(cli.logs);
+
+    match cli.command {
+        Some(Commands::Build { path }) => {
+            if path.is_some() {
+                println!("使用指定路径构建索引...");
+            }
+            build_index();
+        }
+        Some(Commands::Watch) => {
+            let has_index = load_index_from_db();
+            let _watcher = watch_changes();
+            
+            if !has_index {
+                println!("首次运行，后台构建索引中，可先搜索（结果可能不完整）...");
+                thread::spawn(|| build_index());
+            }
+            
+            real_time_search();
+        }
+        None => {
+            if !load_index_from_db() {
+                println!("未找到索引文件，开始构建索引...");
+                build_index();
+            }
+            search_files(&cli.path, cli.regex, cli.fuzzy);
+        }
+    }
 }
