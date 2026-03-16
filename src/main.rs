@@ -58,6 +58,7 @@ extern "C" {
     );
 
     fn FSEventStreamStart(stream_ref: FSEventStreamRef) -> bool;
+    fn FSEventsGetCurrentEventId() -> u64;
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -496,6 +497,10 @@ fn build_index() {
     let t_mem = Instant::now();
     load_index_from_db();
     println!("写内存耗时: {:?}", t_mem.elapsed());
+
+    let current_event_id = unsafe { FSEventsGetCurrentEventId() };
+    save_last_event_id(current_event_id);
+    println!("已记录 EventID: {}，下次 watch 将从此点增量同步", current_event_id);
 
     println!("索引构建完成，共 {} 个文件，总耗时 {:?}", count, start.elapsed());
 }
