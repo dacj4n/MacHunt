@@ -1,29 +1,103 @@
 use clap::{Parser, Subcommand};
 use dashmap::DashMap;
 use fuzzy_matcher::FuzzyMatcher;
-use notify::{EventKind, Watcher};
 use once_cell::sync::OnceCell;
 use regex::Regex;
+use std::ffi::{c_void, CStr};
 use std::fs::{self, OpenOptions};
 use std::io::{Write, BufWriter};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::os::raw::{c_char, c_double, c_uint, c_ulong};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use walkdir::WalkDir;
 use rusqlite::{Connection, params};
 use parking_lot::Mutex;
-use fsevent::{self, StreamFlags};
+use core_foundation_sys::runloop::{
+    CFRunLoopGetCurrent, CFRunLoopRun, CFRunLoopRef,
+};
 
-const FSEVENT_SINCE_NOW: u64 = u64::MAX;
+#[allow(non_camel_case_types)]
+type FSEventStreamRef = *mut c_void;
+#[allow(non_camel_case_types)]
+type FSEventStreamCallback = unsafe extern "C" fn(
+    stream_ref: FSEventStreamRef,
+    client_callback_info: *mut c_void,
+    num_events: usize,
+    event_paths: *mut c_void,
+    event_flags: *const u32,
+    event_ids: *const u64,
+);
 
-const HISTORY_DONE: u32 = 0x00002000;
-const ITEM_REMOVED: u32 = 0x00000200;
-const ITEM_RENAMED: u32 = 0x00000800;
-const ITEM_CREATED: u32 = 0x00000100;
-const ITEM_MODIFIED: u32 = 0x00001000;
-const ITEM_IS_FILE: u32  = 0x00010000;
+#[repr(C)]
+struct FSEventStreamContext {
+    version: c_ulong,
+    info: *mut c_void,
+    retain: *const c_void,
+    release: *const c_void,
+    copy_description: *const c_void,
+}
+
+#[link(name = "CoreServices", kind = "framework")]
+extern "C" {
+    fn FSEventStreamCreate(
+        allocator: *const c_void,
+        callback: FSEventStreamCallback,
+        context: *mut FSEventStreamContext,
+        paths_to_watch: *const c_void,
+        since_when: u64,
+        latency: c_double,
+        flags: u32,
+    ) -> FSEventStreamRef;
+
+    fn FSEventStreamScheduleWithRunLoop(
+        stream_ref: FSEventStreamRef,
+        run_loop: CFRunLoopRef,
+        run_loop_mode: *const c_void,
+    );
+
+    fn FSEventStreamStart(stream_ref: FSEventStreamRef) -> bool;
+    fn FSEventStreamStop(stream_ref: FSEventStreamRef);
+    fn FSEventStreamInvalidate(stream_ref: FSEventStreamRef);
+    fn FSEventStreamRelease(stream_ref: FSEventStreamRef);
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFArrayCreate(
+        allocator: *const c_void,
+        values: *const *const c_void,
+        num_values: isize,
+        callbacks: *const c_void,
+    ) -> *const c_void;
+
+    fn CFStringCreateWithCString(
+        allocator: *const c_void,
+        c_str: *const c_char,
+        encoding: u32,
+    ) -> *const c_void;
+
+    static kCFRunLoopDefaultMode: *const c_void;
+    static kCFTypeArrayCallBacks: c_void;
+}
+
+const FSEVENT_SINCE_NOW: u64      = u64::MAX;
+const KCF_STRING_ENCODING_UTF8: u32 = 0x08000100;
+
+const FLAG_HISTORY_DONE: u32 = 0x00002000;
+const FLAG_ITEM_CREATED:  u32 = 0x00000100;
+const FLAG_ITEM_REMOVED:  u32 = 0x00000200;
+const FLAG_ITEM_RENAMED:  u32 = 0x00000800;
+const FLAG_ITEM_MODIFIED: u32 = 0x00001000;
+const FLAG_ITEM_IS_FILE:  u32 = 0x00010000;
+
+const STREAM_FLAG_FILE_EVENTS: u32 = 0x00000010;
+const STREAM_FLAG_WATCH_ROOT:  u32 = 0x00000004;
+
+struct WatchContext {
+    index: Arc<DashMap<String, Vec<PathBuf>>>,
+}
 
 static LOG_FILE: OnceCell<String> = OnceCell::new();
 static LOG_ENABLED: OnceCell<bool> = OnceCell::new();
@@ -498,130 +572,148 @@ fn search_files(query: &str, use_regex: bool, use_fuzzy: bool) {
     }
 }
 
-fn watch_changes() -> notify::RecommendedWatcher {
-    let index = get_index().clone();
-    let (tx, rx) = crossbeam::channel::unbounded::<notify::Result<notify::Event>>();
+unsafe extern "C" fn fsevent_callback(
+    _stream_ref: FSEventStreamRef,
+    client_info: *mut c_void,
+    num_events: usize,
+    event_paths: *mut c_void,
+    event_flags: *const u32,
+    event_ids: *const u64,
+) {
+    let ctx = &*(client_info as *const WatchContext);
+    let paths_ptr = event_paths as *const *const c_char;
 
-    let mut watcher = notify::recommended_watcher(move |event| {
-        tx.send(event).unwrap();
-    })
-    .unwrap();
+    for i in 0..num_events {
+        let flags = *event_flags.add(i);
+        let event_id = *event_ids.add(i);
+        let path_cstr = CStr::from_ptr(*paths_ptr.add(i));
+        let path_str = match path_cstr.to_str() {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
 
-    let watch_roots = vec!["/"];
-    for root in watch_roots {
-        let path = std::path::Path::new(root);
-        if path.exists() {
-            match watcher.watch(path, notify::RecursiveMode::Recursive) {
-                Ok(_) => println!("已开始监听: {}", root),
-                Err(e) => eprintln!("监听 {} 失败: {:?}", root, e),
+        LAST_EVENT_ID.store(event_id, std::sync::atomic::Ordering::Relaxed);
+
+        if flags & FLAG_HISTORY_DONE != 0 {
+            println!("历史回放完成（EventID: {}），进入实时监听", event_id);
+            save_last_event_id(event_id);
+            continue;
+        }
+
+        let path = PathBuf::from(path_str);
+
+        if flags & FLAG_ITEM_IS_FILE == 0 {
+            if flags & FLAG_ITEM_REMOVED != 0 {
+                let prefix = format!("{}/", path_str);
+                ctx.index.retain(|_, v| {
+                    v.retain(|p| {
+                        if p.to_string_lossy().starts_with(&prefix) {
+                            db_delete(p);
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    !v.is_empty()
+                });
+            }
+            continue;
+        }
+
+        let file_name_lower = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name.to_lowercase(),
+            None => continue,
+        };
+
+        if flags & FLAG_ITEM_REMOVED != 0 {
+            if let Some(mut v) = ctx.index.get_mut(&file_name_lower) {
+                v.retain(|p| p != &path);
+                db_delete(&path);
+                if *LOG_ENABLED.get().unwrap_or(&false) {
+                    log_message(&format!("[-] {}", path.display()));
+                }
+                if v.is_empty() {
+                    drop(v);
+                    ctx.index.remove(&file_name_lower);
+                }
+            }
+            continue;
+        }
+
+        if flags & (FLAG_ITEM_CREATED | FLAG_ITEM_RENAMED | FLAG_ITEM_MODIFIED) != 0 {
+            if path.is_file() {
+                let mut entry = ctx.index.entry(file_name_lower.clone()).or_default();
+                if !entry.contains(&path) {
+                    entry.push(path.clone());
+                    db_insert(&file_name_lower, &path);
+                    if *LOG_ENABLED.get().unwrap_or(&false) {
+                        log_message(&format!("[+] {}", path.display()));
+                    }
+                }
+            } else {
+                if let Some(mut v) = ctx.index.get_mut(&file_name_lower) {
+                    v.retain(|p| p != &path);
+                    db_delete(&path);
+                    if v.is_empty() {
+                        drop(v);
+                        ctx.index.remove(&file_name_lower);
+                    }
+                }
             }
         }
     }
+}
+
+fn watch_with_history(since_event_id: Option<u64>) {
+    let index = get_index().clone();
+    let since = since_event_id.unwrap_or(FSEVENT_SINCE_NOW);
 
     thread::spawn(move || {
-        for event in rx {
-            let e = match event {
-                Ok(event) => event,
-                Err(e) => {
-                    eprintln!("监听错误: {:?}", e);
-                    continue;
-                }
+        unsafe {
+            let path_cstr = std::ffi::CString::new("/").unwrap();
+            let cf_path = CFStringCreateWithCString(
+                std::ptr::null(),
+                path_cstr.as_ptr(),
+                KCF_STRING_ENCODING_UTF8,
+            );
+            let paths_array = CFArrayCreate(
+                std::ptr::null(),
+                &cf_path as *const _ as *const *const c_void,
+                1,
+                &kCFTypeArrayCallBacks as *const _ as *const c_void,
+            );
+
+            let ctx = Box::new(WatchContext { index });
+            let mut fsevent_ctx = FSEventStreamContext {
+                version: 0,
+                info: Box::into_raw(ctx) as *mut c_void,
+                retain: std::ptr::null(),
+                release: std::ptr::null(),
+                copy_description: std::ptr::null(),
             };
 
-            for path in &e.paths {
-                let file_name_lower = match path.file_name().and_then(|n| n.to_str()) {
-                    Some(name) => name.to_lowercase(),
-                    None => continue,
-                };
+            let stream = FSEventStreamCreate(
+                std::ptr::null(),
+                fsevent_callback,
+                &mut fsevent_ctx,
+                paths_array,
+                since,
+                0.05,
+                STREAM_FLAG_FILE_EVENTS | STREAM_FLAG_WATCH_ROOT,
+            );
 
-                match e.kind {
-                    EventKind::Create(_) => {
-                        if path.is_file() {
-                            let file_name_lower_clone = file_name_lower.clone();
-                            let path_clone = path.clone();
-                            let mut entry = index
-                                .entry(file_name_lower)
-                                .or_insert_with(Vec::new);
-                            if !entry.contains(&path) {
-                                entry.push(path.clone());
-                                db_insert(&file_name_lower_clone, &path_clone);
-                                if *LOG_ENABLED.get().unwrap_or(&false) {
-                                    log_message(&format!("[+] 新增: {}", path.display()));
-                                }
-                            }
-                        }
-                    }
+            FSEventStreamScheduleWithRunLoop(
+                stream,
+                CFRunLoopGetCurrent(),
+                kCFRunLoopDefaultMode as *const c_void,
+            );
 
-                    EventKind::Remove(_) => {
-                        let path_clone = path.clone();
-                        
-                        if let Some(mut v) = index.get_mut(&file_name_lower) {
-                            let before = v.len();
-                            v.retain(|p| p != path);
-                            if v.len() < before {
-                                db_delete(&path_clone);
-                                if *LOG_ENABLED.get().unwrap_or(&false) {
-                                    log_message(&format!("[-] 删除: {}", path.display()));
-                                }
-                                if v.is_empty() {
-                                    drop(v);
-                                    index.remove(&file_name_lower);
-                                }
-                            }
-                        }
-                        
-                        if path.extension().is_none() && !path.is_file() {
-                            let path_prefix = path.to_string_lossy().to_string();
-                            index.iter().for_each(|r| {
-                                let paths_under: Vec<_> = r.value().iter()
-                                    .filter(|p| p.to_string_lossy().starts_with(&path_prefix))
-                                    .cloned()
-                                    .collect();
-                                for p in paths_under {
-                                    db_delete(&p);
-                                }
-                            });
-                            index.retain(|_, v| {
-                                v.retain(|p| !p.to_string_lossy().starts_with(&path_prefix));
-                                !v.is_empty()
-                            });
-                        }
-                    }
+            FSEventStreamStart(stream);
+            println!("FSEvents 监听启动，since_event_id={:?}", since_event_id);
 
-                    EventKind::Modify(_) | EventKind::Any => {
-                        let path_clone = path.clone();
-                        let file_name_lower_clone = file_name_lower.clone();
-                        if path.is_file() {
-                            let mut entry = index.entry(file_name_lower).or_default();
-                            if !entry.contains(&path) {
-                                entry.push(path.clone());
-                                db_insert(&file_name_lower_clone, &path_clone);
-                                if *LOG_ENABLED.get().unwrap_or(&false) {
-                                    log_message(&format!("[~] 变更/重命名到: {}", path.display()));
-                                }
-                            }
-                        } else {
-                            if let Some(mut paths) = index.get_mut(&file_name_lower) {
-                                paths.retain(|p| p != path);
-                                db_delete(&path_clone);
-                                if *LOG_ENABLED.get().unwrap_or(&false) {
-                                    log_message(&format!("[~] 变更/重命名离开: {}", path.display()));
-                                }
-                                if paths.is_empty() {
-                                    drop(paths);
-                                    index.remove(&file_name_lower);
-                                }
-                            }
-                        }
-                    }
-
-                    _ => {}
-                }
-            }
+            CFRunLoopRun();
         }
     });
-
-    watcher
 }
 
 fn real_time_search() {
@@ -658,14 +750,34 @@ fn main() {
         }
         Some(Commands::Watch) => {
             let has_index = load_index_from_db();
-            let _watcher = watch_changes();
+            let last_event_id = load_last_event_id();
             
             if !has_index {
                 println!("首次运行，后台构建索引中...");
+                watch_with_history(None);
                 thread::spawn(|| build_index());
             } else {
-                cleanup_dead_paths_background();
+                match last_event_id {
+                    Some(id) => {
+                        println!("从上次退出点恢复（EventID: {}），回放离线变更...", id);
+                        watch_with_history(Some(id));
+                    }
+                    None => {
+                        println!("后台校验中...");
+                        watch_with_history(None);
+                        cleanup_dead_paths_background();
+                    }
+                }
             }
+            
+            ctrlc::set_handler(|| {
+                let id = LAST_EVENT_ID.load(std::sync::atomic::Ordering::Relaxed);
+                if id > 0 {
+                    save_last_event_id(id);
+                    println!("\n已保存 EventID: {}", id);
+                }
+                std::process::exit(0);
+            }).unwrap();
             
             real_time_search();
         }
