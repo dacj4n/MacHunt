@@ -14,6 +14,16 @@ use std::time::Instant;
 use walkdir::WalkDir;
 use rusqlite::{Connection, params};
 use parking_lot::Mutex;
+use fsevent::{self, StreamFlags};
+
+const FSEVENT_SINCE_NOW: u64 = u64::MAX;
+
+const HISTORY_DONE: u32 = 0x00002000;
+const ITEM_REMOVED: u32 = 0x00000200;
+const ITEM_RENAMED: u32 = 0x00000800;
+const ITEM_CREATED: u32 = 0x00000100;
+const ITEM_MODIFIED: u32 = 0x00001000;
+const ITEM_IS_FILE: u32  = 0x00010000;
 
 static LOG_FILE: OnceCell<String> = OnceCell::new();
 static LOG_ENABLED: OnceCell<bool> = OnceCell::new();

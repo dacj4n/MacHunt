@@ -17,3 +17,4 @@ clap = { version = "4", features = ["derive"] }
 ctrlc = "3"
 rusqlite = { version = "0.31", features = ["bundled"] }
 parking_lot = "0.12"
+fsevent = "2.3.0"
