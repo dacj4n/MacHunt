@@ -24,6 +24,9 @@ static LOG_ENABLED: OnceCell<bool> = OnceCell::new();
 static DB_PATH: OnceCell<PathBuf> = OnceCell::new();
 static DB_CONN: OnceCell<Arc<Mutex<Connection>>> = OnceCell::new();
 
+static LAST_EVENT_ID: std::sync::atomic::AtomicU64 = 
+    std::sync::atomic::AtomicU64::new(0);
+
 fn set_db_path() {
     let data_dir = std::env::current_dir().unwrap().join("data");
     fs::create_dir_all(&data_dir).ok();
@@ -45,6 +48,12 @@ fn init_db() {
             id   INTEGER PRIMARY KEY,
             name TEXT NOT NULL,
             path TEXT NOT NULL UNIQUE
+        );
+        CREATE INDEX IF NOT EXISTS idx_name ON files(name);
+
+        CREATE TABLE IF NOT EXISTS meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         );
     ").unwrap();
 
@@ -98,6 +107,23 @@ fn db_insert_batch(entries: &[(String, PathBuf)]) {
       tx.commit().unwrap();
       
       conn.execute_batch("PRAGMA synchronous=NORMAL;").ok();
+  }
+
+  fn save_last_event_id(event_id: u64) {
+      let conn = get_db().lock();
+      conn.execute(
+          "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_event_id', ?1)",
+          params![event_id.to_string()],
+      ).ok();
+  }
+
+  fn load_last_event_id() -> Option<u64> {
+      let conn = get_db().lock();
+      conn.query_row(
+          "SELECT value FROM meta WHERE key = 'last_event_id'",
+          [],
+          |row| row.get::<_, String>(0),
+      ).ok()?.parse().ok()
   }
 
   #[derive(Serialize, Deserialize)]
