@@ -219,6 +219,68 @@ fn get_timestamp() -> String {
     timestamp.to_string()
 }
 
+fn num_cpus() -> usize {
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
+}
+
+fn cleanup_dead_paths_background() {
+    thread::spawn(|| {
+        let start = Instant::now();
+        
+        let paths: Vec<(String, String)> = {
+            let conn = get_db().lock();
+            let mut stmt = conn.prepare("SELECT name, path FROM files").unwrap();
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .flatten()
+                .collect()
+        };
+
+        let index = get_index();
+        let dead_shared = Arc::new(std::sync::Mutex::new(vec![]));
+
+        let chunk_size = (paths.len() / num_cpus()).max(1);
+        let handles: Vec<_> = paths.chunks(chunk_size).map(|chunk| {
+            let chunk = chunk.to_vec();
+            let dead_shared = dead_shared.clone();
+            thread::spawn(move || {
+                let local_dead: Vec<PathBuf> = chunk.into_iter()
+                    .filter_map(|(_, path_str)| {
+                        let p = PathBuf::from(path_str);
+                        if !p.exists() { Some(p) } else { None }
+                    })
+                    .collect();
+                dead_shared.lock().unwrap().extend(local_dead);
+            })
+        }).collect();
+
+        for h in handles { h.join().unwrap(); }
+        let dead = Arc::try_unwrap(dead_shared).unwrap().into_inner().unwrap();
+        let dead_count = dead.len();
+
+        if dead_count == 0 {
+            return;
+        }
+
+        let mut conn = get_db().lock();
+        let tx = conn.transaction().unwrap();
+        {
+            let mut stmt = tx.prepare_cached("DELETE FROM files WHERE path = ?1").unwrap();
+            for path in &dead {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
+                if let Some(mut v) = index.get_mut(&name) {
+                    v.retain(|p| p != path);
+                    if v.is_empty() { drop(v); index.remove(&name); }
+                }
+                stmt.execute(params![path.to_string_lossy().as_ref()]).ok();
+            }
+        }
+        tx.commit().unwrap();
+
+        println!("[启动校验] 清理 {} 条失效路径，耗时 {:?}", dead_count, start.elapsed());
+    });
+}
+
 fn init_logging(enabled: bool) {
     if enabled {
         let log_file = format!("logs/mac_find_{}.log", get_timestamp());
@@ -482,16 +544,37 @@ fn watch_changes() -> notify::RecommendedWatcher {
 
                     EventKind::Remove(_) => {
                         let path_clone = path.clone();
-                        if let Some(mut paths) = index.get_mut(&file_name_lower) {
-                            paths.retain(|p| p != path);
-                            db_delete(&path_clone);
-                            if *LOG_ENABLED.get().unwrap_or(&false) {
-                                log_message(&format!("[-] 删除: {}", path.display()));
+                        
+                        if let Some(mut v) = index.get_mut(&file_name_lower) {
+                            let before = v.len();
+                            v.retain(|p| p != path);
+                            if v.len() < before {
+                                db_delete(&path_clone);
+                                if *LOG_ENABLED.get().unwrap_or(&false) {
+                                    log_message(&format!("[-] 删除: {}", path.display()));
+                                }
+                                if v.is_empty() {
+                                    drop(v);
+                                    index.remove(&file_name_lower);
+                                }
                             }
-                            if paths.is_empty() {
-                                drop(paths);
-                                index.remove(&file_name_lower);
-                            }
+                        }
+                        
+                        if path.extension().is_none() && !path.is_file() {
+                            let path_prefix = path.to_string_lossy().to_string();
+                            index.iter().for_each(|r| {
+                                let paths_under: Vec<_> = r.value().iter()
+                                    .filter(|p| p.to_string_lossy().starts_with(&path_prefix))
+                                    .cloned()
+                                    .collect();
+                                for p in paths_under {
+                                    db_delete(&p);
+                                }
+                            });
+                            index.retain(|_, v| {
+                                v.retain(|p| !p.to_string_lossy().starts_with(&path_prefix));
+                                !v.is_empty()
+                            });
                         }
                     }
 
@@ -568,8 +651,10 @@ fn main() {
             let _watcher = watch_changes();
             
             if !has_index {
-                println!("首次运行，后台构建索引中，可先搜索（结果可能不完整）...");
+                println!("首次运行，后台构建索引中...");
                 thread::spawn(|| build_index());
+            } else {
+                cleanup_dead_paths_background();
             }
             
             real_time_search();
