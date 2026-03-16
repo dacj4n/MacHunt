@@ -6,7 +6,7 @@ use regex::Regex;
 use std::ffi::{c_void, CStr};
 use std::fs::{self, OpenOptions};
 use std::io::{Write, BufWriter};
-use std::os::raw::{c_char, c_double, c_uint, c_ulong};
+use std::os::raw::{c_char, c_double, c_ulong};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
@@ -58,9 +58,6 @@ extern "C" {
     );
 
     fn FSEventStreamStart(stream_ref: FSEventStreamRef) -> bool;
-    fn FSEventStreamStop(stream_ref: FSEventStreamRef);
-    fn FSEventStreamInvalidate(stream_ref: FSEventStreamRef);
-    fn FSEventStreamRelease(stream_ref: FSEventStreamRef);
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
