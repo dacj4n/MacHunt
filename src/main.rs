@@ -4,12 +4,9 @@ use fuzzy_matcher::FuzzyMatcher;
 use notify::{EventKind, Watcher};
 use once_cell::sync::OnceCell;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
-use std::fs::OpenOptions;
-use std::io::{Write, BufWriter, BufReader};
+use std::fs::{self, OpenOptions};
+use std::io::{Write, BufWriter};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::collections::HashMap;
-use std::fs::{self, File};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
@@ -59,14 +56,6 @@ fn init_db() {
     ").unwrap();
 
     DB_CONN.set(Arc::new(Mutex::new(conn))).unwrap();
-}
-
-fn db_create_index() {
-    let conn = get_db().lock();
-    println!("建立索引...");
-    conn.execute_batch(
-        "CREATE INDEX IF NOT EXISTS idx_name ON files(name);"
-    ).unwrap();
 }
 
 fn get_db() -> &'static Arc<Mutex<Connection>> {
@@ -127,12 +116,6 @@ fn db_insert_batch(entries: &[(String, PathBuf)]) {
           [],
           |row| row.get::<_, String>(0),
       ).ok()?.parse().ok()
-  }
-
-  #[derive(Serialize, Deserialize)]
-  #[allow(dead_code)]
-  struct IndexData {
-      files: HashMap<String, Vec<String>>,
   }
 
   #[derive(Parser)]
@@ -199,20 +182,22 @@ static FILE_INDEX: OnceCell<Arc<DashMap<String, Vec<PathBuf>>>> = OnceCell::new(
       let start = Instant::now();
       println!("从数据库加载索引...");
 
+      let index = get_index();
+      index.clear();
+
       let conn = get_db().lock();
       let mut stmt = conn
           .prepare("SELECT name, path FROM files")
           .unwrap();
 
-      let index = get_index();
       let mut count = 0usize;
 
       let rows = stmt.query_map([], |row| {
           Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
       }).unwrap();
 
-      for row in rows {
-          let (name, path_str) = row.unwrap();
+      for row in rows.flatten() {
+          let (name, path_str) = row;
           index.entry(name).or_default().push(PathBuf::from(path_str));
           count += 1;
       }
@@ -223,44 +208,6 @@ static FILE_INDEX: OnceCell<Arc<DashMap<String, Vec<PathBuf>>>> = OnceCell::new(
 
   fn get_index() -> &'static Arc<DashMap<String, Vec<PathBuf>>> {
     FILE_INDEX.get().unwrap()
-}
-
-#[allow(dead_code)]
-  fn load_index() -> bool {
-    let index_path = get_index_path();
-    if !index_path.exists() {
-        return false;
-    }
-
-    let start = Instant::now();
-    println!("正在从文件加载索引...");
-
-    match File::open(index_path) {
-        Ok(file) => {
-            let reader = BufReader::new(file);
-            let index_data: IndexData = match serde_json::from_reader(reader) {
-                Ok(data) => data,
-                Err(e) => {
-                    eprintln!("加载索引失败: {}", e);
-                    return false;
-                }
-            };
-
-            let index = get_index();
-            for (file_name, paths) in index_data.files {
-                let path_vec: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-                index.insert(file_name, path_vec);
-            }
-
-            let duration = start.elapsed();
-            println!("索引加载完成，耗时 {:?}", duration);
-            true
-        }
-        Err(e) => {
-            eprintln!("打开索引文件失败: {}", e);
-            false
-        }
-    }
 }
 
 const BATCH_SIZE: usize = 50000;
@@ -371,59 +318,43 @@ fn build_index() {
     let start = Instant::now();
     println!("开始构建文件索引...");
 
-    let t1 = Instant::now();
-    let index = get_index().clone();
     let (tx, rx) = crossbeam::channel::bounded::<Vec<(String, PathBuf)>>(256);
-
     let roots = get_root_directories();
 
-    let handles: Vec<_> = roots
-        .into_iter()
-        .map(|root| {
-            let tx = tx.clone();
-            thread::spawn(move || scan_root(root, tx))
-        })
-        .collect();
-
+    let handles: Vec<_> = roots.into_iter().map(|root| {
+        let tx = tx.clone();
+        thread::spawn(move || scan_root(root, tx))
+    }).collect();
     drop(tx);
 
-    let mut local_map: std::collections::HashMap<String, Vec<PathBuf>> = std::collections::HashMap::with_capacity(500_000);
+    let mut db_batch: Vec<(String, PathBuf)> = Vec::with_capacity(50_000);
     let mut count = 0usize;
 
-    for batch in rx {
-        count += batch.len();
-        for (name, path) in batch {
-            local_map.entry(name).or_default().push(path);
+    for chunk in rx {
+        count += chunk.len();
+        db_batch.extend(chunk);
+
+        if db_batch.len() >= 50_000 {
+            db_insert_batch(&db_batch);
+            db_batch.clear();
         }
+
         if count % 500_000 < BATCH_SIZE {
-            println!(
-                "已扫描 {} 个文件，耗时 {:?}",
-                count,
-                start.elapsed()
-            );
+            println!("已扫描 {} 个文件，耗时 {:?}", count, start.elapsed());
         }
     }
-
-    for handle in handles {
-        handle.join().unwrap();
+    if !db_batch.is_empty() {
+        db_insert_batch(&db_batch);
     }
 
-    println!("扫描耗时: {:?}", t1.elapsed());
+    for h in handles { h.join().unwrap(); }
+    println!("扫描+写库耗时: {:?}", start.elapsed());
 
-    let t2 = Instant::now();
-    for (k, v) in local_map {
-        index.insert(k.clone(), v.clone());
-        db_insert_batch(&v.into_iter().map(|p| (k.clone(), p)).collect::<Vec<_>>());
-    }
-    println!("写内存耗时: {:?}", t2.elapsed());
+    let t_mem = Instant::now();
+    load_index_from_db();
+    println!("写内存耗时: {:?}", t_mem.elapsed());
 
-    let t3 = Instant::now();
-    db_create_index();
-    println!("建索引耗时: {:?}", t3.elapsed());
-
-    let duration = start.elapsed();
-    let total_files: usize = index.iter().map(|r| r.value().len()).sum();
-    println!("索引构建完成，共索引 {} 个文件，总耗时 {:?}", total_files, duration);
+    println!("索引构建完成，共 {} 个文件，总耗时 {:?}", count, start.elapsed());
 }
 
 fn search_substring(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<PathBuf> {
