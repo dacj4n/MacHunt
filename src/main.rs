@@ -243,7 +243,7 @@ fn load_index_from_db() -> bool {
           return false;
       }
       let start = Instant::now();
-      println!("从数据库加载索引...");
+      println!("Loading index from database...");
 
       let index = get_index();
       index.clear();
@@ -265,7 +265,7 @@ fn load_index_from_db() -> bool {
           count += 1;
       }
 
-      println!("加载完成，共 {} 条记录，耗时 {:?}", count, start.elapsed());
+      println!("Loaded {} records, took {:?}", count, start.elapsed());
       count > 0
   }
 
@@ -340,7 +340,7 @@ fn cleanup_dead_paths_background() {
         }
         tx.commit().unwrap();
 
-        println!("[启动校验] 清理 {} 条失效路径，耗时 {:?}", dead_count, start.elapsed());
+        println!("[Startup Validation] Cleaned up {} dead paths, took {:?}", dead_count, start.elapsed());
     });
 }
 
@@ -441,7 +441,7 @@ fn scan_root(root: PathBuf, tx: crossbeam::channel::Sender<Vec<(String, PathBuf)
 
 fn build_index(path: Option<String>) {
     let start = Instant::now();
-    println!("开始构建文件索引...");
+    println!("Building file index...");
 
     let roots = if let Some(p) = path {
         vec![PathBuf::from(p)]
@@ -470,7 +470,7 @@ fn build_index(path: Option<String>) {
         }
 
         if count % 500_000 < BATCH_SIZE {
-            println!("已扫描 {} 个文件，耗时 {:?}", count, start.elapsed());
+            println!("Scanned {} files, took {:?}", count, start.elapsed());
         }
     }
     if !db_batch.is_empty() {
@@ -478,17 +478,17 @@ fn build_index(path: Option<String>) {
     }
 
     for h in handles { h.join().unwrap(); }
-    println!("扫描+写库耗时: {:?}", start.elapsed());
+    println!("Scan + DB write took: {:?}", start.elapsed());
 
     let t_mem = Instant::now();
     load_index_from_db();
-    println!("写内存耗时: {:?}", t_mem.elapsed());
+    println!("Write to memory took: {:?}", t_mem.elapsed());
 
     let current_event_id = unsafe { FSEventsGetCurrentEventId() };
     save_last_event_id(current_event_id);
-    println!("已记录 EventID: {}，下次 watch 将从此点增量同步", current_event_id);
+    println!("Saved EventID: {}, next watch will use incremental sync", current_event_id);
 
-    println!("索引构建完成，共 {} 个文件，总耗时 {:?}", count, start.elapsed());
+    println!("Index build completed, {} files total, took {:?}", count, start.elapsed());
 }
 
 fn search_substring(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str, only_file: bool, only_dir: bool) -> Vec<PathBuf> {
@@ -565,7 +565,7 @@ fn search_regex(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str, only_
     let regex = match convert_wildcard_to_regex(pattern) {
         Ok(re) => re,
         Err(e) => {
-            eprintln!("正则表达式错误: {}", e);
+            eprintln!("Regex error: {}", e);
             return results;
         }
     };
@@ -608,7 +608,7 @@ fn search_files(query: &str, use_regex: bool, folder: bool, file: bool, path: &s
     };
 
     let duration = start.elapsed();
-    println!("搜索完成，找到 {} 个匹配文件，耗时 {:?}", filtered_results.len(), duration);
+    println!("Search completed, found {} matching files, took {:?}", filtered_results.len(), duration);
 
     for path in filtered_results {
         println!("{}", path.display());
@@ -638,7 +638,7 @@ unsafe extern "C" fn fsevent_callback(
         LAST_EVENT_ID.store(event_id, std::sync::atomic::Ordering::Relaxed);
 
         if flags & FLAG_HISTORY_DONE != 0 {
-            println!("历史回放完成（EventID: {}），进入实时监听", event_id);
+            println!("History playback completed (EventID: {}), entering real-time monitoring", event_id);
             save_last_event_id(event_id);
             continue;
         }
@@ -673,8 +673,8 @@ unsafe extern "C" fn fsevent_callback(
                 v.retain(|p| p != &path);
                 db_delete(&path);
                 if *LOG_ENABLED.get().unwrap_or(&false) {
-                    log_message(&format!("[-] {}", path.display()));
-                }
+                log_message(&format!("[-] {}", path.display()));
+            }
                 if v.is_empty() {
                     drop(v);
                     ctx.index.remove(&file_name_lower);
@@ -752,7 +752,7 @@ fn watch_with_history(since_event_id: Option<u64>) {
             );
 
             FSEventStreamStart(stream);
-            println!("FSEvents 监听启动，since_event_id={:?}", since_event_id);
+            println!("FSEvents monitoring started, since_event_id={:?}", since_event_id);
 
             CFRunLoopRun();
         }
@@ -760,7 +760,7 @@ fn watch_with_history(since_event_id: Option<u64>) {
 }
 
 fn real_time_search() {
-    println!("实时搜索模式，输入搜索词（按Ctrl+C退出）:");
+    println!("Real-time search mode, enter search term (Ctrl+C to exit):");
 
     loop {
         let mut input = String::new();
@@ -785,7 +785,7 @@ fn main() {
 
     match cli.command {
         Some(Commands::Build { path }) => {
-            println!("使用指定路径构建索引...");
+            println!("Building index for specified path...");
             build_index(path);
         }
         Some(Commands::Watch) => {
@@ -793,17 +793,17 @@ fn main() {
             let last_event_id = load_last_event_id();
             
             if !has_index {
-                println!("首次运行，后台构建索引中...");
+                println!("First run, building index in background...");
                 watch_with_history(None);
                 thread::spawn(|| build_index(None));
             } else {
                 match last_event_id {
                     Some(id) => {
-                        println!("从上次退出点恢复（EventID: {}），回放离线变更...", id);
+                        println!("Resuming from last exit point (EventID: {}), playing back offline changes...", id);
                         watch_with_history(Some(id));
                     }
                     None => {
-                        println!("后台校验中...");
+                        println!("Background validation...");
                         watch_with_history(None);
                         cleanup_dead_paths_background();
                     }
@@ -814,7 +814,7 @@ fn main() {
                 let id = LAST_EVENT_ID.load(std::sync::atomic::Ordering::Relaxed);
                 if id > 0 {
                     save_last_event_id(id);
-                    println!("\n已保存 EventID: {}", id);
+                    println!("\nSaved EventID: {}", id);
                 }
                 std::process::exit(0);
             }).unwrap();
@@ -823,7 +823,7 @@ fn main() {
         }
         None => {
             if !load_index_from_db() {
-                eprintln!("错误：未找到索引，请先运行 mac_find build 构建索引");
+                eprintln!("Error: Index not found, please run machunt build first");
                 std::process::exit(1);
             }
             search_files(&cli.query, cli.regex, cli.folder, cli.file, &cli.path);
