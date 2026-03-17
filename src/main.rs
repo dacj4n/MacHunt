@@ -235,33 +235,8 @@ enum Commands {
 }
 
 static FILE_INDEX: OnceCell<Arc<DashMap<String, Vec<PathBuf>>>> = OnceCell::new();
-  static INDEX_PATH: OnceCell<PathBuf> = OnceCell::new();
 
-  #[allow(dead_code)]
-  fn get_index_path() -> &'static PathBuf {
-      INDEX_PATH.get().unwrap()
-  }
-
-  #[allow(dead_code)]
-  fn init_index() {
-      let index = Arc::new(DashMap::new());
-      FILE_INDEX.set(index).unwrap();
-  }
-
-  #[allow(dead_code)]
-  fn set_index_path() {
-      let current_dir = std::env::current_dir().unwrap();
-      let data_dir = current_dir.join("data");
-      
-      if !data_dir.exists() {
-          fs::create_dir_all(&data_dir).ok();
-      }
-      
-      let path = data_dir.join("index.json");
-      INDEX_PATH.set(path).unwrap();
-  }
-
-  fn load_index_from_db() -> bool {
+fn load_index_from_db() -> bool {
       let path = DB_PATH.get().unwrap();
       if !path.exists() {
           return false;
@@ -552,13 +527,8 @@ fn convert_wildcard_to_regex(pattern: &str) -> Result<Regex, regex::Error> {
                 i += 1;
             }
             '.' => {
-                if i + 1 < chars.len() && chars[i + 1] == '{' {
-                    regex_pattern.push_str("\\.");
-                    i += 1;
-                } else {
-                    regex_pattern.push_str("\\.");
-                    i += 1;
-                }
+                regex_pattern.push_str("\\.");
+                i += 1;
             }
             '{' => {
                 regex_pattern.push_str("(");
@@ -615,24 +585,10 @@ fn search_files(query: &str, use_regex: bool, folder: bool, file: bool, path: &s
     let start = Instant::now();
     let index = get_index();
 
-    let results = if folder {
-        if use_regex {
-            search_regex(index, query, false, true)
-        } else {
-            search_substring(index, query, false, true)
-        }
-    } else if file {
-        if use_regex {
-            search_regex(index, query, true, false)
-        } else {
-            search_substring(index, query, true, false)
-        }
+    let results = if use_regex {
+        search_regex(index, query, file, folder)
     } else {
-        if use_regex {
-            search_regex(index, query, false, false)
-        } else {
-            search_substring(index, query, false, false)
-        }
+        search_substring(index, query, file, folder)
     };
 
     let filtered_results: Vec<PathBuf> = if path != "." {
@@ -813,10 +769,9 @@ fn real_time_search() {
 }
 
 fn main() {
-    set_index_path();
     set_db_path();
     init_db();
-    init_index();
+    FILE_INDEX.set(Arc::new(DashMap::new())).unwrap();
 
     let cli = Cli::parse();
     init_logging(cli.logs);
