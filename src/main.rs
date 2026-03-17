@@ -462,15 +462,12 @@ fn scan_root(root: PathBuf, tx: crossbeam::channel::Sender<Vec<(String, PathBuf)
             && !path_str.contains("/.fseventsd")
         })
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file() || e.file_type().is_dir())
     {
         if let Some(name) = entry.file_name().to_str() {
-            if entry.file_type().is_file() || entry.file_type().is_dir() {
-                batch.push((name.to_lowercase(), entry.into_path()));
-                if batch.len() >= BATCH_SIZE {
-                    tx.send(std::mem::replace(&mut batch, Vec::with_capacity(BATCH_SIZE)))
-                        .ok();
-                }
+            batch.push((name.to_lowercase(), entry.into_path()));
+            if batch.len() >= BATCH_SIZE {
+                tx.send(std::mem::replace(&mut batch, Vec::with_capacity(BATCH_SIZE)))
+                    .ok();
             }
         }
     }
@@ -526,7 +523,7 @@ fn build_index() {
     println!("索引构建完成，共 {} 个文件，总耗时 {:?}", count, start.elapsed());
 }
 
-fn search_substring(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<PathBuf> {
+fn search_substring(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str, only_file: bool, only_dir: bool) -> Vec<PathBuf> {
     let mut results = vec![];
     let query_lower = query.to_lowercase();
     
@@ -534,43 +531,13 @@ fn search_substring(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> 
         let (file_name, paths) = r.pair();
         if file_name.contains(&query_lower) {
             for path in paths.iter() {
-                if path.is_file() {
-                    results.push(path.clone());
+                if only_file && path.is_dir() {
+                    continue;
                 }
-            }
-        }
-    }
-    
-    results
-}
-
-fn search_substring_all(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<PathBuf> {
-    let mut results = vec![];
-    let query_lower = query.to_lowercase();
-    
-    for r in index.iter() {
-        let (file_name, paths) = r.pair();
-        if file_name.contains(&query_lower) {
-            for path in paths.iter() {
+                if only_dir && path.is_file() {
+                    continue;
+                }
                 results.push(path.clone());
-            }
-        }
-    }
-    
-    results
-}
-
-fn search_folder_substring(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<PathBuf> {
-    let mut results = vec![];
-    let query_lower = query.to_lowercase();
-    
-    for r in index.iter() {
-        let (file_name, paths) = r.pair();
-        if file_name.contains(&query_lower) {
-            for path in paths.iter() {
-                if path.is_dir() {
-                    results.push(path.clone());
-                }
             }
         }
     }
@@ -629,7 +596,7 @@ fn convert_wildcard_to_regex(pattern: &str) -> Result<Regex, regex::Error> {
     Regex::new(&regex_pattern)
 }
 
-fn search_regex(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str) -> Vec<PathBuf> {
+fn search_regex(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str, only_file: bool, only_dir: bool) -> Vec<PathBuf> {
     let mut results = vec![];
     
     let regex = match convert_wildcard_to_regex(pattern) {
@@ -644,31 +611,12 @@ fn search_regex(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str) -> Ve
         let (file_name, paths) = r.pair();
         if regex.is_match(file_name) {
             for path in paths.iter() {
-                if path.is_file() {
-                    results.push(path.clone());
+                if only_file && path.is_dir() {
+                    continue;
                 }
-            }
-        }
-    }
-    
-    results
-}
-
-fn search_regex_all(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str) -> Vec<PathBuf> {
-    let mut results = vec![];
-    
-    let regex = match convert_wildcard_to_regex(pattern) {
-        Ok(re) => re,
-        Err(e) => {
-            eprintln!("正则表达式错误: {}", e);
-            return results;
-        }
-    };
-
-    for r in index.iter() {
-        let (file_name, paths) = r.pair();
-        if regex.is_match(file_name) {
-            for path in paths.iter() {
+                if only_dir && path.is_file() {
+                    continue;
+                }
                 results.push(path.clone());
             }
         }
@@ -683,21 +631,21 @@ fn search_files(query: &str, use_regex: bool, folder: bool, file: bool, path: &s
 
     let results = if folder {
         if use_regex {
-            search_regex(index, query)
+            search_regex(index, query, false, true)
         } else {
-            search_folder_substring(index, query)
+            search_substring(index, query, false, true)
         }
     } else if file {
         if use_regex {
-            search_regex(index, query)
+            search_regex(index, query, true, false)
         } else {
-            search_substring(index, query)
+            search_substring(index, query, true, false)
         }
     } else {
         if use_regex {
-            search_regex_all(index, query)
+            search_regex(index, query, false, false)
         } else {
-            search_substring_all(index, query)
+            search_substring(index, query, false, false)
         }
     };
 
