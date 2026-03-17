@@ -202,20 +202,6 @@ fn db_insert_batch(entries: &[(String, PathBuf)]) {
   #[derive(Parser)]
 #[command(name = "mac_find")]
 #[command(about = "macOS 全局文件搜索工具，类似 Everything")]
-#[command(after_help = r#"使用示例：
-  mac_find "测试"                    # 搜索包含"测试"的文件
-  mac_find --folder "测试"           # 搜索包含"测试"的文件夹
-  mac_find --file "测试"             # 只搜索文件
-  mac_find --regex "*.pdf"           # 搜索所有 pdf 文件
-  mac_find --regex "*.{pdf,docx}"    # 搜索 pdf 和 docx 文件
-  mac_find build                       # 构建文件索引
-  mac_find watch                       # 实时监控文件变化
-
-通配符规则：
-  *   匹配任意字符（不含/）
-  **  匹配任意字符（含/）
-  ?   匹配单个字符（不含/）
-  {a,b} 匹配 a 或 b"#)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
