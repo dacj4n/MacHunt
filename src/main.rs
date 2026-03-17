@@ -206,9 +206,9 @@ fn db_insert_batch(entries: &[(String, PathBuf)]) {
 #[command(after_help = r#"使用示例：
   mac_find "测试"                    # 搜索包含"测试"的文件
   mac_find --folder "测试"           # 搜索包含"测试"的文件夹
+  mac_find --file "测试"             # 只搜索文件
   mac_find --regex "*.pdf"           # 搜索所有 pdf 文件
   mac_find --regex "*.{pdf,docx}"    # 搜索 pdf 和 docx 文件
-  mac_find --fuzzy "ceshi"           # 模糊搜索"ceshi"
   mac_find build                       # 构建文件索引
   mac_find watch                       # 实时监控文件变化
 
@@ -226,9 +226,6 @@ struct Cli {
 
     #[arg(short, long)]
     regex: bool,
-
-    #[arg(short, long)]
-    fuzzy: bool,
     
     #[arg(long)]
     folder: bool,
@@ -715,31 +712,25 @@ fn search_fuzzy_all(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> 
     results
 }
 
-fn search_files(query: &str, use_regex: bool, use_fuzzy: bool, folder: bool, file: bool, path: &str) {
+fn search_files(query: &str, use_regex: bool, folder: bool, file: bool, path: &str) {
     let start = Instant::now();
     let index = get_index();
 
     let results = if folder {
         if use_regex {
             search_regex(index, query)
-        } else if use_fuzzy {
-            search_fuzzy(index, query)
         } else {
             search_folder_substring(index, query)
         }
     } else if file {
         if use_regex {
             search_regex(index, query)
-        } else if use_fuzzy {
-            search_fuzzy(index, query)
         } else {
             search_substring(index, query)
         }
     } else {
         if use_regex {
             search_regex_all(index, query)
-        } else if use_fuzzy {
-            search_fuzzy_all(index, query)
         } else {
             search_substring_all(index, query)
         }
@@ -918,7 +909,7 @@ fn real_time_search() {
             continue;
         }
 
-        search_files(input, false, false, false, false, ".");
+        search_files(input, false, false, false, ".");
     }
 }
 
@@ -976,7 +967,7 @@ fn main() {
                 println!("未找到索引文件，开始构建索引...");
                 build_index();
             }
-            search_files(&cli.query, cli.regex, cli.fuzzy, cli.folder, cli.file, &cli.path);
+            search_files(&cli.query, cli.regex, cli.folder, cli.file, &cli.path);
         }
     }
 }
