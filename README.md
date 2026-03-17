@@ -27,7 +27,17 @@ cargo build --release
 
 ## Usage
 
-### Basic Search
+### First-time Setup
+
+```bash
+# Build file index (required before first use)
+mac_find build          # Full disk scan, ~15-20 seconds
+
+# Or build index for specific path
+mac_find build --path "/Volumes/Tools"
+```
+
+### Search
 
 ```bash
 # Search for files/folders containing "test"
@@ -60,15 +70,26 @@ mac_find --regex "*.mp{3,4}"
 mac_find --path "/Volumes/Tools" "test"
 ```
 
-### Index Management
+### Real-time Monitoring
 
 ```bash
-# Build file index
-mac_find build
-
-# Watch file changes in real-time
+# Start real-time monitoring (keep running in background)
 mac_find watch
+
+# Then search from anywhere
+mac_find "test"
 ```
+
+## Permissions
+
+**Important**: To monitor all directories, you need to grant Full Disk Access to your terminal:
+
+1. Go to **System Settings → Privacy & Security → Full Disk Access**
+2. Click the lock icon and enter your password
+3. Click **+** and add your terminal app (Terminal.app, iTerm2, etc.)
+4. Restart your terminal
+
+Without this permission, monitoring will only work for `/Users` directory.
 
 ## Wildcard Rules
 

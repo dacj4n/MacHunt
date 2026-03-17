@@ -98,6 +98,7 @@ struct WatchContext {
 
 static LOG_FILE: OnceCell<String> = OnceCell::new();
 static LOG_ENABLED: OnceCell<bool> = OnceCell::new();
+static LOG_WRITER: OnceCell<Mutex<BufWriter<std::fs::File>>> = OnceCell::new();
 
 static DB_PATH: OnceCell<PathBuf> = OnceCell::new();
 static DB_CONN: OnceCell<Arc<Mutex<Connection>>> = OnceCell::new();
@@ -346,6 +347,13 @@ fn cleanup_dead_paths_background() {
 fn init_logging(enabled: bool) {
     if enabled {
         let log_file = format!("logs/mac_find_{}.log", get_timestamp());
+        fs::create_dir_all("logs").ok();
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file)
+            .unwrap();
+        LOG_WRITER.set(Mutex::new(BufWriter::new(file))).unwrap();
         LOG_FILE.set(log_file).unwrap();
         LOG_ENABLED.set(true).unwrap();
     } else {
@@ -355,15 +363,9 @@ fn init_logging(enabled: bool) {
 
 fn log_message(message: &str) {
     if *LOG_ENABLED.get().unwrap_or(&false) {
-        if let Some(log_file) = LOG_FILE.get() {
-            let file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_file)
-                .unwrap();
-            
-            let mut writer = BufWriter::new(file);
-            writeln!(writer, "{}", message).unwrap();
+        if let Some(writer) = LOG_WRITER.get() {
+            let mut w = writer.lock();
+            writeln!(w, "{}", message).ok();
         }
     }
 }
@@ -437,12 +439,17 @@ fn scan_root(root: PathBuf, tx: crossbeam::channel::Sender<Vec<(String, PathBuf)
     }
 }
 
-fn build_index() {
+fn build_index(path: Option<String>) {
     let start = Instant::now();
     println!("开始构建文件索引...");
 
+    let roots = if let Some(p) = path {
+        vec![PathBuf::from(p)]
+    } else {
+        get_root_directories()
+    };
+
     let (tx, rx) = crossbeam::channel::bounded::<Vec<(String, PathBuf)>>(256);
-    let roots = get_root_directories();
 
     let handles: Vec<_> = roots.into_iter().map(|root| {
         let tx = tx.clone();
@@ -778,10 +785,8 @@ fn main() {
 
     match cli.command {
         Some(Commands::Build { path }) => {
-            if path.is_some() {
-                println!("使用指定路径构建索引...");
-            }
-            build_index();
+            println!("使用指定路径构建索引...");
+            build_index(path);
         }
         Some(Commands::Watch) => {
             let has_index = load_index_from_db();
@@ -790,7 +795,7 @@ fn main() {
             if !has_index {
                 println!("首次运行，后台构建索引中...");
                 watch_with_history(None);
-                thread::spawn(|| build_index());
+                thread::spawn(|| build_index(None));
             } else {
                 match last_event_id {
                     Some(id) => {
@@ -818,8 +823,8 @@ fn main() {
         }
         None => {
             if !load_index_from_db() {
-                println!("未找到索引文件，开始构建索引...");
-                build_index();
+                eprintln!("错误：未找到索引，请先运行 mac_find build 构建索引");
+                std::process::exit(1);
             }
             search_files(&cli.query, cli.regex, cli.folder, cli.file, &cli.path);
         }
