@@ -202,7 +202,7 @@ fn db_insert_batch(entries: &[(String, PathBuf)]) {
 
   #[derive(Parser)]
 #[command(name = "machunt")]
-#[command(about = "macOS 全局文件搜索工具，类似 Everything")]
+#[command(about = "macOS Global File Search Tool")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
