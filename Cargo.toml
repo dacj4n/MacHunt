@@ -11,7 +11,6 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dashmap = "6"
-fuzzy-matcher = "0.3"
 clap = { version = "4", features = ["derive"] }
 ctrlc = "3"
 rusqlite = { version = "0.31", features = ["bundled"] }
