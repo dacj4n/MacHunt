@@ -20,7 +20,7 @@ macOS 全局文件搜索工具 - 类似 Windows 的 Everything
 ## 安装
 
 ```bash
-git clone https://github.com/yourusername/mac_find.git
+git clone https://github.com/dacj4n/mac_find.git
 cd mac_find
 cargo build --release
 ```

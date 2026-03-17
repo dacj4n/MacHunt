@@ -20,7 +20,7 @@ macOS Global File Search Tool - Similar to Windows' Everything
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/mac_find.git
+git clone https://github.com/dacj4n/mac_find.git
 cd mac_find
 cargo build --release
 ```
