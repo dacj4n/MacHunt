@@ -108,7 +108,8 @@ static LAST_EVENT_ID: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
 fn set_db_path() {
-    let data_dir = std::env::current_dir().unwrap().join("data");
+    let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let data_dir = PathBuf::from(home_dir).join(".machunt");
     fs::create_dir_all(&data_dir).ok();
     DB_PATH.set(data_dir.join("index.db")).unwrap();
 }
@@ -346,15 +347,17 @@ fn cleanup_dead_paths_background() {
 
 fn init_logging(enabled: bool) {
     if enabled {
-        let log_file = format!("logs/mac_find_{}.log", get_timestamp());
-        fs::create_dir_all("logs").ok();
+        let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let logs_dir = PathBuf::from(home_dir).join(".machunt").join("logs");
+        fs::create_dir_all(&logs_dir).ok();
+        let log_file = logs_dir.join(format!("machunt_{}.log", get_timestamp()));
         let file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&log_file)
             .unwrap();
         LOG_WRITER.set(Mutex::new(BufWriter::new(file))).unwrap();
-        LOG_FILE.set(log_file).unwrap();
+        LOG_FILE.set(log_file.to_string_lossy().to_string()).unwrap();
         LOG_ENABLED.set(true).unwrap();
     } else {
         LOG_ENABLED.set(false).unwrap();
