@@ -1,6 +1,5 @@
 use clap::{Parser, Subcommand};
 use dashmap::DashMap;
-use fuzzy_matcher::FuzzyMatcher;
 use once_cell::sync::OnceCell;
 use regex::Regex;
 use std::ffi::{c_void, CStr};
@@ -669,40 +668,6 @@ fn search_regex_all(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str) -
     for r in index.iter() {
         let (file_name, paths) = r.pair();
         if regex.is_match(file_name) {
-            for path in paths.iter() {
-                results.push(path.clone());
-            }
-        }
-    }
-    
-    results
-}
-
-fn search_fuzzy(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<PathBuf> {
-    let mut results = vec![];
-    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
-    
-    for r in index.iter() {
-        let (file_name, paths) = r.pair();
-        if matcher.fuzzy_match(file_name, query).is_some() {
-            for path in paths.iter() {
-                if path.is_file() {
-                    results.push(path.clone());
-                }
-            }
-        }
-    }
-    
-    results
-}
-
-fn search_fuzzy_all(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<PathBuf> {
-    let mut results = vec![];
-    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
-    
-    for r in index.iter() {
-        let (file_name, paths) = r.pair();
-        if matcher.fuzzy_match(file_name, query).is_some() {
             for path in paths.iter() {
                 results.push(path.clone());
             }
