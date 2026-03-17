@@ -534,7 +534,11 @@ fn search_substring(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> 
     for r in index.iter() {
         let (file_name, paths) = r.pair();
         if file_name.contains(&query_lower) {
-            results.extend(paths.clone());
+            for path in paths.iter() {
+                if path.is_file() {
+                    results.push(path.clone());
+                }
+            }
         }
     }
     
@@ -625,7 +629,9 @@ fn search_regex(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str) -> Ve
         let (file_name, paths) = r.pair();
         if regex.is_match(file_name) {
             for path in paths.iter() {
-                results.push(path.clone());
+                if path.is_file() {
+                    results.push(path.clone());
+                }
             }
         }
     }
@@ -641,7 +647,7 @@ fn search_fuzzy(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<
         let (file_name, paths) = r.pair();
         if matcher.fuzzy_match(file_name, query).is_some() {
             for path in paths.iter() {
-                if path.is_dir() {
+                if path.is_file() {
                     results.push(path.clone());
                 }
             }
