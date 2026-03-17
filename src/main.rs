@@ -201,7 +201,7 @@ fn db_insert_batch(entries: &[(String, PathBuf)]) {
   }
 
   #[derive(Parser)]
-#[command(name = "mac_find")]
+#[command(name = "machunt")]
 #[command(about = "macOS 全局文件搜索工具，类似 Everything")]
 struct Cli {
     #[command(subcommand)]

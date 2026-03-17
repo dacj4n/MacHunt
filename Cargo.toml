@@ -1,5 +1,5 @@
 [package]
-name = "mac_find"
+name = "machunt"
 version = "0.1.0"
 edition = "2021"
 

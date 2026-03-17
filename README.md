@@ -1,4 +1,4 @@
-# mac_find
+# MacHunt
 
 macOS Global File Search Tool - Similar to Windows' Everything
 
@@ -20,8 +20,8 @@ macOS Global File Search Tool - Similar to Windows' Everything
 ## Installation
 
 ```bash
-git clone https://github.com/dacj4n/mac_find.git
-cd mac_find
+git clone https://github.com/dacj4n/MacHunt.git
+cd MacHunt
 cargo build --release
 ```
 
@@ -31,53 +31,53 @@ cargo build --release
 
 ```bash
 # Build file index (required before first use)
-mac_find build          # Full disk scan, ~15-20 seconds
+machunt build          # Full disk scan, ~15-20 seconds
 
 # Or build index for specific path
-mac_find build --path "/Volumes/Tools"
+machunt build --path "/Volumes/Tools"
 ```
 
 ### Search
 
 ```bash
 # Search for files/folders containing "test"
-mac_find "test"
+machunt "test"
 
 # Search only files
-mac_find --file "test"
+machunt --file "test"
 
 # Search only folders
-mac_find --folder "test"
+machunt --folder "test"
 ```
 
 ### Regex Search
 
 ```bash
 # Search all pdf files
-mac_find --regex "*.pdf"
+machunt --regex "*.pdf"
 
 # Search pdf and docx files
-mac_find --regex "*.{pdf,docx}"
+machunt --regex "*.{pdf,docx}"
 
 # Search files with specific pattern
-mac_find --regex "*.mp{3,4}"
+machunt --regex "*.mp{3,4}"
 ```
 
 ### Path Filtering
 
 ```bash
 # Search in specific directory
-mac_find --path "/Volumes/Tools" "test"
+machunt --path "/Volumes/Tools" "test"
 ```
 
 ### Real-time Monitoring
 
 ```bash
 # Start real-time monitoring (keep running in background)
-mac_find watch
+machunt watch
 
 # Then search from anywhere
-mac_find "test"
+machunt "test"
 ```
 
 ## Permissions
@@ -102,16 +102,16 @@ Without this permission, monitoring will only work for `/Users` directory.
 
 ```bash
 # Search for all video files
-mac_find --regex "*.{mp4,mov,avi}"
+machunt --regex "*.{mp4,mov,avi}"
 
 # Search for large files
-mac_find --regex ".*\.pdf"
+machunt --regex ".*\.pdf"
 
 # Search for test files in specific path
-mac_find --path "/Volumes/工作" "测试"
+machunt --path "/Volumes/工作" "测试"
 
 # Monitor file changes
-mac_find watch
+machunt watch
 ```
 
 ## Performance

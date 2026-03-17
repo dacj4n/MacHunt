@@ -1,4 +1,4 @@
-# mac_find
+# MacHunt
 
 macOS 全局文件搜索工具 - 类似 Windows 的 Everything
 
@@ -20,8 +20,8 @@ macOS 全局文件搜索工具 - 类似 Windows 的 Everything
 ## 安装
 
 ```bash
-git clone https://github.com/dacj4n/mac_find.git
-cd mac_find
+git clone https://github.com/dacj4n/MacHunt.git
+cd MacHunt
 cargo build --release
 ```
 
@@ -31,53 +31,53 @@ cargo build --release
 
 ```bash
 # 构建文件索引（首次使用必须执行）
-mac_find build          # 全盘扫描，约 15-20 秒
+machunt build          # 全盘扫描，约 15-20 秒
 
 # 或构建指定路径的索引
-mac_find build --path "/Volumes/Tools"
+machunt build --path "/Volumes/Tools"
 ```
 
 ### 搜索
 
 ```bash
 # 搜索包含"测试"的文件和文件夹
-mac_find "测试"
+machunt "测试"
 
 # 只搜索文件
-mac_find --file "测试"
+machunt --file "测试"
 
 # 只搜索文件夹
-mac_find --folder "测试"
+machunt --folder "测试"
 ```
 
 ### 正则搜索
 
 ```bash
 # 搜索所有 pdf 文件
-mac_find --regex "*.pdf"
+machunt --regex "*.pdf"
 
 # 搜索 pdf 和 docx 文件
-mac_find --regex "*.{pdf,docx}"
+machunt --regex "*.{pdf,docx}"
 
 # 搜索特定模式的文件
-mac_find --regex "*.mp{3,4}"
+machunt --regex "*.mp{3,4}"
 ```
 
 ### 路径过滤
 
 ```bash
 # 在指定目录下搜索
-mac_find --path "/Volumes/Tools" "测试"
+machunt --path "/Volumes/Tools" "测试"
 ```
 
 ### 实时监控
 
 ```bash
 # 启动实时监控（后台保持运行）
-mac_find watch
+machunt watch
 
 # 然后可以随时搜索
-mac_find "测试"
+machunt "测试"
 ```
 
 ## 权限说明
@@ -102,16 +102,16 @@ mac_find "测试"
 
 ```bash
 # 搜索所有视频文件
-mac_find --regex "*.{mp4,mov,avi}"
+machunt --regex "*.{mp4,mov,avi}"
 
 # 搜索所有 PDF 文件
-mac_find --regex ".*\.pdf"
+machunt --regex ".*\.pdf"
 
 # 在指定路径下搜索测试文件
-mac_find --path "/Volumes/工作" "测试"
+machunt --path "/Volumes/工作" "测试"
 
 # 监控文件变化
-mac_find watch
+machunt watch
 ```
 
 ## 性能指标
