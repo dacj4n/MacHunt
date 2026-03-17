@@ -221,6 +221,9 @@ struct Cli {
     
     #[arg(long)]
     logs: bool,
+    
+    #[arg(default_value = "")]
+    query: String,
 }
 
 #[derive(Subcommand)]
@@ -446,13 +449,15 @@ fn scan_root(root: PathBuf, tx: crossbeam::channel::Sender<Vec<(String, PathBuf)
             && !path_str.contains("/.fseventsd")
         })
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
+        .filter(|e| e.file_type().is_file() || e.file_type().is_dir())
     {
         if let Some(name) = entry.file_name().to_str() {
-            batch.push((name.to_lowercase(), entry.into_path()));
-            if batch.len() >= BATCH_SIZE {
-                tx.send(std::mem::replace(&mut batch, Vec::with_capacity(BATCH_SIZE)))
-                    .ok();
+            if entry.file_type().is_file() || entry.file_type().is_dir() {
+                batch.push((name.to_lowercase(), entry.into_path()));
+                if batch.len() >= BATCH_SIZE {
+                    tx.send(std::mem::replace(&mut batch, Vec::with_capacity(BATCH_SIZE)))
+                        .ok();
+                }
             }
         }
     }
@@ -827,7 +832,7 @@ fn main() {
                 println!("未找到索引文件，开始构建索引...");
                 build_index();
             }
-            search_files(&cli.path, cli.regex, cli.fuzzy, cli.folder);
+            search_files(&cli.query, cli.regex, cli.fuzzy, cli.folder);
         }
     }
 }
