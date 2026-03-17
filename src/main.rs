@@ -234,6 +234,9 @@ struct Cli {
     folder: bool,
     
     #[arg(long)]
+    file: bool,
+    
+    #[arg(long)]
     logs: bool,
     
     #[arg(default_value = "")]
@@ -545,6 +548,22 @@ fn search_substring(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> 
     results
 }
 
+fn search_substring_all(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<PathBuf> {
+    let mut results = vec![];
+    let query_lower = query.to_lowercase();
+    
+    for r in index.iter() {
+        let (file_name, paths) = r.pair();
+        if file_name.contains(&query_lower) {
+            for path in paths.iter() {
+                results.push(path.clone());
+            }
+        }
+    }
+    
+    results
+}
+
 fn search_folder_substring(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<PathBuf> {
     let mut results = vec![];
     let query_lower = query.to_lowercase();
@@ -639,6 +658,29 @@ fn search_regex(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str) -> Ve
     results
 }
 
+fn search_regex_all(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str) -> Vec<PathBuf> {
+    let mut results = vec![];
+    
+    let regex = match convert_wildcard_to_regex(pattern) {
+        Ok(re) => re,
+        Err(e) => {
+            eprintln!("正则表达式错误: {}", e);
+            return results;
+        }
+    };
+
+    for r in index.iter() {
+        let (file_name, paths) = r.pair();
+        if regex.is_match(file_name) {
+            for path in paths.iter() {
+                results.push(path.clone());
+            }
+        }
+    }
+    
+    results
+}
+
 fn search_fuzzy(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<PathBuf> {
     let mut results = vec![];
     let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
@@ -657,7 +699,23 @@ fn search_fuzzy(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<
     results
 }
 
-fn search_files(query: &str, use_regex: bool, use_fuzzy: bool, folder: bool, path: &str) {
+fn search_fuzzy_all(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<PathBuf> {
+    let mut results = vec![];
+    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
+    
+    for r in index.iter() {
+        let (file_name, paths) = r.pair();
+        if matcher.fuzzy_match(file_name, query).is_some() {
+            for path in paths.iter() {
+                results.push(path.clone());
+            }
+        }
+    }
+    
+    results
+}
+
+fn search_files(query: &str, use_regex: bool, use_fuzzy: bool, folder: bool, file: bool, path: &str) {
     let start = Instant::now();
     let index = get_index();
 
@@ -669,13 +727,21 @@ fn search_files(query: &str, use_regex: bool, use_fuzzy: bool, folder: bool, pat
         } else {
             search_folder_substring(index, query)
         }
-    } else {
+    } else if file {
         if use_regex {
             search_regex(index, query)
         } else if use_fuzzy {
             search_fuzzy(index, query)
         } else {
             search_substring(index, query)
+        }
+    } else {
+        if use_regex {
+            search_regex_all(index, query)
+        } else if use_fuzzy {
+            search_fuzzy_all(index, query)
+        } else {
+            search_substring_all(index, query)
         }
     };
 
@@ -852,7 +918,7 @@ fn real_time_search() {
             continue;
         }
 
-        search_files(input, false, false, false, ".");
+        search_files(input, false, false, false, false, ".");
     }
 }
 
@@ -910,7 +976,7 @@ fn main() {
                 println!("未找到索引文件，开始构建索引...");
                 build_index();
             }
-            search_files(&cli.query, cli.regex, cli.fuzzy, cli.folder, &cli.path);
+            search_files(&cli.query, cli.regex, cli.fuzzy, cli.folder, cli.file, &cli.path);
         }
     }
 }
