@@ -1,6 +1,6 @@
 # MacHunt
 
-macOS 全局文件搜索工具 - 类似 Windows 的 Everything
+macOS 全局文件搜索工具
 
 [English](README.md)
 
