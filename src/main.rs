@@ -566,7 +566,24 @@ fn convert_wildcard_to_regex(pattern: &str) -> Result<Regex, regex::Error> {
                 i += 1;
             }
             '.' => {
-                regex_pattern.push_str("\\.");
+                if i + 1 < chars.len() && chars[i + 1] == '{' {
+                    regex_pattern.push_str("\\.");
+                    i += 1;
+                } else {
+                    regex_pattern.push_str("\\.");
+                    i += 1;
+                }
+            }
+            '{' => {
+                regex_pattern.push_str("(");
+                i += 1;
+            }
+            '}' => {
+                regex_pattern.push_str(")");
+                i += 1;
+            }
+            ',' => {
+                regex_pattern.push_str("|");
                 i += 1;
             }
             c => {
