@@ -109,7 +109,7 @@ static LAST_EVENT_ID: std::sync::atomic::AtomicU64 =
 
 fn set_db_path() {
     let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let data_dir = PathBuf::from(home_dir).join(".machunt");
+    let data_dir = PathBuf::from(home_dir).join(".machunt").join("data");
     fs::create_dir_all(&data_dir).ok();
     DB_PATH.set(data_dir.join("index.db")).unwrap();
 }
