@@ -545,10 +545,44 @@ fn search_folder_substring(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &s
     results
 }
 
+fn convert_wildcard_to_regex(pattern: &str) -> Result<Regex, regex::Error> {
+    let mut regex_pattern = String::new();
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+    
+    while i < chars.len() {
+        match chars[i] {
+            '*' => {
+                if i + 1 < chars.len() && chars[i + 1] == '*' {
+                    regex_pattern.push_str(".*");
+                    i += 2;
+                } else {
+                    regex_pattern.push_str("[^/]*");
+                    i += 1;
+                }
+            }
+            '?' => {
+                regex_pattern.push_str("[^/]");
+                i += 1;
+            }
+            '.' => {
+                regex_pattern.push_str("\\.");
+                i += 1;
+            }
+            c => {
+                regex_pattern.push(c);
+                i += 1;
+            }
+        }
+    }
+    
+    Regex::new(&regex_pattern)
+}
+
 fn search_regex(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str) -> Vec<PathBuf> {
     let mut results = vec![];
     
-    let regex = match Regex::new(pattern) {
+    let regex = match convert_wildcard_to_regex(pattern) {
         Ok(re) => re,
         Err(e) => {
             eprintln!("正则表达式错误: {}", e);
@@ -560,9 +594,7 @@ fn search_regex(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str) -> Ve
         let (file_name, paths) = r.pair();
         if regex.is_match(file_name) {
             for path in paths.iter() {
-                if path.is_dir() {
-                    results.push(path.clone());
-                }
+                results.push(path.clone());
             }
         }
     }
