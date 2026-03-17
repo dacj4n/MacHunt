@@ -217,6 +217,9 @@ struct Cli {
     fuzzy: bool,
     
     #[arg(long)]
+    folder: bool,
+    
+    #[arg(long)]
     logs: bool,
 }
 
@@ -519,6 +522,24 @@ fn search_substring(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> 
     results
 }
 
+fn search_folder_substring(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<PathBuf> {
+    let mut results = vec![];
+    let query_lower = query.to_lowercase();
+    
+    for r in index.iter() {
+        let (file_name, paths) = r.pair();
+        if file_name.contains(&query_lower) {
+            for path in paths.iter() {
+                if path.is_dir() {
+                    results.push(path.clone());
+                }
+            }
+        }
+    }
+    
+    results
+}
+
 fn search_regex(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str) -> Vec<PathBuf> {
     let mut results = vec![];
     
@@ -533,7 +554,11 @@ fn search_regex(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str) -> Ve
     for r in index.iter() {
         let (file_name, paths) = r.pair();
         if regex.is_match(file_name) {
-            results.extend(paths.clone());
+            for path in paths.iter() {
+                if path.is_dir() {
+                    results.push(path.clone());
+                }
+            }
         }
     }
     
@@ -547,23 +572,37 @@ fn search_fuzzy(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<
     for r in index.iter() {
         let (file_name, paths) = r.pair();
         if matcher.fuzzy_match(file_name, query).is_some() {
-            results.extend(paths.clone());
+            for path in paths.iter() {
+                if path.is_dir() {
+                    results.push(path.clone());
+                }
+            }
         }
     }
     
     results
 }
 
-fn search_files(query: &str, use_regex: bool, use_fuzzy: bool) {
+fn search_files(query: &str, use_regex: bool, use_fuzzy: bool, folder: bool) {
     let start = Instant::now();
     let index = get_index();
 
-    let results = if use_regex {
-        search_regex(index, query)
-    } else if use_fuzzy {
-        search_fuzzy(index, query)
+    let results = if folder {
+        if use_regex {
+            search_regex(index, query)
+        } else if use_fuzzy {
+            search_fuzzy(index, query)
+        } else {
+            search_folder_substring(index, query)
+        }
     } else {
-        search_substring(index, query)
+        if use_regex {
+            search_regex(index, query)
+        } else if use_fuzzy {
+            search_fuzzy(index, query)
+        } else {
+            search_substring(index, query)
+        }
     };
 
     let duration = start.elapsed();
@@ -730,7 +769,7 @@ fn real_time_search() {
             continue;
         }
 
-        search_files(input, false, false);
+        search_files(input, false, false, false);
     }
 }
 
@@ -788,7 +827,7 @@ fn main() {
                 println!("未找到索引文件，开始构建索引...");
                 build_index();
             }
-            search_files(&cli.path, cli.regex, cli.fuzzy);
+            search_files(&cli.path, cli.regex, cli.fuzzy, cli.folder);
         }
     }
 }
