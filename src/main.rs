@@ -651,7 +651,7 @@ fn search_fuzzy(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str) -> Vec<
     results
 }
 
-fn search_files(query: &str, use_regex: bool, use_fuzzy: bool, folder: bool) {
+fn search_files(query: &str, use_regex: bool, use_fuzzy: bool, folder: bool, path: &str) {
     let start = Instant::now();
     let index = get_index();
 
@@ -673,10 +673,19 @@ fn search_files(query: &str, use_regex: bool, use_fuzzy: bool, folder: bool) {
         }
     };
 
-    let duration = start.elapsed();
-    println!("搜索完成，找到 {} 个匹配文件，耗时 {:?}", results.len(), duration);
+    let filtered_results: Vec<PathBuf> = if path != "." {
+        results
+            .into_iter()
+            .filter(|p| p.to_string_lossy().starts_with(path))
+            .collect()
+    } else {
+        results
+    };
 
-    for path in results {
+    let duration = start.elapsed();
+    println!("搜索完成，找到 {} 个匹配文件，耗时 {:?}", filtered_results.len(), duration);
+
+    for path in filtered_results {
         println!("{}", path.display());
     }
 }
@@ -837,7 +846,7 @@ fn real_time_search() {
             continue;
         }
 
-        search_files(input, false, false, false);
+        search_files(input, false, false, false, ".");
     }
 }
 
@@ -895,7 +904,7 @@ fn main() {
                 println!("未找到索引文件，开始构建索引...");
                 build_index();
             }
-            search_files(&cli.query, cli.regex, cli.fuzzy, cli.folder);
+            search_files(&cli.query, cli.regex, cli.fuzzy, cli.folder, &cli.path);
         }
     }
 }
