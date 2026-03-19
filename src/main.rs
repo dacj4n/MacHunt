@@ -1,207 +1,18 @@
+mod builder;
+mod db;
+mod engine;
+mod model;
+mod search;
+mod utils;
+mod watcher;
+
+use crate::engine::Engine;
+use crate::model::{SearchMode, SearchOptions};
 use clap::{Parser, Subcommand};
-use dashmap::DashMap;
-use once_cell::sync::OnceCell;
-use regex::Regex;
-use std::ffi::{c_void, CStr};
-use std::fs::{self, OpenOptions};
-use std::io::{Write, BufWriter};
-use std::os::raw::{c_char, c_double, c_ulong};
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::thread;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use walkdir::WalkDir;
-use rusqlite::{Connection, params};
-use parking_lot::Mutex;
-use core_foundation_sys::runloop::{
-    CFRunLoopGetCurrent, CFRunLoopRun, CFRunLoopRef,
-};
+use std::time::Instant;
 
-#[allow(non_camel_case_types)]
-type FSEventStreamRef = *mut c_void;
-#[allow(non_camel_case_types)]
-type FSEventStreamCallback = unsafe extern "C" fn(
-    stream_ref: FSEventStreamRef,
-    client_callback_info: *mut c_void,
-    num_events: usize,
-    event_paths: *mut c_void,
-    event_flags: *const u32,
-    event_ids: *const u64,
-);
-
-#[repr(C)]
-struct FSEventStreamContext {
-    version: c_ulong,
-    info: *mut c_void,
-    retain: *const c_void,
-    release: *const c_void,
-    copy_description: *const c_void,
-}
-
-#[link(name = "CoreServices", kind = "framework")]
-extern "C" {
-    fn FSEventStreamCreate(
-        allocator: *const c_void,
-        callback: FSEventStreamCallback,
-        context: *mut FSEventStreamContext,
-        paths_to_watch: *const c_void,
-        since_when: u64,
-        latency: c_double,
-        flags: u32,
-    ) -> FSEventStreamRef;
-
-    fn FSEventStreamScheduleWithRunLoop(
-        stream_ref: FSEventStreamRef,
-        run_loop: CFRunLoopRef,
-        run_loop_mode: *const c_void,
-    );
-
-    fn FSEventStreamStart(stream_ref: FSEventStreamRef) -> bool;
-    fn FSEventsGetCurrentEventId() -> u64;
-}
-
-#[link(name = "CoreFoundation", kind = "framework")]
-extern "C" {
-    fn CFArrayCreate(
-        allocator: *const c_void,
-        values: *const *const c_void,
-        num_values: isize,
-        callbacks: *const c_void,
-    ) -> *const c_void;
-
-    fn CFStringCreateWithCString(
-        allocator: *const c_void,
-        c_str: *const c_char,
-        encoding: u32,
-    ) -> *const c_void;
-
-    static kCFRunLoopDefaultMode: *const c_void;
-    static kCFTypeArrayCallBacks: c_void;
-}
-
-const FSEVENT_SINCE_NOW: u64      = u64::MAX;
-const KCF_STRING_ENCODING_UTF8: u32 = 0x08000100;
-
-const FLAG_HISTORY_DONE: u32 = 0x00002000;
-const FLAG_ITEM_CREATED:  u32 = 0x00000100;
-const FLAG_ITEM_REMOVED:  u32 = 0x00000200;
-const FLAG_ITEM_RENAMED:  u32 = 0x00000800;
-const FLAG_ITEM_MODIFIED: u32 = 0x00001000;
-const FLAG_ITEM_IS_FILE:  u32 = 0x00010000;
-
-const STREAM_FLAG_FILE_EVENTS: u32 = 0x00000010;
-const STREAM_FLAG_WATCH_ROOT:  u32 = 0x00000004;
-
-struct WatchContext {
-    index: Arc<DashMap<String, Vec<PathBuf>>>,
-}
-
-static LOG_FILE: OnceCell<String> = OnceCell::new();
-static LOG_ENABLED: OnceCell<bool> = OnceCell::new();
-static LOG_WRITER: OnceCell<Mutex<BufWriter<std::fs::File>>> = OnceCell::new();
-
-static DB_PATH: OnceCell<PathBuf> = OnceCell::new();
-static DB_CONN: OnceCell<Arc<Mutex<Connection>>> = OnceCell::new();
-
-#[allow(dead_code)]
-static LAST_EVENT_ID: std::sync::atomic::AtomicU64 = 
-    std::sync::atomic::AtomicU64::new(0);
-
-fn set_db_path() {
-    let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let data_dir = PathBuf::from(home_dir).join(".machunt").join("data");
-    fs::create_dir_all(&data_dir).ok();
-    DB_PATH.set(data_dir.join("index.db")).unwrap();
-}
-
-fn init_db() {
-    let path = DB_PATH.get().unwrap();
-    let conn = Connection::open(path).unwrap();
-
-    conn.execute_batch(
-        "
-        PRAGMA journal_mode=WAL;
-        PRAGMA synchronous=NORMAL;
-        PRAGMA cache_size=-65536;
-        PRAGMA temp_store=MEMORY;
-        PRAGMA mmap_size=268435456;
-        CREATE TABLE IF NOT EXISTS files (
-            id   INTEGER PRIMARY KEY,
-            name TEXT NOT NULL,
-            path TEXT NOT NULL UNIQUE
-        );
-        CREATE INDEX IF NOT EXISTS idx_name ON files(name);
-
-        CREATE TABLE IF NOT EXISTS meta (
-            key   TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-    ").unwrap();
-
-    DB_CONN.set(Arc::new(Mutex::new(conn))).unwrap();
-}
-
-fn get_db() -> &'static Arc<Mutex<Connection>> {
-    DB_CONN.get().unwrap()
-}
-
-fn db_insert(name: &str, path: &PathBuf) {
-    let conn = get_db().lock();
-    conn.execute(
-        "INSERT OR IGNORE INTO files (name, path) VALUES (?1, ?2)",
-        params![name, path.to_string_lossy().as_ref()],
-    ).ok();
-}
-
-fn db_delete(path: &PathBuf) {
-    let conn = get_db().lock();
-    conn.execute(
-        "DELETE FROM files WHERE path = ?1",
-        params![path.to_string_lossy().as_ref()],
-    ).ok();
-}
-
-fn db_insert_batch(entries: &[(String, PathBuf)]) {
-      if entries.is_empty() { return; }
-      
-      let mut conn = get_db().lock();
-      
-      conn.execute_batch("PRAGMA synchronous=OFF;").ok();
-      
-      let tx = conn.transaction().unwrap();
-      {
-          let mut stmt = tx.prepare_cached(
-              "INSERT OR IGNORE INTO files (name, path) VALUES (?1, ?2)"
-          ).unwrap();
-          for (name, path) in entries {
-              stmt.execute(params![name, path.to_string_lossy().as_ref()]).ok();
-          }
-      }
-      tx.commit().unwrap();
-      
-      conn.execute_batch("PRAGMA synchronous=NORMAL;").ok();
-  }
-
-  #[allow(dead_code)]
-  fn save_last_event_id(event_id: u64) {
-      let conn = get_db().lock();
-      conn.execute(
-          "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_event_id', ?1)",
-          params![event_id.to_string()],
-      ).ok();
-  }
-
-  #[allow(dead_code)]
-  fn load_last_event_id() -> Option<u64> {
-      let conn = get_db().lock();
-      conn.query_row(
-          "SELECT value FROM meta WHERE key = 'last_event_id'",
-          [],
-          |row| row.get::<_, String>(0),
-      ).ok()?.parse().ok()
-  }
-
-  #[derive(Parser)]
+#[derive(Parser)]
 #[command(name = "machunt")]
 #[command(about = "macOS Global File Search Tool")]
 struct Cli {
@@ -213,16 +24,16 @@ struct Cli {
 
     #[arg(short, long)]
     regex: bool,
-    
+
     #[arg(long)]
     folder: bool,
-    
+
     #[arg(long)]
     file: bool,
-    
+
     #[arg(long)]
     logs: bool,
-    
+
     #[arg(default_value = "")]
     query: String,
 }
@@ -232,604 +43,127 @@ enum Commands {
     Build {
         #[arg(short, long)]
         path: Option<String>,
+
+        #[arg(long)]
+        rebuild: bool,
     },
     Watch,
 }
 
-static FILE_INDEX: OnceCell<Arc<DashMap<String, Vec<PathBuf>>>> = OnceCell::new();
-
-fn load_index_from_db() -> bool {
-      let path = DB_PATH.get().unwrap();
-      if !path.exists() {
-          return false;
-      }
-      let start = Instant::now();
-      println!("Loading index from database...");
-
-      let index = get_index();
-      index.clear();
-
-      let conn = get_db().lock();
-      let mut stmt = conn
-          .prepare("SELECT name, path FROM files")
-          .unwrap();
-
-      let mut count = 0usize;
-
-      let rows = stmt.query_map([], |row| {
-          Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-      }).unwrap();
-
-      for row in rows.flatten() {
-          let (name, path_str) = row;
-          index.entry(name).or_default().push(PathBuf::from(path_str));
-          count += 1;
-      }
-
-      println!("Loaded {} records, took {:?}", count, start.elapsed());
-      count > 0
-  }
-
-  fn get_index() -> &'static Arc<DashMap<String, Vec<PathBuf>>> {
-    FILE_INDEX.get().unwrap()
-}
-
-const BATCH_SIZE: usize = 50000;
-
-fn get_timestamp() -> String {
-    let now = SystemTime::now();
-    let since_epoch = now.duration_since(UNIX_EPOCH).unwrap();
-    let timestamp = since_epoch.as_secs();
-    timestamp.to_string()
-}
-
-fn num_cpus() -> usize {
-    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
-}
-
-fn cleanup_dead_paths_background() {
-    thread::spawn(|| {
-        let start = Instant::now();
-        
-        let paths: Vec<(String, String)> = {
-            let conn = get_db().lock();
-            let mut stmt = conn.prepare("SELECT name, path FROM files").unwrap();
-            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-                .unwrap()
-                .flatten()
-                .collect()
-        };
-
-        let index = get_index();
-        let dead_shared = Arc::new(std::sync::Mutex::new(vec![]));
-
-        let chunk_size = (paths.len() / num_cpus()).max(1);
-        let handles: Vec<_> = paths.chunks(chunk_size).map(|chunk| {
-            let chunk = chunk.to_vec();
-            let dead_shared = dead_shared.clone();
-            thread::spawn(move || {
-                let local_dead: Vec<PathBuf> = chunk.into_iter()
-                    .filter_map(|(_, path_str)| {
-                        let p = PathBuf::from(path_str);
-                        if !p.exists() { Some(p) } else { None }
-                    })
-                    .collect();
-                dead_shared.lock().unwrap().extend(local_dead);
-            })
-        }).collect();
-
-        for h in handles { h.join().unwrap(); }
-        let dead = Arc::try_unwrap(dead_shared).unwrap().into_inner().unwrap();
-        let dead_count = dead.len();
-
-        if dead_count == 0 {
-            return;
-        }
-
-        let mut conn = get_db().lock();
-        let tx = conn.transaction().unwrap();
-        {
-            let mut stmt = tx.prepare_cached("DELETE FROM files WHERE path = ?1").unwrap();
-            for path in &dead {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
-                if let Some(mut v) = index.get_mut(&name) {
-                    v.retain(|p| p != path);
-                    if v.is_empty() { drop(v); index.remove(&name); }
-                }
-                stmt.execute(params![path.to_string_lossy().as_ref()]).ok();
-            }
-        }
-        tx.commit().unwrap();
-
-        println!("[Startup Validation] Cleaned up {} dead paths, took {:?}", dead_count, start.elapsed());
-    });
-}
-
-fn init_logging(enabled: bool) {
-    if enabled {
-        let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let logs_dir = PathBuf::from(home_dir).join(".machunt").join("logs");
-        fs::create_dir_all(&logs_dir).ok();
-        let log_file = logs_dir.join(format!("machunt_{}.log", get_timestamp()));
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_file)
-            .unwrap();
-        LOG_WRITER.set(Mutex::new(BufWriter::new(file))).unwrap();
-        LOG_FILE.set(log_file.to_string_lossy().to_string()).unwrap();
-        LOG_ENABLED.set(true).unwrap();
-    } else {
-        LOG_ENABLED.set(false).unwrap();
+fn search_once(engine: &Engine, cli: &Cli) {
+    if cli.query.is_empty() {
+        eprintln!("Error: missing query");
+        std::process::exit(1);
     }
-}
 
-fn log_message(message: &str) {
-    if *LOG_ENABLED.get().unwrap_or(&false) {
-        if let Some(writer) = LOG_WRITER.get() {
-            let mut w = writer.lock();
-            writeln!(w, "{}", message).ok();
-        }
-    }
-}
-
-fn get_root_directories() -> Vec<PathBuf> {
-    let root = PathBuf::from("/");
-    let mut dirs = Vec::new();
-    
-    if let Ok(entries) = std::fs::read_dir(root) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let path_str = path.to_string_lossy();
-                if !matches!(
-                    path_str.as_ref(),
-                    "/dev" | "/proc" | "/sys"
-                    | "/private/var/vm"
-                    | "/private/var/run"
-                    | "/private/var/folders"
-                    | "/System/Volumes/Data"
-                    | "/System/Volumes/Preboot"
-                    | "/System/Volumes/Recovery"
-                    | "/System/Volumes/VM"
-                ) && !path_str.contains("/.Spotlight-V100")
-                && !path_str.contains("/.fseventsd")
-                {
-                    dirs.push(path);
-                }
-            }
-        }
-    }
-    
-    dirs
-}
-
-fn scan_root(root: PathBuf, tx: crossbeam::channel::Sender<Vec<(String, PathBuf)>>) {
-    let mut batch = Vec::with_capacity(BATCH_SIZE);
-
-    for entry in WalkDir::new(&root)
-        .follow_links(false)
-        .min_depth(1)
-        .into_iter()
-        .filter_entry(|e| {
-            let p = e.path();
-            let path_str = p.to_str().unwrap_or("");
-            !matches!(
-                path_str,
-                "/dev" | "/proc" | "/sys"
-                | "/private/var/vm"
-                | "/private/var/run"
-                | "/private/var/folders"
-                | "/System/Volumes/Data"
-                | "/System/Volumes/Preboot"
-                | "/System/Volumes/Recovery"
-                | "/System/Volumes/VM"
-            ) && !path_str.contains("/.Spotlight-V100")
-            && !path_str.contains("/.fseventsd")
-        })
-        .filter_map(|e| e.ok())
-    {
-        if let Some(name) = entry.file_name().to_str() {
-            batch.push((name.to_lowercase(), entry.into_path()));
-            if batch.len() >= BATCH_SIZE {
-                tx.send(std::mem::replace(&mut batch, Vec::with_capacity(BATCH_SIZE)))
-                    .ok();
-            }
-        }
-    }
-    if !batch.is_empty() {
-        tx.send(batch).ok();
-    }
-}
-
-fn build_index(path: Option<String>) {
     let start = Instant::now();
-    println!("Building file index...");
-
-    let roots = if let Some(p) = path {
-        vec![PathBuf::from(p)]
-    } else {
-        get_root_directories()
+    let options = SearchOptions {
+        query: cli.query.clone(),
+        mode: if cli.regex {
+            SearchMode::Pattern
+        } else {
+            SearchMode::Substring
+        },
+        path_prefix: if cli.path != "." {
+            Some(PathBuf::from(&cli.path))
+        } else {
+            None
+        },
+        include_files: cli.file,
+        include_dirs: cli.folder,
     };
 
-    let (tx, rx) = crossbeam::channel::bounded::<Vec<(String, PathBuf)>>(256);
-
-    let handles: Vec<_> = roots.into_iter().map(|root| {
-        let tx = tx.clone();
-        thread::spawn(move || scan_root(root, tx))
-    }).collect();
-    drop(tx);
-
-    let mut db_batch: Vec<(String, PathBuf)> = Vec::with_capacity(50_000);
-    let mut count = 0usize;
-
-    for chunk in rx {
-        count += chunk.len();
-        db_batch.extend(chunk);
-
-        if db_batch.len() >= 50_000 {
-            db_insert_batch(&db_batch);
-            db_batch.clear();
-        }
-
-        if count % 500_000 < BATCH_SIZE {
-            println!("Scanned {} files, took {:?}", count, start.elapsed());
-        }
-    }
-    if !db_batch.is_empty() {
-        db_insert_batch(&db_batch);
-    }
-
-    for h in handles { h.join().unwrap(); }
-    println!("Scan + DB write took: {:?}", start.elapsed());
-
-    let t_mem = Instant::now();
-    load_index_from_db();
-    println!("Write to memory took: {:?}", t_mem.elapsed());
-
-    let current_event_id = unsafe { FSEventsGetCurrentEventId() };
-    save_last_event_id(current_event_id);
-    println!("Saved EventID: {}, next watch will use incremental sync", current_event_id);
-
-    println!("Index build completed, {} files total, took {:?}", count, start.elapsed());
-}
-
-fn search_substring(index: &Arc<DashMap<String, Vec<PathBuf>>>, query: &str, only_file: bool, only_dir: bool) -> Vec<PathBuf> {
-    let mut results = vec![];
-    let query_lower = query.to_lowercase();
-    
-    for r in index.iter() {
-        let (file_name, paths) = r.pair();
-        if file_name.contains(&query_lower) {
-            for path in paths.iter() {
-                if only_file && path.is_dir() {
-                    continue;
-                }
-                if only_dir && path.is_file() {
-                    continue;
-                }
-                results.push(path.clone());
-            }
-        }
-    }
-    
-    results
-}
-
-fn convert_wildcard_to_regex(pattern: &str) -> Result<Regex, regex::Error> {
-    let mut regex_pattern = String::new();
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut i = 0;
-    
-    while i < chars.len() {
-        match chars[i] {
-            '*' => {
-                if i + 1 < chars.len() && chars[i + 1] == '*' {
-                    regex_pattern.push_str(".*");
-                    i += 2;
-                } else {
-                    regex_pattern.push_str("[^/]*");
-                    i += 1;
-                }
-            }
-            '?' => {
-                regex_pattern.push_str("[^/]");
-                i += 1;
-            }
-            '.' => {
-                regex_pattern.push_str("\\.");
-                i += 1;
-            }
-            '{' => {
-                regex_pattern.push_str("(");
-                i += 1;
-            }
-            '}' => {
-                regex_pattern.push_str(")");
-                i += 1;
-            }
-            ',' => {
-                regex_pattern.push_str("|");
-                i += 1;
-            }
-            c => {
-                regex_pattern.push(c);
-                i += 1;
-            }
-        }
-    }
-    
-    Regex::new(&regex_pattern)
-}
-
-fn search_regex(index: &Arc<DashMap<String, Vec<PathBuf>>>, pattern: &str, only_file: bool, only_dir: bool) -> Vec<PathBuf> {
-    let mut results = vec![];
-    
-    let regex = match convert_wildcard_to_regex(pattern) {
-        Ok(re) => re,
-        Err(e) => {
-            eprintln!("Regex error: {}", e);
-            return results;
-        }
-    };
-
-    for r in index.iter() {
-        let (file_name, paths) = r.pair();
-        if regex.is_match(file_name) {
-            for path in paths.iter() {
-                if only_file && path.is_dir() {
-                    continue;
-                }
-                if only_dir && path.is_file() {
-                    continue;
-                }
-                results.push(path.clone());
-            }
-        }
-    }
-    
-    results
-}
-
-fn search_files(query: &str, use_regex: bool, folder: bool, file: bool, path: &str) {
-    let start = Instant::now();
-    let index = get_index();
-
-    let results = if use_regex {
-        search_regex(index, query, file, folder)
-    } else {
-        search_substring(index, query, file, folder)
-    };
-
-    let filtered_results: Vec<PathBuf> = if path != "." {
-        results
-            .into_iter()
-            .filter(|p| p.to_string_lossy().starts_with(path))
-            .collect()
-    } else {
-        results
-    };
-
+    let results = engine.search(options);
     let duration = start.elapsed();
-    println!("Search completed, found {} matching files, took {:?}", filtered_results.len(), duration);
 
-    for path in filtered_results {
+    println!(
+        "Search completed, found {} matching files, took {:?}",
+        results.len(),
+        duration
+    );
+    for path in results {
         println!("{}", path.display());
     }
 }
 
-unsafe extern "C" fn fsevent_callback(
-    _stream_ref: FSEventStreamRef,
-    client_info: *mut c_void,
-    num_events: usize,
-    event_paths: *mut c_void,
-    event_flags: *const u32,
-    event_ids: *const u64,
-) {
-    let ctx = &*(client_info as *const WatchContext);
-    let paths_ptr = event_paths as *const *const c_char;
-
-    for i in 0..num_events {
-        let flags = *event_flags.add(i);
-        let event_id = *event_ids.add(i);
-        let path_cstr = CStr::from_ptr(*paths_ptr.add(i));
-        let path_str = match path_cstr.to_str() {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-
-        LAST_EVENT_ID.store(event_id, std::sync::atomic::Ordering::Relaxed);
-
-        if flags & FLAG_HISTORY_DONE != 0 {
-            println!("History playback completed (EventID: {}), entering real-time monitoring", event_id);
-            save_last_event_id(event_id);
-            continue;
-        }
-
-        let path = PathBuf::from(path_str);
-
-        if flags & FLAG_ITEM_IS_FILE == 0 {
-            if flags & FLAG_ITEM_REMOVED != 0 {
-                let prefix = format!("{}/", path_str);
-                ctx.index.retain(|_, v| {
-                    v.retain(|p| {
-                        if p.to_string_lossy().starts_with(&prefix) {
-                            db_delete(p);
-                            false
-                        } else {
-                            true
-                        }
-                    });
-                    !v.is_empty()
-                });
-            }
-            continue;
-        }
-
-        let file_name_lower = match path.file_name().and_then(|n| n.to_str()) {
-            Some(name) => name.to_lowercase(),
-            None => continue,
-        };
-
-        if flags & FLAG_ITEM_REMOVED != 0 {
-            if let Some(mut v) = ctx.index.get_mut(&file_name_lower) {
-                v.retain(|p| p != &path);
-                db_delete(&path);
-                if *LOG_ENABLED.get().unwrap_or(&false) {
-                log_message(&format!("[-] {}", path.display()));
-            }
-                if v.is_empty() {
-                    drop(v);
-                    ctx.index.remove(&file_name_lower);
-                }
-            }
-            continue;
-        }
-
-        if flags & (FLAG_ITEM_CREATED | FLAG_ITEM_RENAMED | FLAG_ITEM_MODIFIED) != 0 {
-            if path.is_file() {
-                let mut entry = ctx.index.entry(file_name_lower.clone()).or_default();
-                if !entry.contains(&path) {
-                    entry.push(path.clone());
-                    db_insert(&file_name_lower, &path);
-                    if *LOG_ENABLED.get().unwrap_or(&false) {
-                        log_message(&format!("[+] {}", path.display()));
-                    }
-                }
-            } else {
-                if let Some(mut v) = ctx.index.get_mut(&file_name_lower) {
-                    v.retain(|p| p != &path);
-                    db_delete(&path);
-                    if v.is_empty() {
-                        drop(v);
-                        ctx.index.remove(&file_name_lower);
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn watch_with_history(since_event_id: Option<u64>) {
-    let index = get_index().clone();
-    let since = since_event_id.unwrap_or(FSEVENT_SINCE_NOW);
-
-    thread::spawn(move || {
-        unsafe {
-            let path_cstr = std::ffi::CString::new("/").unwrap();
-            let cf_path = CFStringCreateWithCString(
-                std::ptr::null(),
-                path_cstr.as_ptr(),
-                KCF_STRING_ENCODING_UTF8,
-            );
-            let paths_array = CFArrayCreate(
-                std::ptr::null(),
-                &cf_path as *const _ as *const *const c_void,
-                1,
-                &kCFTypeArrayCallBacks as *const _ as *const c_void,
-            );
-
-            let ctx = Box::new(WatchContext { index });
-            let mut fsevent_ctx = FSEventStreamContext {
-                version: 0,
-                info: Box::into_raw(ctx) as *mut c_void,
-                retain: std::ptr::null(),
-                release: std::ptr::null(),
-                copy_description: std::ptr::null(),
-            };
-
-            let stream = FSEventStreamCreate(
-                std::ptr::null(),
-                fsevent_callback,
-                &mut fsevent_ctx,
-                paths_array,
-                since,
-                0.05,
-                STREAM_FLAG_FILE_EVENTS | STREAM_FLAG_WATCH_ROOT,
-            );
-
-            FSEventStreamScheduleWithRunLoop(
-                stream,
-                CFRunLoopGetCurrent(),
-                kCFRunLoopDefaultMode as *const c_void,
-            );
-
-            FSEventStreamStart(stream);
-            println!("FSEvents monitoring started, since_event_id={:?}", since_event_id);
-
-            CFRunLoopRun();
-        }
-    });
-}
-
-fn real_time_search() {
+fn real_time_search(engine: Engine) {
     println!("Real-time search mode, enter search term (Ctrl+C to exit):");
-
     loop {
         let mut input = String::new();
-        std::io::stdin().read_line(&mut input).unwrap();
+        if std::io::stdin().read_line(&mut input).is_err() {
+            continue;
+        }
         let input = input.trim();
-
         if input.is_empty() {
             continue;
         }
 
-        search_files(input, false, false, false, ".");
+        let options = SearchOptions {
+            query: input.to_string(),
+            mode: SearchMode::Substring,
+            path_prefix: None,
+            include_files: true,
+            include_dirs: true,
+        };
+        let results = engine.search(options);
+        println!("Found {} results", results.len());
+        for path in results {
+            println!("{}", path.display());
+        }
     }
 }
 
 fn main() {
-    set_db_path();
-    init_db();
-    FILE_INDEX.set(Arc::new(DashMap::new())).unwrap();
-
     let cli = Cli::parse();
-    init_logging(cli.logs);
+    let engine = Engine::new(cli.logs);
 
     match cli.command {
-        Some(Commands::Build { path }) => {
-            println!("Building index for specified path...");
-            build_index(path);
+        Some(Commands::Build { path, rebuild }) => {
+            engine.build_index(path, rebuild);
         }
         Some(Commands::Watch) => {
-            let has_index = load_index_from_db();
-            let last_event_id = load_last_event_id();
-            
+            let has_index = engine.load_index_from_db() > 0;
+            let last_event_id = engine.load_last_event_id();
+
             if !has_index {
                 println!("First run, building index in background...");
-                watch_with_history(None);
-                thread::spawn(|| build_index(None));
+                engine.start_watch(None);
+                let engine_bg = engine.clone();
+                std::thread::spawn(move || {
+                    engine_bg.build_index(None, true);
+                });
             } else {
                 match last_event_id {
                     Some(id) => {
-                        println!("Resuming from last exit point (EventID: {}), playing back offline changes...", id);
-                        watch_with_history(Some(id));
+                        println!(
+                            "Resuming from last exit point (EventID: {}), playing back offline changes...",
+                            id
+                        );
+                        engine.start_watch(Some(id));
                     }
                     None => {
                         println!("Background validation...");
-                        watch_with_history(None);
-                        cleanup_dead_paths_background();
+                        engine.start_watch(None);
+                        engine.cleanup_dead_paths_background();
                     }
                 }
             }
-            
-            ctrlc::set_handler(|| {
-                let id = LAST_EVENT_ID.load(std::sync::atomic::Ordering::Relaxed);
-                if id > 0 {
-                    save_last_event_id(id);
-                    println!("\nSaved EventID: {}", id);
-                }
+
+            let engine_ctrlc = engine.clone();
+            ctrlc::set_handler(move || {
+                engine_ctrlc.save_last_event_id_from_runtime();
                 std::process::exit(0);
-            }).unwrap();
-            
-            real_time_search();
+            })
+            .unwrap();
+
+            real_time_search(engine);
         }
         None => {
-            if !load_index_from_db() {
+            if engine.load_index_from_db() == 0 {
                 eprintln!("Error: Index not found, please run machunt build first");
                 std::process::exit(1);
             }
-            search_files(&cli.query, cli.regex, cli.folder, cli.file, &cli.path);
+            search_once(&engine, &cli);
         }
     }
 }

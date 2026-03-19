@@ -1,0 +1,246 @@
+use crate::db::Db;
+use crate::utils::Logger;
+use core_foundation_sys::runloop::{CFRunLoopGetCurrent, CFRunLoopRef, CFRunLoopRun};
+use dashmap::DashMap;
+use std::ffi::{c_void, CStr};
+use std::os::raw::{c_char, c_double, c_ulong};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::thread;
+
+#[allow(non_camel_case_types)]
+type FSEventStreamRef = *mut c_void;
+#[allow(non_camel_case_types)]
+type FSEventStreamCallback = unsafe extern "C" fn(
+    stream_ref: FSEventStreamRef,
+    client_callback_info: *mut c_void,
+    num_events: usize,
+    event_paths: *mut c_void,
+    event_flags: *const u32,
+    event_ids: *const u64,
+);
+
+#[repr(C)]
+struct FSEventStreamContext {
+    version: c_ulong,
+    info: *mut c_void,
+    retain: *const c_void,
+    release: *const c_void,
+    copy_description: *const c_void,
+}
+
+#[link(name = "CoreServices", kind = "framework")]
+extern "C" {
+    fn FSEventStreamCreate(
+        allocator: *const c_void,
+        callback: FSEventStreamCallback,
+        context: *mut FSEventStreamContext,
+        paths_to_watch: *const c_void,
+        since_when: u64,
+        latency: c_double,
+        flags: u32,
+    ) -> FSEventStreamRef;
+
+    fn FSEventStreamScheduleWithRunLoop(
+        stream_ref: FSEventStreamRef,
+        run_loop: CFRunLoopRef,
+        run_loop_mode: *const c_void,
+    );
+
+    fn FSEventStreamStart(stream_ref: FSEventStreamRef) -> bool;
+    pub fn FSEventsGetCurrentEventId() -> u64;
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFArrayCreate(
+        allocator: *const c_void,
+        values: *const *const c_void,
+        num_values: isize,
+        callbacks: *const c_void,
+    ) -> *const c_void;
+
+    fn CFStringCreateWithCString(
+        allocator: *const c_void,
+        c_str: *const c_char,
+        encoding: u32,
+    ) -> *const c_void;
+
+    static kCFRunLoopDefaultMode: *const c_void;
+    static kCFTypeArrayCallBacks: c_void;
+}
+
+const FSEVENT_SINCE_NOW: u64 = u64::MAX;
+const KCF_STRING_ENCODING_UTF8: u32 = 0x08000100;
+
+const FLAG_HISTORY_DONE: u32 = 0x0000_2000;
+const FLAG_ITEM_CREATED: u32 = 0x0000_0100;
+const FLAG_ITEM_REMOVED: u32 = 0x0000_0200;
+const FLAG_ITEM_RENAMED: u32 = 0x0000_0800;
+const FLAG_ITEM_MODIFIED: u32 = 0x0000_1000;
+const FLAG_ITEM_IS_FILE: u32 = 0x0001_0000;
+
+const STREAM_FLAG_FILE_EVENTS: u32 = 0x0000_0010;
+const STREAM_FLAG_WATCH_ROOT: u32 = 0x0000_0004;
+
+struct WatchContext {
+    index: Arc<DashMap<String, Vec<PathBuf>>>,
+    db: Db,
+    logger: Logger,
+    last_event_id: Arc<AtomicU64>,
+}
+
+unsafe extern "C" fn fsevent_callback(
+    _stream_ref: FSEventStreamRef,
+    client_info: *mut c_void,
+    num_events: usize,
+    event_paths: *mut c_void,
+    event_flags: *const u32,
+    event_ids: *const u64,
+) {
+    let ctx = &*(client_info as *const WatchContext);
+    let paths_ptr = event_paths as *const *const c_char;
+
+    for i in 0..num_events {
+        let flags = *event_flags.add(i);
+        let event_id = *event_ids.add(i);
+        let path_cstr = CStr::from_ptr(*paths_ptr.add(i));
+        let path_str = match path_cstr.to_str() {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        ctx.last_event_id.store(event_id, Ordering::Relaxed);
+
+        if flags & FLAG_HISTORY_DONE != 0 {
+            println!(
+                "History playback completed (EventID: {}), entering real-time monitoring",
+                event_id
+            );
+            ctx.db.save_last_event_id(event_id);
+            continue;
+        }
+
+        let path = PathBuf::from(path_str);
+
+        if flags & FLAG_ITEM_IS_FILE == 0 {
+            if flags & FLAG_ITEM_REMOVED != 0 {
+                let prefix = format!("{}/", path_str);
+                ctx.index.retain(|_, v| {
+                    v.retain(|p| {
+                        if p.to_string_lossy().starts_with(&prefix) {
+                            ctx.db.delete(p.as_path());
+                            if ctx.logger.enabled() {
+                                ctx.logger.log(&format!("[-] {}", p.display()));
+                            }
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    !v.is_empty()
+                });
+            }
+            continue;
+        }
+
+        let file_name_lower = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name.to_lowercase(),
+            None => continue,
+        };
+
+        if flags & FLAG_ITEM_REMOVED != 0 {
+            if let Some(mut v) = ctx.index.get_mut(&file_name_lower) {
+                v.retain(|p| p != &path);
+                ctx.db.delete(path.as_path());
+                if ctx.logger.enabled() {
+                    ctx.logger.log(&format!("[-] {}", path.display()));
+                }
+                if v.is_empty() {
+                    drop(v);
+                    ctx.index.remove(&file_name_lower);
+                }
+            }
+            continue;
+        }
+
+        if flags & (FLAG_ITEM_CREATED | FLAG_ITEM_RENAMED | FLAG_ITEM_MODIFIED) != 0 {
+            if path.is_file() {
+                let mut entry = ctx.index.entry(file_name_lower.clone()).or_default();
+                if !entry.contains(&path) {
+                    entry.push(path.clone());
+                    ctx.db.insert(&file_name_lower, path.as_path());
+                    if ctx.logger.enabled() {
+                        ctx.logger.log(&format!("[+] {}", path.display()));
+                    }
+                }
+            } else if let Some(mut v) = ctx.index.get_mut(&file_name_lower) {
+                v.retain(|p| p != &path);
+                ctx.db.delete(path.as_path());
+                if v.is_empty() {
+                    drop(v);
+                    ctx.index.remove(&file_name_lower);
+                }
+            }
+        }
+    }
+}
+
+pub fn start_watch(
+    index: Arc<DashMap<String, Vec<PathBuf>>>,
+    db: Db,
+    logger: Logger,
+    last_event_id: Arc<AtomicU64>,
+    since_event_id: Option<u64>,
+) {
+    let since = since_event_id.unwrap_or(FSEVENT_SINCE_NOW);
+    thread::spawn(move || unsafe {
+        let path_cstr = std::ffi::CString::new("/").unwrap();
+        let cf_path = CFStringCreateWithCString(
+            std::ptr::null(),
+            path_cstr.as_ptr(),
+            KCF_STRING_ENCODING_UTF8,
+        );
+        let paths_array = CFArrayCreate(
+            std::ptr::null(),
+            &cf_path as *const _,
+            1,
+            &kCFTypeArrayCallBacks as *const _,
+        );
+
+        let ctx = Box::new(WatchContext {
+            index,
+            db,
+            logger,
+            last_event_id,
+        });
+        let mut fsevent_ctx = FSEventStreamContext {
+            version: 0,
+            info: Box::into_raw(ctx) as *mut c_void,
+            retain: std::ptr::null(),
+            release: std::ptr::null(),
+            copy_description: std::ptr::null(),
+        };
+
+        let stream = FSEventStreamCreate(
+            std::ptr::null(),
+            fsevent_callback,
+            &mut fsevent_ctx,
+            paths_array,
+            since,
+            0.05,
+            STREAM_FLAG_FILE_EVENTS | STREAM_FLAG_WATCH_ROOT,
+        );
+
+        FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+
+        let _ = FSEventStreamStart(stream);
+        println!(
+            "FSEvents monitoring started, since_event_id={:?}",
+            since_event_id
+        );
+
+        CFRunLoopRun();
+    });
+}
