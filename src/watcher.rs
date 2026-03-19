@@ -1,13 +1,15 @@
 use crate::db::Db;
-use crate::utils::Logger;
+use crate::utils::{should_skip_path, Logger};
 use core_foundation_sys::runloop::{CFRunLoopGetCurrent, CFRunLoopRef, CFRunLoopRun};
 use dashmap::DashMap;
 use std::ffi::{c_void, CStr};
 use std::os::raw::{c_char, c_double, c_ulong};
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
+use walkdir::WalkDir;
 
 #[allow(non_camel_case_types)]
 type FSEventStreamRef = *mut c_void;
@@ -91,6 +93,78 @@ struct WatchContext {
     last_event_id: Arc<AtomicU64>,
 }
 
+fn upsert_path(ctx: &WatchContext, path: &Path) {
+    if should_skip_path(path) {
+        return;
+    }
+    let file_name_lower = match path.file_name().and_then(|n| n.to_str()) {
+        Some(name) => name.to_lowercase(),
+        None => return,
+    };
+    let path_buf = path.to_path_buf();
+    let mut entry = ctx.index.entry(file_name_lower.clone()).or_default();
+    if !entry.contains(&path_buf) {
+        entry.push(path_buf.clone());
+        ctx.db.insert(&file_name_lower, path);
+        if ctx.logger.enabled() {
+            ctx.logger.log(&format!("[+] {}", path.display()));
+        }
+    }
+}
+
+fn remove_path(ctx: &WatchContext, path: &Path) {
+    let file_name_lower = match path.file_name().and_then(|n| n.to_str()) {
+        Some(name) => name.to_lowercase(),
+        None => return,
+    };
+    if let Some(mut v) = ctx.index.get_mut(&file_name_lower) {
+        v.retain(|p| p != path);
+        if v.is_empty() {
+            drop(v);
+            ctx.index.remove(&file_name_lower);
+        }
+    }
+    ctx.db.delete(path);
+    if ctx.logger.enabled() {
+        ctx.logger.log(&format!("[-] {}", path.display()));
+    }
+}
+
+fn remove_path_tree(ctx: &WatchContext, root: &Path) {
+    let root_str = root.to_string_lossy();
+    let prefix = format!("{}/", root_str);
+    ctx.index.retain(|_, v| {
+        v.retain(|p| {
+            let path_str = p.to_string_lossy();
+            if p.as_path() == root || path_str.starts_with(&prefix) {
+                ctx.db.delete(p.as_path());
+                if ctx.logger.enabled() {
+                    ctx.logger.log(&format!("[-] {}", p.display()));
+                }
+                false
+            } else {
+                true
+            }
+        });
+        !v.is_empty()
+    });
+}
+
+fn index_directory_tree(ctx: &WatchContext, root: &Path) {
+    if should_skip_path(root) {
+        return;
+    }
+    for entry in WalkDir::new(root)
+        .follow_links(false)
+        .min_depth(0)
+        .into_iter()
+        .filter_entry(|e| !should_skip_path(e.path()))
+        .filter_map(Result::ok)
+    {
+        upsert_path(ctx, entry.path());
+    }
+}
+
 unsafe extern "C" fn fsevent_callback(
     _stream_ref: FSEventStreamRef,
     client_info: *mut c_void,
@@ -126,62 +200,27 @@ unsafe extern "C" fn fsevent_callback(
 
         if flags & FLAG_ITEM_IS_FILE == 0 {
             if flags & FLAG_ITEM_REMOVED != 0 {
-                let prefix = format!("{}/", path_str);
-                ctx.index.retain(|_, v| {
-                    v.retain(|p| {
-                        if p.to_string_lossy().starts_with(&prefix) {
-                            ctx.db.delete(p.as_path());
-                            if ctx.logger.enabled() {
-                                ctx.logger.log(&format!("[-] {}", p.display()));
-                            }
-                            false
-                        } else {
-                            true
-                        }
-                    });
-                    !v.is_empty()
-                });
+                remove_path_tree(ctx, path.as_path());
+            } else if flags & (FLAG_ITEM_CREATED | FLAG_ITEM_RENAMED | FLAG_ITEM_MODIFIED) != 0 {
+                if path.is_dir() {
+                    index_directory_tree(ctx, path.as_path());
+                } else if path.exists() {
+                    upsert_path(ctx, path.as_path());
+                }
             }
             continue;
         }
 
-        let file_name_lower = match path.file_name().and_then(|n| n.to_str()) {
-            Some(name) => name.to_lowercase(),
-            None => continue,
-        };
-
         if flags & FLAG_ITEM_REMOVED != 0 {
-            if let Some(mut v) = ctx.index.get_mut(&file_name_lower) {
-                v.retain(|p| p != &path);
-                ctx.db.delete(path.as_path());
-                if ctx.logger.enabled() {
-                    ctx.logger.log(&format!("[-] {}", path.display()));
-                }
-                if v.is_empty() {
-                    drop(v);
-                    ctx.index.remove(&file_name_lower);
-                }
-            }
+            remove_path(ctx, path.as_path());
             continue;
         }
 
         if flags & (FLAG_ITEM_CREATED | FLAG_ITEM_RENAMED | FLAG_ITEM_MODIFIED) != 0 {
             if path.is_file() {
-                let mut entry = ctx.index.entry(file_name_lower.clone()).or_default();
-                if !entry.contains(&path) {
-                    entry.push(path.clone());
-                    ctx.db.insert(&file_name_lower, path.as_path());
-                    if ctx.logger.enabled() {
-                        ctx.logger.log(&format!("[+] {}", path.display()));
-                    }
-                }
-            } else if let Some(mut v) = ctx.index.get_mut(&file_name_lower) {
-                v.retain(|p| p != &path);
-                ctx.db.delete(path.as_path());
-                if v.is_empty() {
-                    drop(v);
-                    ctx.index.remove(&file_name_lower);
-                }
+                upsert_path(ctx, path.as_path());
+            } else {
+                remove_path(ctx, path.as_path());
             }
         }
     }

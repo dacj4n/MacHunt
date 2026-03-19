@@ -11,9 +11,11 @@ pub enum SearchMode {
 pub struct SearchOptions {
     pub query: String,
     pub mode: SearchMode,
+    pub case_sensitive: bool,
     pub path_prefix: Option<PathBuf>,
     pub include_files: bool,
     pub include_dirs: bool,
+    pub limit: Option<usize>,
 }
 
 impl SearchOptions {

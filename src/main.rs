@@ -57,21 +57,7 @@ fn search_once(engine: &Engine, cli: &Cli) {
     }
 
     let start = Instant::now();
-    let options = SearchOptions {
-        query: cli.query.clone(),
-        mode: if cli.regex {
-            SearchMode::Pattern
-        } else {
-            SearchMode::Substring
-        },
-        path_prefix: if cli.path != "." {
-            Some(PathBuf::from(&cli.path))
-        } else {
-            None
-        },
-        include_files: cli.file,
-        include_dirs: cli.folder,
-    };
+    let options = build_search_options(cli, cli.query.clone());
 
     let results = engine.search(options);
     let duration = start.elapsed();
@@ -86,7 +72,27 @@ fn search_once(engine: &Engine, cli: &Cli) {
     }
 }
 
-fn real_time_search(engine: Engine) {
+fn build_search_options(cli: &Cli, query: String) -> SearchOptions {
+    SearchOptions {
+        query,
+        mode: if cli.regex {
+            SearchMode::Pattern
+        } else {
+            SearchMode::Substring
+        },
+        case_sensitive: false,
+        path_prefix: if cli.path != "." {
+            Some(PathBuf::from(&cli.path))
+        } else {
+            None
+        },
+        include_files: cli.file,
+        include_dirs: cli.folder,
+        limit: None,
+    }
+}
+
+fn real_time_search(engine: Engine, cli: &Cli) {
     println!("Real-time search mode, enter search term (Ctrl+C to exit):");
     loop {
         let mut input = String::new();
@@ -98,13 +104,7 @@ fn real_time_search(engine: Engine) {
             continue;
         }
 
-        let options = SearchOptions {
-            query: input.to_string(),
-            mode: SearchMode::Substring,
-            path_prefix: None,
-            include_files: true,
-            include_dirs: true,
-        };
+        let options = build_search_options(cli, input.to_string());
         let results = engine.search(options);
         println!("Found {} results", results.len());
         for path in results {
@@ -156,7 +156,7 @@ fn main() {
             })
             .unwrap();
 
-            real_time_search(engine);
+            real_time_search(engine, &cli);
         }
         None => {
             if engine.load_index_from_db() == 0 {
