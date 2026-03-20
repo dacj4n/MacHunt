@@ -3,7 +3,7 @@ use crate::utils::{get_root_directories, should_skip_path};
 use crossbeam::channel::Sender;
 use dashmap::DashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 use walkdir::WalkDir;
@@ -39,6 +39,7 @@ fn scan_root(root: PathBuf, tx: Sender<Vec<(String, PathBuf)>>) {
 pub fn build_index(
     db: &Db,
     index: &Arc<DashMap<String, Vec<PathBuf>>>,
+    index_write_lock: &Arc<Mutex<()>>,
     path: Option<String>,
     rebuild: bool,
 ) -> usize {
@@ -94,6 +95,9 @@ pub fn build_index(
     println!("Scan + DB write took: {:?}", start.elapsed());
 
     let t_mem = Instant::now();
+    let _guard = index_write_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let loaded = db.load_index(index);
     println!(
         "Write to memory took: {:?} ({} records)",
