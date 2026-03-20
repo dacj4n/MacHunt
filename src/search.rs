@@ -14,7 +14,16 @@ pub fn search(index: &Arc<DashMap<String, Vec<PathBuf>>>, options: SearchOptions
 }
 
 fn path_allowed(path: &Path, include_files: bool, include_dirs: bool) -> bool {
-    (include_files && path.is_file()) || (include_dirs && path.is_dir())
+    if include_files && include_dirs {
+        return true;
+    }
+    if include_files {
+        return path.is_file();
+    }
+    if include_dirs {
+        return path.is_dir();
+    }
+    false
 }
 
 fn prefix_allowed(path: &Path, prefix: &Option<PathBuf>) -> bool {
@@ -48,10 +57,10 @@ fn search_substring(
             continue;
         }
         for path in paths.iter() {
-            if !path_allowed(path.as_path(), options.include_files, options.include_dirs) {
+            if !prefix_allowed(path.as_path(), &options.path_prefix) {
                 continue;
             }
-            if !prefix_allowed(path.as_path(), &options.path_prefix) {
+            if !path_allowed(path.as_path(), options.include_files, options.include_dirs) {
                 continue;
             }
             if options.case_sensitive {
@@ -102,10 +111,10 @@ fn search_pattern(
             continue;
         }
         for path in paths.iter() {
-            if !path_allowed(path.as_path(), options.include_files, options.include_dirs) {
+            if !prefix_allowed(path.as_path(), &options.path_prefix) {
                 continue;
             }
-            if !prefix_allowed(path.as_path(), &options.path_prefix) {
+            if !path_allowed(path.as_path(), options.include_files, options.include_dirs) {
                 continue;
             }
             if options.case_sensitive {

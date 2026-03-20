@@ -24,7 +24,8 @@ pub struct Engine {
 impl Engine {
     pub fn new(logs_enabled: bool) -> Self {
         let db = Db::init_default();
-        let index = Arc::new(DashMap::new());
+        // Pre-allocate for large indexes to reduce startup rehash/resize churn.
+        let index = Arc::new(DashMap::with_capacity(1_048_576));
         let logger = Logger::new(logs_enabled);
         let last_event_id = Arc::new(AtomicU64::new(0));
         let index_write_lock = Arc::new(Mutex::new(()));
