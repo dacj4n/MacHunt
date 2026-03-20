@@ -1,131 +1,150 @@
 # MacHunt
 
-macOS Global File Search Tool
+A macOS local file search tool with both CLI and desktop GUI.
 
 [中文文档](README_zh.md)
 
-## Features
+## Versions
 
-- ⚡ **High Performance**: Search entire disk in seconds
-- 🔍 **Real-time Monitoring**: Monitor file changes in real-time
-- 📂 **Flexible Search**: Support substring, regex, folder/file filtering
-- 🔄 **Incremental Indexing**: Fast rebuild with event ID persistence
-- 🗄️ **Persistent Storage**: SQLite-based index storage
+- CLI / Core Engine: `v0.2.0`
+- GUI (Tauri + React): `v1.0.0`
+
+## Project Overview
+
+MacHunt provides:
+
+- A Rust-based indexing and search engine.
+- A CLI workflow for scripting and terminal usage.
+- A native desktop GUI built with Tauri + React.
+
+## Components
+
+- `CLI`: Build index, search, and run file watcher from terminal.
+- `Core Engine`: Shared Rust search/index/watch logic.
+- `GUI`: Native desktop app that calls local Tauri commands directly.
 
 ## Requirements
 
 - macOS 10.15+
 - Rust 1.70+
+- Node.js 18+
+- npm 9+
 
-## Installation
+## Install
 
 ```bash
 git clone https://github.com/dacj4n/MacHunt.git
 cd MacHunt
+```
+
+## Quick Start
+
+### 1) Build CLI
+
+```bash
 cargo build --release
 ```
 
-## Usage
-
-### First-time Setup
+### 2) Start GUI (Development)
 
 ```bash
-# Build file index (required before first use)
-machunt build          # Full disk scan, ~15-20 seconds
+npm install
+npm run tauri dev
+```
 
-# Or build index for specific path
+`tauri dev` loads local static assets from `dist` (built by `npm run build`).
+No extra HTTP backend service is required.
+
+### 3) Build GUI (Production)
+
+```bash
+npm run build
+npm run tauri build
+```
+
+## CLI Usage
+
+### Build Index
+
+```bash
+# Full scan
+machunt build
+
+# Build for a specific path
 machunt build --path "/Volumes/Tools"
+
+# Force rebuild
+machunt build --rebuild
 ```
 
 ### Search
 
 ```bash
-# Search for files/folders containing "test"
+# Search files and folders
 machunt "test"
 
-# Search only files
+# Search files only
 machunt --file "test"
 
-# Search only folders
+# Search folders only
 machunt --folder "test"
-```
 
-### Regex Search
-
-```bash
-# Search all pdf files
-machunt --regex "*.pdf"
-
-# Search pdf and docx files
-machunt --regex "*.{pdf,docx}"
-
-# Search files with specific pattern
-machunt --regex "*.mp{3,4}"
-```
-
-### Path Filtering
-
-```bash
-# Search in specific directory
+# Search with path prefix
 machunt --path "/Volumes/Tools" "test"
 ```
 
-### Real-time Monitoring
+### Pattern Search
 
 ```bash
-# Start real-time monitoring (keep running in background)
-machunt watch
-
-# Then search from anywhere
-machunt "test"
+machunt --regex "*.pdf"
+machunt --regex "*.{pdf,docx}"
+machunt --regex "*.mp{3,4}"
 ```
+
+### Watch Mode
+
+```bash
+machunt watch
+```
+
+## GUI Notes
+
+- GUI uses the same Rust core engine as CLI.
+- Search is local and direct via Tauri invoke.
+- No REST/HTTP server is required for search requests.
+- Index/watcher behavior is shared with CLI.
 
 ## Permissions
 
-**Important**: To monitor all directories, you need to grant Full Disk Access to your terminal:
+For full-disk indexing/monitoring on macOS, grant **Full Disk Access**:
 
-1. Go to **System Settings → Privacy & Security → Full Disk Access**
-2. Click the lock icon and enter your password
-3. Click **+** and add your terminal app (Terminal.app, iTerm2, etc.)
-4. Restart your terminal
+1. Open **System Settings → Privacy & Security → Full Disk Access**.
+2. Add your terminal app for CLI usage.
+3. Add the generated MacHunt app for GUI usage.
+4. Restart related apps after granting permission.
 
-Without this permission, monitoring will only work for `/Users` directory.
+Without this permission, coverage may be limited.
 
 ## Wildcard Rules
 
-- `*` - Match any characters (excluding `/`)
-- `**` - Match any characters (including `/`)
-- `?` - Match single character (excluding `/`)
-- `{a,b}` - Match `a` or `b`
+- `*`: any chars except `/`
+- `**`: any chars including `/`
+- `?`: single char except `/`
+- `{a,b}`: `a` or `b`
 
-## Examples
+## Performance (Reference)
 
-```bash
-# Search for all video files
-machunt --regex "*.{mp4,mov,avi}"
-
-# Search for large files
-machunt --regex ".*\.pdf"
-
-# Search for test files in specific path
-machunt --path "/Volumes/工作" "测试"
-
-# Monitor file changes
-machunt watch
-```
-
-## Performance
-
-- Index building: ~10-15 seconds for 2M files
-- Search response: <50ms for typical queries
-- Memory usage: ~200-300MB for 2M files
+- Index build: ~10-15s for ~2M files
+- Query latency: typically <50ms
+- Memory usage: ~200-300MB for ~2M files
 
 ## Architecture
 
-- **Index Storage**: SQLite database with WAL mode
-- **File Monitoring**: FSEvents API for macOS
-- **Concurrent Access**: DashMap for lock-free access
-- **Parallel Processing**: Crossbeam for multi-threaded scanning
+- Index storage: SQLite (WAL mode)
+- File watch: macOS FSEvents
+- Concurrent map: DashMap
+- Parallel scan: Crossbeam + WalkDir
+- Desktop stack: Tauri + React
 
 ## License
 

@@ -1,131 +1,149 @@
 # MacHunt
 
-macOS 全局文件搜索工具
+一个同时提供 CLI 和桌面 GUI 的 macOS 本地文件搜索工具。
 
 [English](README.md)
 
-## 功能特性
+## 版本信息
 
-- ⚡ **高性能**: 数秒内完成全盘搜索
-- 🔍 **实时监控**: 实时监控文件变化
-- 📂 **灵活搜索**: 支持子串搜索、正则表达式、文件/文件夹过滤
-- 🔄 **增量索引**: 基于事件ID的快速重建
-- 🗄️ **持久化存储**: 基于 SQLite 的索引存储
+- CLI / 核心引擎：`v0.2.0`
+- GUI（Tauri + React）：`v1.0.0`
 
-## 系统要求
+## 项目概览
+
+MacHunt 提供三部分能力：
+
+- Rust 实现的索引与搜索引擎。
+- 面向终端脚本场景的 CLI。
+- 基于 Tauri + React 的原生桌面 GUI。
+
+## 组件说明
+
+- `CLI`：在终端完成索引构建、搜索、文件监听。
+- `Core Engine`：CLI 与 GUI 共享的 Rust 核心逻辑。
+- `GUI`：通过 Tauri command 直接调用本地搜索能力。
+
+## 环境要求
 
 - macOS 10.15+
 - Rust 1.70+
+- Node.js 18+
+- npm 9+
 
 ## 安装
 
 ```bash
 git clone https://github.com/dacj4n/MacHunt.git
 cd MacHunt
+```
+
+## 快速开始
+
+### 1）构建 CLI
+
+```bash
 cargo build --release
 ```
 
-## 使用方法
-
-### 首次使用
+### 2）启动 GUI（开发模式）
 
 ```bash
-# 构建文件索引（首次使用必须执行）
-machunt build          # 全盘扫描，约 15-20 秒
+npm install
+npm run tauri dev
+```
 
-# 或构建指定路径的索引
+`tauri dev` 会读取本地 `dist` 静态资源（由 `npm run build` 生成），
+不需要额外的 HTTP 后端服务。
+
+### 3）打包 GUI（生产构建）
+
+```bash
+npm run build
+npm run tauri build
+```
+
+## CLI 使用
+
+### 构建索引
+
+```bash
+# 全盘构建
+machunt build
+
+# 仅构建指定路径
 machunt build --path "/Volumes/Tools"
+
+# 强制重建
+machunt build --rebuild
 ```
 
 ### 搜索
 
 ```bash
-# 搜索包含"测试"的文件和文件夹
+# 搜索文件和文件夹
 machunt "测试"
 
-# 只搜索文件
+# 仅搜索文件
 machunt --file "测试"
 
-# 只搜索文件夹
+# 仅搜索文件夹
 machunt --folder "测试"
-```
 
-### 正则搜索
-
-```bash
-# 搜索所有 pdf 文件
-machunt --regex "*.pdf"
-
-# 搜索 pdf 和 docx 文件
-machunt --regex "*.{pdf,docx}"
-
-# 搜索特定模式的文件
-machunt --regex "*.mp{3,4}"
-```
-
-### 路径过滤
-
-```bash
-# 在指定目录下搜索
+# 指定路径前缀过滤
 machunt --path "/Volumes/Tools" "测试"
 ```
 
-### 实时监控
+### 模式搜索
 
 ```bash
-# 启动实时监控（后台保持运行）
-machunt watch
-
-# 然后可以随时搜索
-machunt "测试"
+machunt --regex "*.pdf"
+machunt --regex "*.{pdf,docx}"
+machunt --regex "*.mp{3,4}"
 ```
+
+### 监听模式
+
+```bash
+machunt watch
+```
+
+## GUI 说明
+
+- GUI 与 CLI 共用同一套 Rust 核心引擎。
+- 搜索请求走本地 Tauri invoke，不走 REST/HTTP。
+- 索引与监听语义与 CLI 保持一致。
 
 ## 权限说明
 
-**重要**：如需监控所有目录，需要授予终端完整的磁盘访问权限：
+如果需要全盘索引/监听，请授予**完全磁盘访问权限**：
 
-1. 打开**系统设置 → 隐私与安全性 → 完全磁盘访问权限**
-2. 点击锁图标并输入密码
-3. 点击 **+** 添加您的终端应用（Terminal.app、iTerm2 等）
-4. 重启终端
+1. 打开 **系统设置 → 隐私与安全性 → 完全磁盘访问权限**。
+2. CLI 场景为终端应用授权。
+3. GUI 场景为生成的 MacHunt 应用授权。
+4. 授权后重启相关应用。
 
-未授予权限时，监控仅对 `/Users` 目录有效。
+未授权时，可访问目录范围可能受限。
 
 ## 通配符规则
 
-- `*` - 匹配任意字符（不含 `/`）
-- `**` - 匹配任意字符（含 `/`）
-- `?` - 匹配单个字符（不含 `/`）
-- `{a,b}` - 匹配 `a` 或 `b`
+- `*`：匹配任意字符（不含 `/`）
+- `**`：匹配任意字符（含 `/`）
+- `?`：匹配单个字符（不含 `/`）
+- `{a,b}`：匹配 `a` 或 `b`
 
-## 使用示例
+## 性能参考
 
-```bash
-# 搜索所有视频文件
-machunt --regex "*.{mp4,mov,avi}"
+- 索引构建：约 10-15 秒（约 200 万文件）
+- 查询延迟：典型场景 <50ms
+- 内存占用：约 200-300MB（约 200 万文件）
 
-# 搜索所有 PDF 文件
-machunt --regex ".*\.pdf"
+## 架构
 
-# 在指定路径下搜索测试文件
-machunt --path "/Volumes/工作" "测试"
-
-# 监控文件变化
-machunt watch
-```
-
-## 性能指标
-
-- 索引构建: 200万文件约 10-15 秒
-- 搜索响应: 典型查询 <50ms
-- 内存占用: 200-300MB（200万文件）
-
-## 架构设计
-
-- **索引存储**: SQLite 数据库，启用 WAL 模式
-- **文件监控**: macOS FSEvents API
-- **并发访问**: DashMap 无锁访问
-- **并行处理**: Crossbeam 多线程扫描
+- 索引存储：SQLite（WAL）
+- 文件监听：macOS FSEvents
+- 并发索引：DashMap
+- 并行扫描：Crossbeam + WalkDir
+- 桌面栈：Tauri + React
 
 ## 许可证
 
