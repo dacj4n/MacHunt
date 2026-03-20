@@ -5,7 +5,7 @@ import "./App.css";
 
 type SearchMode = "Substring" | "Pattern";
 type TabId = "all" | "files" | "folders" | "documents" | "images" | "media" | "code" | "archives";
-type SortKey = "name" | "size" | "modified";
+type SortKey = "name" | "path" | "size" | "modified";
 type ColumnKey = "name" | "path" | "size" | "modified";
 type ThemeMode = "system" | "light" | "dark";
 type ViewMode = "search" | "settings";
@@ -27,6 +27,7 @@ const MIN_COLUMN_WIDTHS: Record<ColumnKey, number> = {
 
 const THEME_STORAGE_KEY = "machunt.theme.mode";
 const LANGUAGE_STORAGE_KEY = "machunt.language";
+const COLUMN_WIDTHS_STORAGE_KEY = "machunt.table.column.widths";
 const EVENT_OPEN_SETTINGS = "app://open-settings";
 const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives"];
 
@@ -34,6 +35,14 @@ const I18N = {
   zh: {
     searchPlaceholder: "搜索文件、文件夹、内容...",
     pathPlaceholder: "路径过滤",
+    choosePath: "选择路径",
+    menuOpen: "打开",
+    menuOpenWith: "打开于 ...",
+    menuFinder: "在Finder中查看",
+    menuQSpace: "在QSpace Pro中查看",
+    menuCopyName: "拷贝名称",
+    menuCopyPath: "拷贝路径",
+    menuTrash: "移到废纸篓",
     modeSubstring: "子串",
     modeWildcard: "通配符",
     caseSensitive: "区分大小写",
@@ -84,6 +93,14 @@ const I18N = {
   en: {
     searchPlaceholder: "Search files, folders, content...",
     pathPlaceholder: "Path filter",
+    choosePath: "Choose Path",
+    menuOpen: "Open",
+    menuOpenWith: "Open With ...",
+    menuFinder: "Reveal in Finder",
+    menuQSpace: "View in QSpace Pro",
+    menuCopyName: "Copy Name",
+    menuCopyPath: "Copy Path",
+    menuTrash: "Move to Trash",
     modeSubstring: "Substring",
     modeWildcard: "Wildcard",
     caseSensitive: "Case Sensitive",
@@ -173,6 +190,12 @@ interface WatchResponse {
   lastEventId?: number;
 }
 
+interface ContextMenuState {
+  x: number;
+  y: number;
+  item: SearchResultItem;
+}
+
 function extensionOf(name: string): string {
   const idx = name.lastIndexOf(".");
   if (idx < 0 || idx === name.length - 1) {
@@ -224,6 +247,8 @@ function sortItems(items: SearchResultItem[], key: SortKey, ascending: boolean):
     let cmp = 0;
     if (key === "name") {
       cmp = a.name.localeCompare(b.name);
+    } else if (key === "path") {
+      cmp = a.parent.localeCompare(b.parent);
     } else if (key === "size") {
       cmp = (a.sizeBytes ?? -1) - (b.sizeBytes ?? -1);
     } else {
@@ -302,6 +327,19 @@ function iconGlyph(token: string): string {
   }
 }
 
+function setCellPreviewTooltip(
+  event: React.MouseEvent<HTMLElement>,
+  text: string
+) {
+  const cell = event.currentTarget;
+  const isTruncated = cell.scrollWidth > cell.clientWidth;
+  if (isTruncated) {
+    cell.title = text;
+  } else {
+    cell.removeAttribute("title");
+  }
+}
+
 function buildSearchRequest(
   query: string,
   tab: TabId,
@@ -349,6 +387,40 @@ function fmt(template: string, vars: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (_, key: string) => String(vars[key] ?? ""));
 }
 
+function normalizeStoredColumnWidth(value: unknown, key: ColumnKey): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  const min = MIN_COLUMN_WIDTHS[key];
+  const max = 2200;
+  return Math.round(Math.max(min, Math.min(max, value)));
+}
+
+function loadStoredColumnWidths(): Record<ColumnKey, number> | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const raw = window.localStorage.getItem(COLUMN_WIDTHS_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<Record<ColumnKey, unknown>>;
+    const name = normalizeStoredColumnWidth(parsed.name, "name");
+    const path = normalizeStoredColumnWidth(parsed.path, "path");
+    const size = normalizeStoredColumnWidth(parsed.size, "size");
+    const modified = normalizeStoredColumnWidth(parsed.modified, "modified");
+    if (name === null || path === null || size === null || modified === null) {
+      return null;
+    }
+    return { name, path, size, modified };
+  } catch {
+    return null;
+  }
+}
+
 function App() {
   const [activeView, setActiveView] = useState<ViewMode>("search");
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
@@ -356,6 +428,9 @@ function App() {
   const [language, setLanguage] = useState<Language>(detectDefaultLanguage());
   const [query, setQuery] = useState("");
   const [pathPrefix, setPathPrefix] = useState("");
+  const [pathSuggestions, setPathSuggestions] = useState<string[]>([]);
+  const [isPathDropdownOpen, setIsPathDropdownOpen] = useState(false);
+  const [activePathSuggestion, setActivePathSuggestion] = useState(-1);
   const [mode, setMode] = useState<SearchMode>("Substring");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("all");
@@ -372,10 +447,19 @@ function App() {
   const [isWatchPending, setIsWatchPending] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [isBuilding, setIsBuilding] = useState(false);
+  const [isPickingPath, setIsPickingPath] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [openWithVisible, setOpenWithVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>(DEFAULT_COLUMN_WIDTHS);
+  const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>(
+    () => loadStoredColumnWidths() ?? DEFAULT_COLUMN_WIDTHS
+  );
   const [activeResizer, setActiveResizer] = useState<string | null>(null);
   const tableShellRef = useRef<HTMLElement | null>(null);
+  const pathPickerRef = useRef<HTMLDivElement | null>(null);
+  const pathInputRef = useRef<HTMLInputElement | null>(null);
+  const openWithCloseTimerRef = useRef<number | null>(null);
+  const columnWidthsRef = useRef(columnWidths);
   const resizeStateRef = useRef<{
     left: ColumnKey;
     right: ColumnKey;
@@ -387,10 +471,112 @@ function App() {
   const gridTemplateColumns = `${columnWidths.name}px ${columnWidths.path}px ${columnWidths.size}px ${columnWidths.modified}px`;
   const resolvedTheme = resolveTheme(themeMode, systemDark);
   const t = I18N[language];
+  const normalizedPathPrefix = pathPrefix.trim().toLowerCase();
+  const visiblePathSuggestions = [...pathSuggestions]
+    .filter((path) => {
+      if (!normalizedPathPrefix) {
+        return true;
+      }
+      return path.toLowerCase().includes(normalizedPathPrefix);
+    })
+    .sort((left, right) => {
+      const leftLower = left.toLowerCase();
+      const rightLower = right.toLowerCase();
+      const leftStarts = normalizedPathPrefix.length > 0 && leftLower.startsWith(normalizedPathPrefix) ? 0 : 1;
+      const rightStarts = normalizedPathPrefix.length > 0 && rightLower.startsWith(normalizedPathPrefix) ? 0 : 1;
+      if (leftStarts !== rightStarts) {
+        return leftStarts - rightStarts;
+      }
+      if (left.length !== right.length) {
+        return left.length - right.length;
+      }
+      return left.localeCompare(right);
+    })
+    .slice(0, 8);
+  const isPathDropdownVisible = isPathDropdownOpen && visiblePathSuggestions.length > 0;
 
   const tabLabel = (tab: TabId): string => t[`tab_${tab}` as const];
   const formatIndexedItems = (count: number): string => fmt(t.indexedItems, { count: count.toLocaleString() });
   const formatShownItems = (count: number): string => fmt(t.shownItems, { count: count.toLocaleString() });
+  const clearOpenWithCloseTimer = () => {
+    if (openWithCloseTimerRef.current !== null) {
+      window.clearTimeout(openWithCloseTimerRef.current);
+      openWithCloseTimerRef.current = null;
+    }
+  };
+  const openOpenWithMenu = () => {
+    clearOpenWithCloseTimer();
+    setOpenWithVisible(true);
+  };
+  const scheduleCloseOpenWithMenu = () => {
+    clearOpenWithCloseTimer();
+    openWithCloseTimerRef.current = window.setTimeout(() => {
+      setOpenWithVisible(false);
+      openWithCloseTimerRef.current = null;
+    }, 220);
+  };
+  const closeContextMenu = () => {
+    clearOpenWithCloseTimer();
+    setContextMenu(null);
+    setOpenWithVisible(false);
+  };
+
+  const closePathDropdown = () => {
+    setIsPathDropdownOpen(false);
+    setActivePathSuggestion(-1);
+  };
+
+  const applyPathSuggestion = (path: string) => {
+    setPathPrefix(path);
+    closePathDropdown();
+    pathInputRef.current?.focus();
+  };
+
+  const handlePathInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      closePathDropdown();
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!isPathDropdownOpen) {
+        setIsPathDropdownOpen(true);
+      }
+      if (visiblePathSuggestions.length === 0) {
+        return;
+      }
+      setActivePathSuggestion((prev) => {
+        if (prev < 0 || prev >= visiblePathSuggestions.length - 1) {
+          return 0;
+        }
+        return prev + 1;
+      });
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!isPathDropdownOpen) {
+        setIsPathDropdownOpen(true);
+      }
+      if (visiblePathSuggestions.length === 0) {
+        return;
+      }
+      setActivePathSuggestion((prev) => {
+        if (prev <= 0) {
+          return visiblePathSuggestions.length - 1;
+        }
+        return prev - 1;
+      });
+      return;
+    }
+
+    if (event.key === "Enter" && isPathDropdownVisible && activePathSuggestion >= 0) {
+      event.preventDefault();
+      applyPathSuggestion(visiblePathSuggestions[activePathSuggestion]);
+    }
+  };
 
   useEffect(() => {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
@@ -398,6 +584,67 @@ function App() {
       setThemeMode(stored);
     }
   }, []);
+
+  useEffect(() => {
+    columnWidthsRef.current = columnWidths;
+  }, [columnWidths]);
+
+  useEffect(() => {
+    return () => {
+      clearOpenWithCloseTimer();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (activePathSuggestion < visiblePathSuggestions.length) {
+      return;
+    }
+    setActivePathSuggestion(-1);
+  }, [activePathSuggestion, visiblePathSuggestions.length]);
+
+  useEffect(() => {
+    if (!isPathDropdownOpen) {
+      return;
+    }
+
+    const closeWhenClickOutside = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (pathPickerRef.current?.contains(target)) {
+        return;
+      }
+      closePathDropdown();
+    };
+
+    window.addEventListener("mousedown", closeWhenClickOutside);
+    return () => {
+      window.removeEventListener("mousedown", closeWhenClickOutside);
+    };
+  }, [isPathDropdownOpen]);
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return;
+    }
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeContextMenu();
+      }
+    };
+    const close = () => closeContextMenu();
+
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [contextMenu]);
 
   useEffect(() => {
     const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
@@ -483,18 +730,48 @@ function App() {
       }
 
       try {
-        const watch = await invoke<WatchResponse>("watch_status");
+        const watch = await invoke<WatchResponse>("start_watch_auto");
         if (mounted) {
           setIsWatchRunning(watch.running);
           setWatchStatus(watch.message);
         }
-      } catch {
-        // Keep UI usable even if watcher state fetch fails.
+      } catch (err) {
+        if (mounted) {
+          setError(String(err));
+        }
+        try {
+          const watch = await invoke<WatchResponse>("watch_status");
+          if (mounted) {
+            setIsWatchRunning(watch.running);
+            setWatchStatus(watch.message);
+          }
+        } catch {
+          // Keep UI usable even if watcher state fetch fails.
+        }
       }
     };
 
     void init();
 
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadPathSuggestions = async () => {
+      try {
+        const suggestions = await invoke<string[]>("list_path_suggestions");
+        if (!mounted) {
+          return;
+        }
+        setPathSuggestions(suggestions);
+      } catch {
+        // Keep path filter usable even if suggestion load fails.
+      }
+    };
+    void loadPathSuggestions();
     return () => {
       mounted = false;
     };
@@ -579,9 +856,15 @@ function App() {
     };
 
     const onMouseUp = () => {
+      if (resizeStateRef.current && typeof window !== "undefined") {
+        try {
+          window.localStorage.setItem(COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(columnWidthsRef.current));
+        } catch {
+          // Ignore write failures (e.g. private mode/quota), keep UI functional.
+        }
+      }
       resizeStateRef.current = null;
       setActiveResizer(null);
-      document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
 
@@ -604,7 +887,6 @@ function App() {
         rightStart: columnWidths[right]
       };
       setActiveResizer(marker);
-      document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
     };
 
@@ -738,6 +1020,96 @@ function App() {
     }
   };
 
+  const pickPath = async () => {
+    if (isPickingPath) {
+      return;
+    }
+    setError(null);
+    setIsPickingPath(true);
+    try {
+      const selected = await invoke<string | null>("pick_path_in_finder");
+      if (selected && selected.trim().length > 0) {
+        setPathPrefix(selected);
+        closePathDropdown();
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setIsPickingPath(false);
+    }
+  };
+
+  const openResult = async (path: string) => {
+    try {
+      await invoke("open_search_result", { path });
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  const revealInFinder = async (path: string) => {
+    try {
+      await invoke("reveal_in_finder", { path });
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  const openInQSpace = async (path: string) => {
+    try {
+      await invoke("open_in_qspace", { path });
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  const copyText = async (text: string) => {
+    try {
+      await invoke("copy_to_clipboard", { text });
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  const moveToTrash = async (path: string) => {
+    try {
+      await invoke("move_to_trash", { path });
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  const runContextAction = async (action: () => Promise<void>) => {
+    try {
+      await action();
+    } finally {
+      closeContextMenu();
+    }
+  };
+
+  const toggleHeaderSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortAscending((prev) => !prev);
+      return;
+    }
+    setSortKey(key);
+    setSortAscending(true);
+  };
+
+  const openResultContextMenu = (event: React.MouseEvent<HTMLElement>, item: SearchResultItem) => {
+    event.preventDefault();
+    const menuWidth = 230;
+    const menuHeight = 260;
+    const x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
+    const y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
+    setContextMenu({
+      x,
+      y,
+      item
+    });
+    setOpenWithVisible(false);
+  };
+
   const settingsThemeOptions: Array<{ mode: ThemeMode; title: string; description: string }> = [
     { mode: "system", title: t.themeSystemTitle, description: t.themeSystemDesc },
     { mode: "light", title: t.themeLightTitle, description: t.themeLightDesc },
@@ -766,12 +1138,53 @@ function App() {
               </div>
 
               <div className="filter-row">
-                <input
-                  className="path-input"
-                  placeholder={t.pathPlaceholder}
-                  value={pathPrefix}
-                  onChange={(event) => setPathPrefix(event.target.value)}
-                />
+                <div className="path-picker" ref={pathPickerRef}>
+                  <div className="path-input-wrap">
+                    <input
+                      ref={pathInputRef}
+                      className="path-input"
+                      placeholder={t.pathPlaceholder}
+                      value={pathPrefix}
+                      autoComplete="off"
+                      onFocus={() => setIsPathDropdownOpen(true)}
+                      onBlur={(event) => {
+                        const next = event.relatedTarget;
+                        if (next instanceof Node && pathPickerRef.current?.contains(next)) {
+                          return;
+                        }
+                        closePathDropdown();
+                      }}
+                      onKeyDown={handlePathInputKeyDown}
+                      onChange={(event) => {
+                        setPathPrefix(event.target.value);
+                        setIsPathDropdownOpen(true);
+                        setActivePathSuggestion(-1);
+                      }}
+                    />
+                    {isPathDropdownVisible && (
+                      <div className="path-suggest-panel">
+                        {visiblePathSuggestions.map((path, index) => (
+                          <button
+                            key={path}
+                            type="button"
+                            className={index === activePathSuggestion ? "path-suggest-item active" : "path-suggest-item"}
+                            onMouseEnter={() => setActivePathSuggestion(index)}
+                            onMouseDown={(event) => {
+                              event.preventDefault();
+                              applyPathSuggestion(path);
+                            }}
+                          >
+                            <span className="path-suggest-icon">»</span>
+                            <span className="path-suggest-text">{path}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button className="action-btn path-pick-btn" onClick={() => void pickPath()} disabled={isPickingPath}>
+                    {t.choosePath}
+                  </button>
+                </div>
 
                 <div className="mode-controls">
                   <div className="segmented">
@@ -828,47 +1241,46 @@ function App() {
                   </button>
                 ))}
               </div>
-              <div className="sort-controls">
-                <label htmlFor="sort-key">{t.sort}</label>
-                <select
-                  id="sort-key"
-                  value={sortKey}
-                  onChange={(event) => setSortKey(event.target.value as SortKey)}
-                >
-                  <option value="name">{t.sort_name}</option>
-                  <option value="size">{t.sort_size}</option>
-                  <option value="modified">{t.sort_modified}</option>
-                </select>
-                <button className="sort-order" onClick={() => setSortAscending((prev) => !prev)}>
-                  {sortAscending ? "↑" : "↓"}
-                </button>
-              </div>
             </section>
 
             <section className="table-shell" ref={tableShellRef}>
               <div className="table-header" style={{ gridTemplateColumns }}>
                 <span className="header-cell">
-                  {t.header_name}
+                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("name")}>
+                    <span className="header-sort-label">{t.header_name}</span>
+                    {sortKey === "name" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                  </button>
                   <span
                     className={activeResizer === "name-path" ? "column-resizer active" : "column-resizer"}
                     onMouseDown={startResize("name", "path", "name-path")}
                   />
                 </span>
                 <span className="header-cell">
-                  {t.header_path}
+                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("path")}>
+                    <span className="header-sort-label">{t.header_path}</span>
+                    {sortKey === "path" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                  </button>
                   <span
                     className={activeResizer === "path-size" ? "column-resizer active" : "column-resizer"}
                     onMouseDown={startResize("path", "size", "path-size")}
                   />
                 </span>
                 <span className="header-cell">
-                  {t.header_size}
+                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("size")}>
+                    <span className="header-sort-label">{t.header_size}</span>
+                    {sortKey === "size" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                  </button>
                   <span
                     className={activeResizer === "size-modified" ? "column-resizer active" : "column-resizer"}
                     onMouseDown={startResize("size", "modified", "size-modified")}
                   />
                 </span>
-                <span className="header-cell">{t.header_modified}</span>
+                <span className="header-cell">
+                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("modified")}>
+                    <span className="header-sort-label">{t.header_modified}</span>
+                    {sortKey === "modified" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                  </button>
+                </span>
               </div>
 
               <div className="table-body">
@@ -877,14 +1289,28 @@ function App() {
                   return (
                     <article
                       key={`${item.path}-${index}`}
-                      className={index === 0 ? "row selected" : "row"}
+                      className="row"
                       style={{ gridTemplateColumns }}
+                      onDoubleClick={() => void openResult(item.path)}
+                      onContextMenu={(event) => openResultContextMenu(event, item)}
                     >
                       <div className="cell name-cell">
                         <span className={`file-icon ${token}`}>{iconGlyph(token)}</span>
-                        <span className="name-text">{item.name}</span>
+                        <span
+                          className="name-text"
+                          onMouseEnter={(event) => setCellPreviewTooltip(event, item.name)}
+                          onMouseLeave={(event) => event.currentTarget.removeAttribute("title")}
+                        >
+                          {item.name}
+                        </span>
                       </div>
-                      <div className="cell path-cell">{item.parent}</div>
+                      <div
+                        className="cell path-cell"
+                        onMouseEnter={(event) => setCellPreviewTooltip(event, item.parent)}
+                        onMouseLeave={(event) => event.currentTarget.removeAttribute("title")}
+                      >
+                        {item.parent}
+                      </div>
                       <div className="cell">{formatBytes(item.sizeBytes)}</div>
                       <div className="cell">{formatDate(item.modifiedUnixMs)}</div>
                     </article>
@@ -964,6 +1390,79 @@ function App() {
 
         {error && <aside className="error-box">{error}</aside>}
       </main>
+      {contextMenu && (
+        <div
+          className="context-menu-layer"
+          onMouseDown={closeContextMenu}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <div
+            className="context-menu"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onMouseDown={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.preventDefault()}
+          >
+            <button
+              className="context-menu-btn"
+              onClick={() => void runContextAction(() => openResult(contextMenu.item.path))}
+            >
+              {t.menuOpen}
+            </button>
+
+            <div
+              className="context-submenu-wrap"
+              onMouseEnter={openOpenWithMenu}
+              onMouseLeave={scheduleCloseOpenWithMenu}
+            >
+              <button className="context-menu-btn">
+                <span>{t.menuOpenWith}</span>
+                <span className="context-menu-arrow">›</span>
+              </button>
+              {openWithVisible && (
+                <div
+                  className="context-submenu"
+                  onMouseEnter={openOpenWithMenu}
+                  onMouseLeave={scheduleCloseOpenWithMenu}
+                >
+                  <button
+                    className="context-menu-btn"
+                    onClick={() => void runContextAction(() => revealInFinder(contextMenu.item.path))}
+                  >
+                    {t.menuFinder}
+                  </button>
+                  <button
+                    className="context-menu-btn"
+                    onClick={() => void runContextAction(() => openInQSpace(contextMenu.item.path))}
+                  >
+                    {t.menuQSpace}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="context-menu-sep" />
+
+            <button
+              className="context-menu-btn"
+              onClick={() => void runContextAction(() => copyText(contextMenu.item.name))}
+            >
+              {t.menuCopyName}
+            </button>
+            <button
+              className="context-menu-btn"
+              onClick={() => void runContextAction(() => copyText(contextMenu.item.path))}
+            >
+              {t.menuCopyPath}
+            </button>
+            <button
+              className="context-menu-btn danger"
+              onClick={() => void runContextAction(() => moveToTrash(contextMenu.item.path))}
+            >
+              {t.menuTrash}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,6 +1,10 @@
 use machunt::{Engine, SearchMode, SearchOptions};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::collections::BTreeSet;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -152,6 +156,194 @@ fn map_result(path: PathBuf) -> SearchResultItem {
         is_file,
         size_bytes,
         modified_unix_ms,
+    }
+}
+
+fn add_path_if_dir(out: &mut BTreeSet<String>, path: &Path) {
+    if matches!(
+        path.to_str(),
+        Some("/Volumes") | Some("/Volumes/Macintosh HD")
+    ) {
+        return;
+    }
+    if path.is_dir() {
+        out.insert(path.to_string_lossy().to_string());
+    }
+}
+
+#[tauri::command]
+fn list_path_suggestions() -> Vec<String> {
+    let mut out = BTreeSet::new();
+
+    add_path_if_dir(&mut out, Path::new("/"));
+
+    if let Ok(home) = std::env::var("HOME") {
+        add_path_if_dir(&mut out, PathBuf::from(home).as_path());
+    }
+
+    if let Ok(entries) = fs::read_dir("/Volumes") {
+        for entry in entries.flatten().take(8) {
+            add_path_if_dir(&mut out, entry.path().as_path());
+        }
+    }
+
+    out.into_iter().collect()
+}
+
+#[tauri::command]
+fn pick_path_in_finder() -> Option<String> {
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg("POSIX path of (choose folder with prompt \"Select a search path\")")
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+    if raw == "/" {
+        return Some(raw);
+    }
+
+    Some(raw.trim_end_matches('/').to_string())
+}
+
+#[tauri::command]
+fn open_search_result(path: String) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    if !target.exists() {
+        return Err("Target path does not exist".to_string());
+    }
+
+    let status = if target.is_dir() {
+        Command::new("open")
+            .arg("-a")
+            .arg("Finder")
+            .arg(&target)
+            .status()
+            .map_err(|e| e.to_string())?
+    } else {
+        Command::new("open")
+            .arg(&target)
+            .status()
+            .map_err(|e| e.to_string())?
+    };
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to open target".to_string())
+    }
+}
+
+#[tauri::command]
+fn reveal_in_finder(path: String) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    if !target.exists() {
+        return Err("Target path does not exist".to_string());
+    }
+
+    let status = if target.is_dir() {
+        Command::new("open")
+            .arg("-a")
+            .arg("Finder")
+            .arg(&target)
+            .status()
+            .map_err(|e| e.to_string())?
+    } else {
+        Command::new("open")
+            .arg("-R")
+            .arg(&target)
+            .status()
+            .map_err(|e| e.to_string())?
+    };
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to reveal in Finder".to_string())
+    }
+}
+
+#[tauri::command]
+fn open_in_qspace(path: String) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    if !target.exists() {
+        return Err("Target path does not exist".to_string());
+    }
+    let open_target = if target.is_file() {
+        target
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| target.clone())
+    } else {
+        target.clone()
+    };
+
+    let status = Command::new("open")
+        .arg("-a")
+        .arg("QSpace Pro")
+        .arg(open_target)
+        .status()
+        .map_err(|e| e.to_string())?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to open in QSpace Pro (check whether QSpace Pro is installed)".to_string())
+    }
+}
+
+#[tauri::command]
+fn copy_to_clipboard(text: String) -> Result<(), String> {
+    let mut child = Command::new("pbcopy")
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|e| e.to_string())?;
+    } else {
+        return Err("Unable to access clipboard pipe".to_string());
+    }
+
+    let status = child.wait().map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to copy to clipboard".to_string())
+    }
+}
+
+#[tauri::command]
+fn move_to_trash(path: String) -> Result<(), String> {
+    let target = PathBuf::from(&path);
+    if !target.exists() {
+        return Err("Target path does not exist".to_string());
+    }
+
+    let escaped = path.replace('\\', "\\\\").replace('\"', "\\\"");
+    let script = format!(
+        "tell application \"Finder\" to delete POSIX file \"{}\"",
+        escaped
+    );
+    let status = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .status()
+        .map_err(|e| e.to_string())?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to move item to Trash".to_string())
     }
 }
 
@@ -472,6 +664,13 @@ pub fn run() {
             start_watch_auto,
             stop_watch,
             watch_status,
+            list_path_suggestions,
+            pick_path_in_finder,
+            open_search_result,
+            reveal_in_finder,
+            open_in_qspace,
+            copy_to_clipboard,
+            move_to_trash,
             set_menu_language,
             persist_watch_cursor
         ])
