@@ -1,13 +1,13 @@
 use crate::db::Db;
 use crate::utils::{should_skip_path, Logger};
-use core_foundation_sys::runloop::{CFRunLoopGetCurrent, CFRunLoopRef, CFRunLoopRun};
+use core_foundation_sys::runloop::{CFRunLoopGetCurrent, CFRunLoopRef, CFRunLoopRun, CFRunLoopStop};
 use dashmap::DashMap;
 use std::ffi::{c_void, CStr};
 use std::os::raw::{c_char, c_double, c_ulong};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use walkdir::WalkDir;
 
@@ -51,6 +51,9 @@ extern "C" {
     );
 
     fn FSEventStreamStart(stream_ref: FSEventStreamRef) -> bool;
+    fn FSEventStreamStop(stream_ref: FSEventStreamRef);
+    fn FSEventStreamInvalidate(stream_ref: FSEventStreamRef);
+    fn FSEventStreamRelease(stream_ref: FSEventStreamRef);
     pub fn FSEventsGetCurrentEventId() -> u64;
 }
 
@@ -91,12 +94,35 @@ struct WatchContext {
     db: Db,
     logger: Logger,
     last_event_id: Arc<AtomicU64>,
+    index_write_lock: Arc<Mutex<()>>,
+}
+
+#[derive(Default)]
+struct WatchRuntime {
+    stream_ref: usize,
+    run_loop_ref: usize,
+    running: bool,
+}
+
+fn watch_runtime() -> &'static Mutex<WatchRuntime> {
+    static RUNTIME: OnceLock<Mutex<WatchRuntime>> = OnceLock::new();
+    RUNTIME.get_or_init(|| Mutex::new(WatchRuntime::default()))
+}
+
+fn lock_watch_runtime() -> std::sync::MutexGuard<'static, WatchRuntime> {
+    watch_runtime()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn upsert_path(ctx: &WatchContext, path: &Path) {
     if should_skip_path(path) {
         return;
     }
+    let _guard = ctx
+        .index_write_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let file_name_lower = match path.file_name().and_then(|n| n.to_str()) {
         Some(name) => name.to_lowercase(),
         None => return,
@@ -113,6 +139,10 @@ fn upsert_path(ctx: &WatchContext, path: &Path) {
 }
 
 fn remove_path(ctx: &WatchContext, path: &Path) {
+    let _guard = ctx
+        .index_write_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let file_name_lower = match path.file_name().and_then(|n| n.to_str()) {
         Some(name) => name.to_lowercase(),
         None => return,
@@ -131,6 +161,10 @@ fn remove_path(ctx: &WatchContext, path: &Path) {
 }
 
 fn remove_path_tree(ctx: &WatchContext, root: &Path) {
+    let _guard = ctx
+        .index_write_lock
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let root_str = root.to_string_lossy();
     let prefix = format!("{}/", root_str);
     ctx.index.retain(|_, v| {
@@ -231,8 +265,19 @@ pub fn start_watch(
     db: Db,
     logger: Logger,
     last_event_id: Arc<AtomicU64>,
+    index_write_lock: Arc<Mutex<()>>,
     since_event_id: Option<u64>,
 ) {
+    {
+        let mut runtime = lock_watch_runtime();
+        if runtime.running {
+            return;
+        }
+        runtime.running = true;
+        runtime.stream_ref = 0;
+        runtime.run_loop_ref = 0;
+    }
+
     let since = since_event_id.unwrap_or(FSEVENT_SINCE_NOW);
     thread::spawn(move || unsafe {
         let path_cstr = std::ffi::CString::new("/").unwrap();
@@ -253,10 +298,12 @@ pub fn start_watch(
             db,
             logger,
             last_event_id,
+            index_write_lock,
         });
+        let ctx_ptr = Box::into_raw(ctx);
         let mut fsevent_ctx = FSEventStreamContext {
             version: 0,
-            info: Box::into_raw(ctx) as *mut c_void,
+            info: ctx_ptr as *mut c_void,
             retain: std::ptr::null(),
             release: std::ptr::null(),
             copy_description: std::ptr::null(),
@@ -272,14 +319,77 @@ pub fn start_watch(
             STREAM_FLAG_FILE_EVENTS | STREAM_FLAG_WATCH_ROOT,
         );
 
-        FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+        if stream.is_null() {
+            let mut runtime = lock_watch_runtime();
+            runtime.running = false;
+            runtime.stream_ref = 0;
+            runtime.run_loop_ref = 0;
+            drop(Box::from_raw(ctx_ptr));
+            eprintln!("Failed to create FSEvent stream");
+            return;
+        }
 
-        let _ = FSEventStreamStart(stream);
+        let run_loop = CFRunLoopGetCurrent();
+        {
+            let mut runtime = lock_watch_runtime();
+            runtime.stream_ref = stream as usize;
+            runtime.run_loop_ref = run_loop as usize;
+        }
+
+        FSEventStreamScheduleWithRunLoop(stream, run_loop, kCFRunLoopDefaultMode);
+
+        if !FSEventStreamStart(stream) {
+            FSEventStreamInvalidate(stream);
+            FSEventStreamRelease(stream);
+            drop(Box::from_raw(ctx_ptr));
+            let mut runtime = lock_watch_runtime();
+            runtime.running = false;
+            runtime.stream_ref = 0;
+            runtime.run_loop_ref = 0;
+            eprintln!("Failed to start FSEvent stream");
+            return;
+        }
+
         println!(
             "FSEvents monitoring started, since_event_id={:?}",
             since_event_id
         );
 
         CFRunLoopRun();
+
+        FSEventStreamStop(stream);
+        FSEventStreamInvalidate(stream);
+        FSEventStreamRelease(stream);
+        drop(Box::from_raw(ctx_ptr));
+
+        let mut runtime = lock_watch_runtime();
+        runtime.running = false;
+        runtime.stream_ref = 0;
+        runtime.run_loop_ref = 0;
+        println!("FSEvents monitoring stopped");
     });
+}
+
+pub fn stop_watch() -> bool {
+    let (running, stream_ref, run_loop_ref) = {
+        let runtime = lock_watch_runtime();
+        (runtime.running, runtime.stream_ref, runtime.run_loop_ref)
+    };
+
+    if !running || run_loop_ref == 0 {
+        return false;
+    }
+
+    unsafe {
+        if stream_ref != 0 {
+            FSEventStreamStop(stream_ref as FSEventStreamRef);
+        }
+        CFRunLoopStop(run_loop_ref as CFRunLoopRef);
+    }
+
+    true
+}
+
+pub fn is_watch_running() -> bool {
+    lock_watch_runtime().running
 }

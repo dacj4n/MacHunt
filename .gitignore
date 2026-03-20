@@ -1,4 +1,7 @@
 /target
+/src-tauri/target
+/node_modules
+/dist
 /doc
 /logs
 /data

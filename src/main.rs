@@ -1,14 +1,5 @@
-mod builder;
-mod db;
-mod engine;
-mod model;
-mod search;
-mod utils;
-mod watcher;
-
-use crate::engine::Engine;
-use crate::model::{SearchMode, SearchOptions};
 use clap::{Parser, Subcommand};
+use machunt::{Engine, SearchMode, SearchOptions};
 use std::path::PathBuf;
 use std::time::Instant;
 

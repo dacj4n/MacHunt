@@ -7,7 +7,7 @@ use crate::watcher;
 use dashmap::DashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 
@@ -17,6 +17,7 @@ pub struct Engine {
     db: Db,
     logger: Logger,
     last_event_id: Arc<AtomicU64>,
+    index_write_lock: Arc<Mutex<()>>,
 }
 
 impl Engine {
@@ -25,11 +26,13 @@ impl Engine {
         let index = Arc::new(DashMap::new());
         let logger = Logger::new(logs_enabled);
         let last_event_id = Arc::new(AtomicU64::new(0));
+        let index_write_lock = Arc::new(Mutex::new(()));
         Self {
             index,
             db,
             logger,
             last_event_id,
+            index_write_lock,
         }
     }
 
@@ -40,13 +43,23 @@ impl Engine {
 
         let start = Instant::now();
         println!("Loading index from database...");
+        let _guard = self
+            .index_write_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let count = self.db.load_index(&self.index);
         println!("Loaded {} records, took {:?}", count, start.elapsed());
         count
     }
 
     pub fn build_index(&self, path: Option<String>, rebuild: bool) -> usize {
-        let count = builder::build_index(&self.db, &self.index, path, rebuild);
+        let count = builder::build_index(
+            &self.db,
+            &self.index,
+            &self.index_write_lock,
+            path,
+            rebuild,
+        );
         let current_event_id = unsafe { watcher::FSEventsGetCurrentEventId() };
         self.db.save_last_event_id(current_event_id);
         println!(
@@ -62,8 +75,17 @@ impl Engine {
             self.db.clone(),
             self.logger.clone(),
             self.last_event_id.clone(),
+            self.index_write_lock.clone(),
             since_event_id,
         );
+    }
+
+    pub fn stop_watch(&self) -> bool {
+        watcher::stop_watch()
+    }
+
+    pub fn is_watch_running(&self) -> bool {
+        watcher::is_watch_running()
     }
 
     pub fn search(&self, options: SearchOptions) -> Vec<PathBuf> {
