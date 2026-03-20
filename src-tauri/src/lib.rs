@@ -9,6 +9,7 @@ use tauri::Emitter;
 struct AppState {
     engine: Engine,
     watch_started: AtomicBool,
+    index_loaded: AtomicBool,
 }
 
 impl AppState {
@@ -16,6 +17,7 @@ impl AppState {
         Self {
             engine: Engine::new(false),
             watch_started: AtomicBool::new(false),
+            index_loaded: AtomicBool::new(false),
         }
     }
 }
@@ -159,6 +161,7 @@ async fn initialize(state: tauri::State<'_, AppState>) -> Result<InitResponse, S
     let indexed = tauri::async_runtime::spawn_blocking(move || engine.load_index_from_db())
         .await
         .map_err(|e| e.to_string())?;
+    state.index_loaded.store(true, Ordering::Relaxed);
 
     let last_event_id = state.engine.load_last_event_id();
 
@@ -203,6 +206,7 @@ async fn search(
 async fn build_index(
     path: Option<String>,
     rebuild: bool,
+    include_dirs: Option<bool>,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<BuildResponse, String> {
@@ -216,9 +220,10 @@ async fn build_index(
     );
 
     let engine = state.engine.clone();
+    let include_dirs = include_dirs.unwrap_or(true);
     let response = tauri::async_runtime::spawn_blocking(move || {
         let started = Instant::now();
-        let indexed = engine.build_index(path, rebuild);
+        let indexed = engine.build_index(path, rebuild, include_dirs);
         BuildResponse {
             indexed,
             took_ms: started.elapsed().as_millis() as u64,
@@ -226,6 +231,9 @@ async fn build_index(
     })
     .await
     .map_err(|e| e.to_string())?;
+    state
+        .index_loaded
+        .store(response.indexed > 0, Ordering::Relaxed);
 
     let _ = app.emit(
         "index://build-status",
@@ -251,14 +259,19 @@ fn start_watch_auto(state: tauri::State<'_, AppState>) -> WatchResponse {
     }
     state.watch_started.store(true, Ordering::SeqCst);
 
-    let has_index = state.engine.load_index_from_db() > 0;
+    if !state.index_loaded.load(Ordering::Relaxed) {
+        let loaded = state.engine.load_index_from_db();
+        state.index_loaded.store(loaded > 0, Ordering::Relaxed);
+    }
+
+    let has_index = state.engine.has_persisted_index();
     let last_event_id = state.engine.load_last_event_id();
 
     if !has_index {
         state.engine.start_watch(None);
         let engine_bg = state.engine.clone();
         std::thread::spawn(move || {
-            let _ = engine_bg.build_index(None, true);
+            let _ = engine_bg.build_index(None, true, true);
         });
 
         return WatchResponse {

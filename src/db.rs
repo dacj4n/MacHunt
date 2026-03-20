@@ -32,7 +32,6 @@ impl Db {
                 name TEXT NOT NULL,
                 path TEXT NOT NULL UNIQUE
             );
-            CREATE INDEX IF NOT EXISTS idx_name ON files(name);
 
             CREATE TABLE IF NOT EXISTS meta (
                 key   TEXT PRIMARY KEY,
@@ -41,6 +40,8 @@ impl Db {
         ",
         )
         .unwrap();
+        // The runtime search path is in-memory; this DB index is not needed and costs disk space.
+        let _ = conn.execute("DROP INDEX IF EXISTS idx_name", []);
 
         Self {
             path: db_path,
@@ -117,6 +118,15 @@ impl Db {
         count
     }
 
+    pub fn has_any_files(&self) -> bool {
+        let conn = self.conn.lock();
+        conn.query_row("SELECT EXISTS(SELECT 1 FROM files LIMIT 1)", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap_or(0)
+            != 0
+    }
+
     pub fn list_all_paths(&self) -> Vec<(String, String)> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT name, path FROM files").unwrap();
@@ -143,5 +153,33 @@ impl Db {
         )
         .ok()
         .and_then(|s| s.parse().ok())
+    }
+
+    pub fn save_include_dirs(&self, include_dirs: bool) {
+        let conn = self.conn.lock();
+        let value = if include_dirs { "1" } else { "0" };
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('include_dirs', ?1)",
+            params![value],
+        );
+    }
+
+    pub fn load_include_dirs(&self) -> Option<bool> {
+        let conn = self.conn.lock();
+        conn.query_row("SELECT value FROM meta WHERE key = 'include_dirs'", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .ok()
+        .map(|v| v == "1")
+    }
+
+    pub fn checkpoint_truncate(&self) {
+        let conn = self.conn.lock();
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    }
+
+    pub fn vacuum(&self) {
+        let conn = self.conn.lock();
+        let _ = conn.execute_batch("VACUUM;");
     }
 }

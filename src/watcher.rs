@@ -95,6 +95,7 @@ struct WatchContext {
     logger: Logger,
     last_event_id: Arc<AtomicU64>,
     index_write_lock: Arc<Mutex<()>>,
+    include_dirs: bool,
 }
 
 #[derive(Default)]
@@ -117,6 +118,9 @@ fn lock_watch_runtime() -> std::sync::MutexGuard<'static, WatchRuntime> {
 
 fn upsert_path(ctx: &WatchContext, path: &Path) {
     if should_skip_path(path) {
+        return;
+    }
+    if !ctx.include_dirs && path.is_dir() {
         return;
     }
     let _guard = ctx
@@ -195,6 +199,9 @@ fn index_directory_tree(ctx: &WatchContext, root: &Path) {
         .filter_entry(|e| !should_skip_path(e.path()))
         .filter_map(Result::ok)
     {
+        if !ctx.include_dirs && entry.file_type().is_dir() {
+            continue;
+        }
         upsert_path(ctx, entry.path());
     }
 }
@@ -266,6 +273,7 @@ pub fn start_watch(
     logger: Logger,
     last_event_id: Arc<AtomicU64>,
     index_write_lock: Arc<Mutex<()>>,
+    include_dirs: bool,
     since_event_id: Option<u64>,
 ) {
     {
@@ -299,6 +307,7 @@ pub fn start_watch(
             logger,
             last_event_id,
             index_write_lock,
+            include_dirs,
         });
         let ctx_ptr = Box::into_raw(ctx);
         let mut fsevent_ctx = FSEventStreamContext {

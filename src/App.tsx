@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 type SearchMode = "Substring" | "Pattern";
-type TabId = "all" | "folders" | "documents" | "images" | "media" | "code" | "archives";
+type TabId = "all" | "files" | "folders" | "documents" | "images" | "media" | "code" | "archives";
 type SortKey = "name" | "size" | "modified";
 type ColumnKey = "name" | "path" | "size" | "modified";
 type ThemeMode = "system" | "light" | "dark";
@@ -28,7 +28,7 @@ const MIN_COLUMN_WIDTHS: Record<ColumnKey, number> = {
 const THEME_STORAGE_KEY = "machunt.theme.mode";
 const LANGUAGE_STORAGE_KEY = "machunt.language";
 const EVENT_OPEN_SETTINGS = "app://open-settings";
-const TAB_IDS: TabId[] = ["all", "folders", "documents", "images", "media", "code", "archives"];
+const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives"];
 
 const I18N = {
   zh: {
@@ -44,6 +44,7 @@ const I18N = {
     starting: "启动中...",
     stopping: "停止中...",
     tab_all: "全部",
+    tab_files: "文件",
     tab_folders: "文件夹",
     tab_documents: "文档",
     tab_images: "图片",
@@ -93,6 +94,7 @@ const I18N = {
     starting: "Starting...",
     stopping: "Stopping...",
     tab_all: "All",
+    tab_files: "Files",
     tab_folders: "Folders",
     tab_documents: "Documents",
     tab_images: "Images",
@@ -206,6 +208,12 @@ function classifyTab(item: SearchResultItem): TabId {
 function filterByTab(items: SearchResultItem[], tab: TabId): SearchResultItem[] {
   if (tab === "all") {
     return items;
+  }
+  if (tab === "files") {
+    return items.filter((item) => item.isFile);
+  }
+  if (tab === "folders") {
+    return items.filter((item) => item.isDir);
   }
   return items.filter((item) => classifyTab(item) === tab);
 }
@@ -699,7 +707,8 @@ function App() {
     try {
       const result = await invoke<BuildResponse>("build_index", {
         path: pathPrefix.trim() || null,
-        rebuild
+        rebuild,
+        includeDirs: true
       });
       setIndexed(result.indexed);
       setBuildStatus(`Indexed ${result.indexed} paths in ${result.tookMs} ms`);
