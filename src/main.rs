@@ -37,8 +37,15 @@ enum Commands {
 
         #[arg(long)]
         rebuild: bool,
+
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        include_dirs: bool,
     },
     Watch,
+    Optimize {
+        #[arg(long, default_value_t = false)]
+        vacuum: bool,
+    },
 }
 
 fn search_once(engine: &Engine, cli: &Cli) {
@@ -109,8 +116,12 @@ fn main() {
     let engine = Engine::new(cli.logs);
 
     match cli.command {
-        Some(Commands::Build { path, rebuild }) => {
-            engine.build_index(path, rebuild);
+        Some(Commands::Build {
+            path,
+            rebuild,
+            include_dirs,
+        }) => {
+            engine.build_index(path, rebuild, include_dirs);
         }
         Some(Commands::Watch) => {
             let has_index = engine.load_index_from_db() > 0;
@@ -121,7 +132,7 @@ fn main() {
                 engine.start_watch(None);
                 let engine_bg = engine.clone();
                 std::thread::spawn(move || {
-                    engine_bg.build_index(None, true);
+                    engine_bg.build_index(None, true, true);
                 });
             } else {
                 match last_event_id {
@@ -148,6 +159,15 @@ fn main() {
             .unwrap();
 
             real_time_search(engine, &cli);
+        }
+        Some(Commands::Optimize { vacuum }) => {
+            engine.checkpoint_wal();
+            if vacuum {
+                engine.vacuum();
+                println!("WAL checkpoint + VACUUM finished");
+            } else {
+                println!("WAL checkpoint finished (pass --vacuum to reclaim DB file space)");
+            }
         }
         None => {
             if engine.load_index_from_db() == 0 {

@@ -6,7 +6,7 @@ use crate::utils::{num_cpus, Logger};
 use crate::watcher;
 use dashmap::DashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
@@ -18,6 +18,7 @@ pub struct Engine {
     logger: Logger,
     last_event_id: Arc<AtomicU64>,
     index_write_lock: Arc<Mutex<()>>,
+    include_dirs: Arc<AtomicBool>,
 }
 
 impl Engine {
@@ -27,12 +28,14 @@ impl Engine {
         let logger = Logger::new(logs_enabled);
         let last_event_id = Arc::new(AtomicU64::new(0));
         let index_write_lock = Arc::new(Mutex::new(()));
+        let include_dirs = Arc::new(AtomicBool::new(db.load_include_dirs().unwrap_or(true)));
         Self {
             index,
             db,
             logger,
             last_event_id,
             index_write_lock,
+            include_dirs,
         }
     }
 
@@ -52,16 +55,20 @@ impl Engine {
         count
     }
 
-    pub fn build_index(&self, path: Option<String>, rebuild: bool) -> usize {
+    pub fn build_index(&self, path: Option<String>, rebuild: bool, include_dirs: bool) -> usize {
+        self.include_dirs.store(include_dirs, Ordering::Relaxed);
+        self.db.save_include_dirs(include_dirs);
         let count = builder::build_index(
             &self.db,
             &self.index,
             &self.index_write_lock,
             path,
             rebuild,
+            include_dirs,
         );
         let current_event_id = unsafe { watcher::FSEventsGetCurrentEventId() };
         self.db.save_last_event_id(current_event_id);
+        self.db.checkpoint_truncate();
         println!(
             "Saved EventID: {}, next watch will use incremental sync",
             current_event_id
@@ -76,6 +83,7 @@ impl Engine {
             self.logger.clone(),
             self.last_event_id.clone(),
             self.index_write_lock.clone(),
+            self.include_dirs.load(Ordering::Relaxed),
             since_event_id,
         );
     }
@@ -94,6 +102,18 @@ impl Engine {
 
     pub fn load_last_event_id(&self) -> Option<u64> {
         self.db.load_last_event_id()
+    }
+
+    pub fn has_persisted_index(&self) -> bool {
+        self.db.has_any_files()
+    }
+
+    pub fn checkpoint_wal(&self) {
+        self.db.checkpoint_truncate();
+    }
+
+    pub fn vacuum(&self) {
+        self.db.vacuum();
     }
 
     pub fn save_last_event_id_from_runtime(&self) {
