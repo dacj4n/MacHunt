@@ -169,6 +169,11 @@ body {
   box-shadow: 0 0 0 3px rgba(47, 134, 255, 0.18);
 }
 
+.search-input:disabled {
+  opacity: 0.65;
+  cursor: not-allowed !important;
+}
+
 .search-shortcut {
   position: absolute;
   right: 14px;
@@ -220,6 +225,11 @@ body {
 
 .path-input:focus {
   border-color: #8ab4ff;
+}
+
+.path-input:disabled {
+  opacity: 0.65;
+  cursor: not-allowed !important;
 }
 
 .path-suggest-panel {
