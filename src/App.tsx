@@ -4,22 +4,24 @@ import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
 type TabId = "all" | "files" | "folders" | "documents" | "images" | "media" | "code" | "archives";
-type SortKey = "name" | "path" | "size" | "modified";
-type ColumnKey = "name" | "path" | "size" | "modified";
+type SortKey = "name" | "path" | "type" | "size" | "modified";
+type ColumnKey = "name" | "path" | "type" | "size" | "modified";
 type ThemeMode = "system" | "light" | "dark";
 type ViewMode = "search" | "settings";
 type Language = "zh" | "en";
 
 const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
-  name: 520,
-  path: 470,
-  size: 170,
-  modified: 320
+  name: 500,
+  path: 420,
+  type: 140,
+  size: 160,
+  modified: 300
 };
 
 const MIN_COLUMN_WIDTHS: Record<ColumnKey, number> = {
   name: 300,
   path: 220,
+  type: 110,
   size: 90,
   modified: 170
 };
@@ -36,12 +38,15 @@ const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "med
 const I18N = {
   zh: {
     searchPlaceholder: "搜索文件、文件夹、内容...",
+    searchTag: "搜索",
     pathPlaceholder: "路径过滤",
     choosePath: "选择路径",
     menuOpen: "打开",
     menuOpenWith: "打开于 ...",
     menuFinder: "在Finder中查看",
     menuQSpace: "在QSpace Pro中查看",
+    menuTerminal: "在终端中打开",
+    menuWezTerm: "在 WezTerm 中打开",
     menuCopyName: "拷贝名称",
     menuCopyPath: "拷贝路径",
     menuTrash: "移到废纸篓",
@@ -67,6 +72,7 @@ const I18N = {
     sort_modified: "修改时间",
     header_name: "名称",
     header_path: "路径",
+    header_type: "类型",
     header_size: "大小",
     header_modified: "修改日期",
     emptyTypeHint: "输入关键词开始搜索。",
@@ -93,12 +99,15 @@ const I18N = {
   },
   en: {
     searchPlaceholder: "Search files, folders, content...",
+    searchTag: "Search",
     pathPlaceholder: "Path filter",
     choosePath: "Choose Path",
     menuOpen: "Open",
     menuOpenWith: "Open With ...",
     menuFinder: "Reveal in Finder",
     menuQSpace: "View in QSpace Pro",
+    menuTerminal: "Open in Terminal",
+    menuWezTerm: "Open in WezTerm",
     menuCopyName: "Copy Name",
     menuCopyPath: "Copy Path",
     menuTrash: "Move to Trash",
@@ -124,6 +133,7 @@ const I18N = {
     sort_modified: "Modified",
     header_name: "Name",
     header_path: "Path",
+    header_type: "Type",
     header_size: "Size",
     header_modified: "Date Modified",
     emptyTypeHint: "Type a keyword to start searching.",
@@ -249,6 +259,8 @@ function sortItems(items: SearchResultItem[], key: SortKey, ascending: boolean):
       cmp = a.name.localeCompare(b.name);
     } else if (key === "path") {
       cmp = a.parent.localeCompare(b.parent);
+    } else if (key === "type") {
+      cmp = typeSortKey(a).localeCompare(typeSortKey(b));
     } else if (key === "size") {
       cmp = (a.sizeBytes ?? -1) - (b.sizeBytes ?? -1);
     } else {
@@ -306,6 +318,30 @@ function iconToken(item: SearchResultItem): string {
     return "archive";
   }
   return "file";
+}
+
+function typeLabel(item: SearchResultItem, language: Language): string {
+  if (item.isDir) {
+    return language === "zh" ? "文件夹" : "Folder";
+  }
+
+  const ext = extensionOf(item.name);
+  if (ext.length > 0) {
+    return ext.toUpperCase();
+  }
+  return language === "zh" ? "文件" : "File";
+}
+
+function typeSortKey(item: SearchResultItem): string {
+  if (item.isDir) {
+    return "0-folder";
+  }
+
+  const ext = extensionOf(item.name);
+  if (ext.length > 0) {
+    return `1-${ext.toLowerCase()}`;
+  }
+  return "1-file";
 }
 
 function iconGlyph(token: string): string {
@@ -411,12 +447,13 @@ function loadStoredColumnWidths(): Record<ColumnKey, number> | null {
     const parsed = JSON.parse(raw) as Partial<Record<ColumnKey, unknown>>;
     const name = normalizeStoredColumnWidth(parsed.name, "name");
     const path = normalizeStoredColumnWidth(parsed.path, "path");
+    const type = normalizeStoredColumnWidth(parsed.type, "type") ?? DEFAULT_COLUMN_WIDTHS.type;
     const size = normalizeStoredColumnWidth(parsed.size, "size");
     const modified = normalizeStoredColumnWidth(parsed.modified, "modified");
     if (name === null || path === null || size === null || modified === null) {
       return null;
     }
-    return { name, path, size, modified };
+    return { name, path, type, size, modified };
   } catch {
     return null;
   }
@@ -505,7 +542,7 @@ function App() {
     rightStart: number;
   } | null>(null);
 
-  const gridTemplateColumns = `${columnWidths.name}px ${columnWidths.path}px ${columnWidths.size}px ${columnWidths.modified}px`;
+  const gridTemplateColumns = `${columnWidths.name}px ${columnWidths.path}px ${columnWidths.type}px ${columnWidths.size}px ${columnWidths.modified}px`;
   const resolvedTheme = resolveTheme(themeMode, systemDark);
   const t = I18N[language];
   const normalizedPathPrefix = pathPrefix.trim().toLowerCase();
@@ -830,14 +867,14 @@ function App() {
       }
       const available = Math.max(0, shell.clientWidth - 32);
       setColumnWidths((prev) => {
-        const total = prev.name + prev.path + prev.size + prev.modified;
+        const total = prev.name + prev.path + prev.type + prev.size + prev.modified;
         if (total <= available) {
           return prev;
         }
 
         const next = { ...prev };
         let overflow = total - available;
-        const order: ColumnKey[] = ["path", "modified", "size", "name"];
+        const order: ColumnKey[] = ["path", "modified", "size", "name", "type"];
 
         for (const key of order) {
           if (overflow <= 0) {
@@ -857,6 +894,7 @@ function App() {
         if (
           next.name === prev.name &&
           next.path === prev.path &&
+          next.type === prev.type &&
           next.size === prev.size &&
           next.modified === prev.modified
         ) {
@@ -1108,6 +1146,22 @@ function App() {
     }
   };
 
+  const openInTerminal = async (path: string) => {
+    try {
+      await invoke("open_in_terminal", { path });
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
+  const openInWezTerm = async (path: string) => {
+    try {
+      await invoke("open_in_wezterm", { path });
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
   const copyText = async (text: string) => {
     try {
       await invoke("copy_to_clipboard", { text });
@@ -1144,7 +1198,7 @@ function App() {
   const openResultContextMenu = (event: React.MouseEvent<HTMLElement>, item: SearchResultItem) => {
     event.preventDefault();
     const menuWidth = 230;
-    const menuHeight = 260;
+    const menuHeight = 320;
     const x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
     const y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
     setContextMenu({
@@ -1183,7 +1237,7 @@ function App() {
                   spellCheck={false}
                   onChange={(event) => setQuery(event.target.value)}
                 />
-                <span className="search-shortcut">Cmd+F</span>
+                <span className="search-shortcut">{t.searchTag}</span>
               </div>
 
               <div className="filter-row">
@@ -1306,8 +1360,18 @@ function App() {
                     {sortKey === "path" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
                   </button>
                   <span
-                    className={activeResizer === "path-size" ? "column-resizer active" : "column-resizer"}
-                    onMouseDown={startResize("path", "size", "path-size")}
+                    className={activeResizer === "path-type" ? "column-resizer active" : "column-resizer"}
+                    onMouseDown={startResize("path", "type", "path-type")}
+                  />
+                </span>
+                <span className="header-cell">
+                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("type")}>
+                    <span className="header-sort-label">{t.header_type}</span>
+                    {sortKey === "type" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                  </button>
+                  <span
+                    className={activeResizer === "type-size" ? "column-resizer active" : "column-resizer"}
+                    onMouseDown={startResize("type", "size", "type-size")}
                   />
                 </span>
                 <span className="header-cell">
@@ -1356,6 +1420,7 @@ function App() {
                       >
                         {item.parent}
                       </div>
+                      <div className="cell type-cell">{typeLabel(item, language)}</div>
                       <div className="cell">{formatBytes(item.sizeBytes)}</div>
                       <div className="cell">{formatDate(item.modifiedUnixMs)}</div>
                     </article>
@@ -1480,6 +1545,18 @@ function App() {
                     onClick={() => void runContextAction(() => openInQSpace(contextMenu.item.path))}
                   >
                     {t.menuQSpace}
+                  </button>
+                  <button
+                    className="context-menu-btn"
+                    onClick={() => void runContextAction(() => openInTerminal(contextMenu.item.path))}
+                  >
+                    {t.menuTerminal}
+                  </button>
+                  <button
+                    className="context-menu-btn"
+                    onClick={() => void runContextAction(() => openInWezTerm(contextMenu.item.path))}
+                  >
+                    {t.menuWezTerm}
                   </button>
                 </div>
               )}

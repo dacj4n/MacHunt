@@ -150,7 +150,7 @@ body {
   border: 1px solid var(--line-strong);
   border-radius: 14px;
   background: #f9fbff;
-  padding: 18px 84px 18px 22px;
+  padding: 18px 104px 18px 22px;
   font-size: 18px;
   font-weight: 500;
   color: var(--text-main);
@@ -181,6 +181,8 @@ body {
   color: var(--text-subtle);
   font-size: 12px;
   font-weight: 600;
+  min-width: 64px;
+  text-align: center;
 }
 
 .filter-row {
@@ -488,6 +490,17 @@ body {
   white-space: nowrap;
 }
 
+.header-static-label {
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 0 8px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .header-sort-indicator {
   flex: 0 0 auto;
   color: #6f8db8;
@@ -574,6 +587,12 @@ body {
 .path-cell {
   min-width: 0;
   color: #7d8592;
+}
+
+.type-cell {
+  color: #5f6876;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .file-icon {
@@ -969,6 +988,10 @@ body {
 
 :root[data-theme="dark"] .path-cell {
   color: #9eaabc;
+}
+
+:root[data-theme="dark"] .type-cell {
+  color: #c7d2e6;
 }
 
 :root[data-theme="dark"] .status-bar {

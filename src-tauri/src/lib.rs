@@ -273,18 +273,7 @@ fn reveal_in_finder(path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn open_in_qspace(path: String) -> Result<(), String> {
-    let target = PathBuf::from(path);
-    if !target.exists() {
-        return Err("Target path does not exist".to_string());
-    }
-    let open_target = if target.is_file() {
-        target
-            .parent()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| target.clone())
-    } else {
-        target.clone()
-    };
+    let open_target = open_container_path(&path)?;
 
     let status = Command::new("open")
         .arg("-a")
@@ -297,6 +286,61 @@ fn open_in_qspace(path: String) -> Result<(), String> {
         Ok(())
     } else {
         Err("Failed to open in QSpace Pro (check whether QSpace Pro is installed)".to_string())
+    }
+}
+
+fn open_container_path(path: &str) -> Result<PathBuf, String> {
+    let target = PathBuf::from(path);
+    if !target.exists() {
+        return Err("Target path does not exist".to_string());
+    }
+
+    if target.is_dir() {
+        return Ok(target);
+    }
+
+    target
+        .parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| "Unable to resolve parent directory".to_string())
+}
+
+#[tauri::command]
+fn open_in_terminal(path: String) -> Result<(), String> {
+    let open_target = open_container_path(&path)?;
+
+    let status = Command::new("open")
+        .arg("-a")
+        .arg("Terminal")
+        .arg(open_target)
+        .status()
+        .map_err(|e| e.to_string())?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to open in Terminal".to_string())
+    }
+}
+
+#[tauri::command]
+fn open_in_wezterm(path: String) -> Result<(), String> {
+    let open_target = open_container_path(&path)?;
+
+    let status = Command::new("open")
+        .arg("-a")
+        .arg("WezTerm")
+        .arg("--args")
+        .arg("start")
+        .arg("--cwd")
+        .arg(open_target)
+        .status()
+        .map_err(|e| e.to_string())?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to open in WezTerm (check whether WezTerm is installed)".to_string())
     }
 }
 
@@ -708,6 +752,8 @@ pub fn run() {
             open_search_result,
             reveal_in_finder,
             open_in_qspace,
+            open_in_terminal,
+            open_in_wezterm,
             copy_to_clipboard,
             move_to_trash,
             set_menu_language,
