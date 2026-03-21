@@ -1132,6 +1132,10 @@ function App() {
                   className="search-input"
                   placeholder={t.searchPlaceholder}
                   value={query}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
                   onChange={(event) => setQuery(event.target.value)}
                 />
                 <span className="search-shortcut">Cmd+F</span>
@@ -1146,6 +1150,9 @@ function App() {
                       placeholder={t.pathPlaceholder}
                       value={pathPrefix}
                       autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
                       onFocus={() => setIsPathDropdownOpen(true)}
                       onBlur={(event) => {
                         const next = event.relatedTarget;
