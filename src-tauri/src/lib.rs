@@ -1,6 +1,6 @@
 use machunt::{Engine, SearchMode, SearchOptions};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -31,6 +31,7 @@ impl AppState {
 struct SearchRequest {
     query: String,
     mode: SearchMode,
+    regex_enabled: Option<bool>,
     case_sensitive: Option<bool>,
     path_prefix: Option<String>,
     include_files: Option<bool>,
@@ -108,15 +109,15 @@ fn watch_response(running: bool, mode: &str, last_event_id: Option<u64>) -> Watc
     }
 }
 
-fn to_search_options(req: SearchRequest) -> SearchOptions {
+fn to_search_options(req: &SearchRequest, mode: SearchMode, limit: Option<usize>) -> SearchOptions {
     SearchOptions {
-        query: req.query,
-        mode: req.mode,
+        query: req.query.clone(),
+        mode,
         case_sensitive: req.case_sensitive.unwrap_or(false),
-        path_prefix: req.path_prefix.map(PathBuf::from),
+        path_prefix: req.path_prefix.as_ref().map(PathBuf::from),
         include_files: req.include_files.unwrap_or(true),
         include_dirs: req.include_dirs.unwrap_or(true),
-        limit: req.limit,
+        limit,
     }
 }
 
@@ -370,11 +371,49 @@ async fn search(
     state: tauri::State<'_, AppState>,
 ) -> Result<SearchResponse, String> {
     let engine = state.engine.clone();
-    let options = to_search_options(request);
+    let query_limit = request.limit;
+    let regex_enabled = request.regex_enabled.unwrap_or(false);
 
     let started = Instant::now();
     let mut items = tauri::async_runtime::spawn_blocking(move || {
-        let paths = engine.search(options);
+        let paths = if regex_enabled {
+            let substring_options = to_search_options(&request, SearchMode::Substring, query_limit);
+            let regex_options = to_search_options(&request, SearchMode::Pattern, query_limit);
+
+            let mut merged = Vec::<PathBuf>::new();
+            let mut seen = HashSet::<PathBuf>::new();
+
+            for path in engine.search(substring_options) {
+                if seen.insert(path.clone()) {
+                    merged.push(path);
+                }
+                if let Some(limit) = query_limit {
+                    if merged.len() >= limit {
+                        break;
+                    }
+                }
+            }
+
+            if !matches!(query_limit, Some(0))
+                && query_limit.map(|limit| merged.len() < limit).unwrap_or(true)
+            {
+                for path in engine.search(regex_options) {
+                    if seen.insert(path.clone()) {
+                        merged.push(path);
+                    }
+                    if let Some(limit) = query_limit {
+                        if merged.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            merged
+        } else {
+            let options = to_search_options(&request, request.mode, query_limit);
+            engine.search(options)
+        };
         let mut out: Vec<SearchResultItem> = paths.into_iter().map(map_result).collect();
         out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         out
