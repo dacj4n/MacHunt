@@ -560,6 +560,7 @@ function App() {
   const [isWatchRunning, setIsWatchRunning] = useState(false);
   const [isWatchPending, setIsWatchPending] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [isIndexLoading, setIsIndexLoading] = useState(true);
   const [isBuilding, setIsBuilding] = useState(false);
   const [isPickingPath, setIsPickingPath] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -615,7 +616,7 @@ function App() {
       return left.localeCompare(right);
     })
     .slice(0, 8);
-  const isPathDropdownVisible = isPathDropdownOpen && visiblePathSuggestions.length > 0;
+  const isPathDropdownVisible = !isIndexLoading && isPathDropdownOpen && visiblePathSuggestions.length > 0;
   const selectedItemPathSet = useMemo(() => new Set(selectedItemPaths), [selectedItemPaths]);
   const selectedItemsInOrder = useMemo(
     () => items.filter((item) => selectedItemPathSet.has(item.path)),
@@ -850,6 +851,12 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (isIndexLoading) {
+      closePathDropdown();
+    }
+  }, [isIndexLoading]);
+
+  useEffect(() => {
     let unlistenMenu: (() => void) | undefined;
     void listen(EVENT_OPEN_SETTINGS, () => {
       setActiveView("settings");
@@ -871,6 +878,9 @@ function App() {
   useEffect(() => {
     let mounted = true;
     const init = async () => {
+      if (mounted) {
+        setIsIndexLoading(true);
+      }
       try {
         const initial = await invoke<InitResponse>("initialize");
         if (!mounted) {
@@ -885,6 +895,10 @@ function App() {
           return;
         }
         setError(String(err));
+      } finally {
+        if (mounted) {
+          setIsIndexLoading(false);
+        }
       }
 
       try {
@@ -1090,6 +1104,11 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (isIndexLoading) {
+      setIsSearching(false);
+      return;
+    }
+
     let cancelled = false;
 
     const runSearch = async () => {
@@ -1136,7 +1155,7 @@ function App() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, pathPrefix, activeTab, regexEnabled, caseSensitive, sortKey, sortAscending]);
+  }, [query, pathPrefix, activeTab, regexEnabled, caseSensitive, sortKey, sortAscending, isIndexLoading]);
 
   const runBuild = async (rebuild: boolean) => {
     if (isBuilding) {
@@ -1592,6 +1611,7 @@ function App() {
                   className="search-input"
                   placeholder={t.searchPlaceholder}
                   value={query}
+                  disabled={isIndexLoading}
                   autoComplete="off"
                   autoCorrect="off"
                   autoCapitalize="off"
@@ -1609,11 +1629,16 @@ function App() {
                       className="path-input"
                       placeholder={t.pathPlaceholder}
                       value={pathPrefix}
+                      disabled={isIndexLoading}
                       autoComplete="off"
                       autoCorrect="off"
                       autoCapitalize="off"
                       spellCheck={false}
-                      onFocus={() => setIsPathDropdownOpen(true)}
+                      onFocus={() => {
+                        if (!isIndexLoading) {
+                          setIsPathDropdownOpen(true);
+                        }
+                      }}
                       onBlur={(event) => {
                         const next = event.relatedTarget;
                         if (next instanceof Node && pathPickerRef.current?.contains(next)) {
@@ -1648,7 +1673,11 @@ function App() {
                       </div>
                     )}
                   </div>
-                  <button className="action-btn path-pick-btn" onClick={() => void pickPath()} disabled={isPickingPath}>
+                  <button
+                    className="action-btn path-pick-btn"
+                    onClick={() => void pickPath()}
+                    disabled={isPickingPath || isIndexLoading}
+                  >
                     {t.choosePath}
                   </button>
                 </div>
