@@ -1663,6 +1663,18 @@ function App() {
     setSelectionAnchorPath(path);
   };
 
+  const clearSelectionOnBlankArea = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest(".row")) {
+      return;
+    }
+    setSelectedItemPaths([]);
+    setSelectionAnchorPath(null);
+  };
+
   const moveSelectionByArrow = (delta: number) => {
     if (items.length === 0) {
       return;
@@ -1973,7 +1985,7 @@ function App() {
                 </span>
               </div>
 
-              <div className="table-body">
+              <div className="table-body" onMouseDown={clearSelectionOnBlankArea}>
                 {items.map((item, index) => {
                   const token = iconToken(item);
                   return (
