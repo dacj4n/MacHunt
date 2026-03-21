@@ -28,6 +28,8 @@ const MIN_COLUMN_WIDTHS: Record<ColumnKey, number> = {
 const THEME_STORAGE_KEY = "machunt.theme.mode";
 const LANGUAGE_STORAGE_KEY = "machunt.language";
 const COLUMN_WIDTHS_STORAGE_KEY = "machunt.table.column.widths";
+const SEARCH_MODE_STORAGE_KEY = "machunt.search.mode";
+const CASE_SENSITIVE_STORAGE_KEY = "machunt.search.case_sensitive";
 const EVENT_OPEN_SETTINGS = "app://open-settings";
 const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives"];
 
@@ -421,6 +423,31 @@ function loadStoredColumnWidths(): Record<ColumnKey, number> | null {
   }
 }
 
+function loadStoredSearchMode(): SearchMode | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const raw = window.localStorage.getItem(SEARCH_MODE_STORAGE_KEY);
+  if (raw === "Substring" || raw === "Pattern") {
+    return raw;
+  }
+  return null;
+}
+
+function loadStoredCaseSensitive(): boolean | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const raw = window.localStorage.getItem(CASE_SENSITIVE_STORAGE_KEY);
+  if (raw === "1") {
+    return true;
+  }
+  if (raw === "0") {
+    return false;
+  }
+  return null;
+}
+
 function App() {
   const [activeView, setActiveView] = useState<ViewMode>("search");
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
@@ -431,8 +458,8 @@ function App() {
   const [pathSuggestions, setPathSuggestions] = useState<string[]>([]);
   const [isPathDropdownOpen, setIsPathDropdownOpen] = useState(false);
   const [activePathSuggestion, setActivePathSuggestion] = useState(-1);
-  const [mode, setMode] = useState<SearchMode>("Substring");
-  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [mode, setMode] = useState<SearchMode>(() => loadStoredSearchMode() ?? "Substring");
+  const [caseSensitive, setCaseSensitive] = useState(() => loadStoredCaseSensitive() ?? false);
   const [activeTab, setActiveTab] = useState<TabId>("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAscending, setSortAscending] = useState(true);
@@ -656,6 +683,14 @@ function App() {
   useEffect(() => {
     localStorage.setItem(THEME_STORAGE_KEY, themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    localStorage.setItem(SEARCH_MODE_STORAGE_KEY, mode);
+  }, [mode]);
+
+  useEffect(() => {
+    localStorage.setItem(CASE_SENSITIVE_STORAGE_KEY, caseSensitive ? "1" : "0");
+  }, [caseSensitive]);
 
   useEffect(() => {
     localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
