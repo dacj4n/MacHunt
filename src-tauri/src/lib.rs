@@ -9,7 +9,59 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+const DEFAULT_WINDOW_TOGGLE_SHORTCUT: &str = "CmdOrCtrl+Shift+KeyF";
+const EVENT_OPEN_SETTINGS: &str = "app://open-settings";
+const EVENT_FOCUS_SEARCH: &str = "app://focus-search";
+const MENU_OPEN_SETTINGS_ID: &str = "open_settings";
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GuiSettings {
+    window_toggle_shortcut: String,
+}
+
+impl Default for GuiSettings {
+    fn default() -> Self {
+        Self {
+            window_toggle_shortcut: DEFAULT_WINDOW_TOGGLE_SHORTCUT.to_string(),
+        }
+    }
+}
+
+fn gui_settings_path() -> PathBuf {
+    let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home_dir)
+        .join(".machunt")
+        .join("gui")
+        .join("settings.json")
+}
+
+fn load_gui_settings() -> GuiSettings {
+    let path = gui_settings_path();
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(_) => return GuiSettings::default(),
+    };
+
+    let mut settings = serde_json::from_str::<GuiSettings>(&raw).unwrap_or_default();
+    if settings.window_toggle_shortcut.trim().is_empty() {
+        settings.window_toggle_shortcut = DEFAULT_WINDOW_TOGGLE_SHORTCUT.to_string();
+    }
+    settings
+}
+
+fn save_gui_settings(settings: &GuiSettings) -> Result<(), String> {
+    let path = gui_settings_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    fs::write(path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
 
 struct AppState {
     engine: Engine,
@@ -17,16 +69,21 @@ struct AppState {
     index_loaded: AtomicBool,
     preview_process: Arc<Mutex<Option<u32>>>,
     preview_session_seq: AtomicU64,
+    window_toggle_shortcut: Mutex<String>,
+    is_quitting: AtomicBool,
 }
 
 impl AppState {
     fn new() -> Self {
+        let settings = load_gui_settings();
         Self {
             engine: Engine::new(false),
             watch_started: AtomicBool::new(false),
             index_loaded: AtomicBool::new(false),
             preview_process: Arc::new(Mutex::new(None)),
             preview_session_seq: AtomicU64::new(0),
+            window_toggle_shortcut: Mutex::new(settings.window_toggle_shortcut),
+            is_quitting: AtomicBool::new(false),
         }
     }
 }
@@ -119,6 +176,64 @@ fn watch_response(running: bool, mode: &str, last_event_id: Option<u64>) -> Watc
         message,
         last_event_id,
     }
+}
+
+fn normalize_shortcut_input(raw: &str) -> Result<String, String> {
+    let shortcut = raw.trim();
+    if shortcut.is_empty() {
+        return Err("Shortcut cannot be empty".to_string());
+    }
+    let _: tauri_plugin_global_shortcut::Shortcut = shortcut
+        .parse::<tauri_plugin_global_shortcut::Shortcut>()
+        .map_err(|e| e.to_string())?;
+    Ok(shortcut.to_string())
+}
+
+fn show_main_window_internal<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found".to_string())?;
+    window.show().map_err(|e| e.to_string())?;
+    let _ = window.unminimize();
+    window.set_focus().map_err(|e| e.to_string())?;
+    let _ = app.emit(EVENT_FOCUS_SEARCH, ());
+    Ok(())
+}
+
+fn hide_main_window_internal<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found".to_string())?;
+    window.hide().map_err(|e| e.to_string())
+}
+
+fn toggle_main_window_internal<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<bool, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found".to_string())?;
+
+    if window.is_visible().map_err(|e| e.to_string())? {
+        hide_main_window_internal(app)?;
+        return Ok(false);
+    }
+
+    show_main_window_internal(app)?;
+    Ok(true)
+}
+
+fn register_window_toggle_shortcut<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    shortcut: &str,
+) -> Result<(), String> {
+    let manager = app.global_shortcut();
+    manager.unregister_all().map_err(|e| e.to_string())?;
+    manager
+        .on_shortcut(shortcut, |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                let _ = toggle_main_window_internal(app);
+            }
+        })
+        .map_err(|e| e.to_string())
 }
 
 fn to_search_options(req: &SearchRequest, mode: SearchMode, limit: Option<usize>) -> SearchOptions {
@@ -706,8 +821,44 @@ fn persist_watch_cursor(state: tauri::State<'_, AppState>) {
     state.engine.save_last_event_id_from_runtime();
 }
 
-const MENU_OPEN_SETTINGS_ID: &str = "open_settings";
-const EVENT_OPEN_SETTINGS: &str = "app://open-settings";
+#[tauri::command]
+fn get_window_toggle_shortcut(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let shortcut = state
+        .window_toggle_shortcut
+        .lock()
+        .map_err(|_| "Failed to access shortcut setting".to_string())?
+        .clone();
+    Ok(shortcut)
+}
+
+#[tauri::command]
+fn set_window_toggle_shortcut(
+    shortcut: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    let normalized = normalize_shortcut_input(&shortcut)?;
+    register_window_toggle_shortcut(&app, &normalized)?;
+
+    {
+        let mut guard = state
+            .window_toggle_shortcut
+            .lock()
+            .map_err(|_| "Failed to access shortcut setting".to_string())?;
+        *guard = normalized.clone();
+    }
+
+    save_gui_settings(&GuiSettings {
+        window_toggle_shortcut: normalized.clone(),
+    })?;
+
+    Ok(normalized)
+}
+
+#[tauri::command]
+fn toggle_main_window(app: tauri::AppHandle) -> Result<bool, String> {
+    toggle_main_window_internal(&app)
+}
 
 fn settings_menu_text() -> &'static str {
     "Preferences"
@@ -729,7 +880,7 @@ fn set_menu_language(_language: String, app: tauri::AppHandle) -> Result<(), Str
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .menu(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -822,12 +973,48 @@ pub fn run() {
                 return Ok(menu);
             }
         })
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .on_menu_event(|app, event| {
             if event.id() == MENU_OPEN_SETTINGS_ID {
                 let _ = app.emit(EVENT_OPEN_SETTINGS, ());
             }
         })
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let state = window.app_handle().state::<AppState>();
+                if state.is_quitting.load(Ordering::SeqCst) {
+                    return;
+                }
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .manage(AppState::new())
+        .setup(|app| {
+            let initial_shortcut = app
+                .state::<AppState>()
+                .window_toggle_shortcut
+                .lock()
+                .map(|value| value.clone())
+                .unwrap_or_else(|_| DEFAULT_WINDOW_TOGGLE_SHORTCUT.to_string());
+
+            if register_window_toggle_shortcut(&app.handle().clone(), &initial_shortcut).is_err() {
+                let fallback = DEFAULT_WINDOW_TOGGLE_SHORTCUT.to_string();
+                let _ = register_window_toggle_shortcut(&app.handle().clone(), &fallback);
+                if let Ok(mut guard) = app.state::<AppState>().window_toggle_shortcut.lock() {
+                    *guard = fallback.clone();
+                }
+                let _ = save_gui_settings(&GuiSettings {
+                    window_toggle_shortcut: fallback,
+                });
+            }
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             initialize,
             search,
@@ -846,8 +1033,29 @@ pub fn run() {
             copy_to_clipboard,
             move_to_trash,
             set_menu_language,
-            persist_watch_cursor
+            persist_watch_cursor,
+            get_window_toggle_shortcut,
+            set_window_toggle_shortcut,
+            toggle_main_window
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building Tauri application");
+
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::ExitRequested { .. } => {
+            let state = app_handle.state::<AppState>();
+            state.is_quitting.store(true, Ordering::SeqCst);
+            state.engine.save_last_event_id_from_runtime();
+        }
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen {
+            has_visible_windows,
+            ..
+        } => {
+            if !has_visible_windows {
+                let _ = show_main_window_internal(app_handle);
+            }
+        }
+        _ => {}
+    });
 }

@@ -803,8 +803,15 @@ body {
 .settings-page {
   padding: 26px;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto;
+  grid-auto-rows: min-content;
+  align-content: start;
   gap: 18px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .settings-header {
@@ -882,6 +889,60 @@ body {
   font-size: 13px;
 }
 
+.shortcut-desc {
+  margin: 0 0 8px;
+  color: var(--text-subtle);
+  font-size: 13px;
+}
+
+.shortcut-input-hint {
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.shortcut-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.shortcut-input {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #f7f9fc;
+  color: var(--text-main);
+  font-family: "SF Mono", "Menlo", "Monaco", "PingFang SC", monospace;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 10px 12px;
+  outline: none;
+  cursor: text !important;
+}
+
+.shortcut-input:focus {
+  border-color: #8ab4ff;
+  box-shadow: 0 0 0 2px rgba(47, 134, 255, 0.15);
+}
+
+.shortcut-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.shortcut-current-line {
+  margin-top: 10px;
+  color: var(--text-subtle);
+  font-size: 13px;
+}
+
+.shortcut-status {
+  margin-top: 8px;
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
 :root[data-theme="dark"] .search-input {
   background: #1a2330;
   border-color: #334357;
@@ -889,6 +950,7 @@ body {
 
 :root[data-theme="dark"] .search-shortcut,
 :root[data-theme="dark"] .path-input,
+:root[data-theme="dark"] .shortcut-input,
 :root[data-theme="dark"] .segmented,
 :root[data-theme="dark"] .case-btn,
 :root[data-theme="dark"] .action-btn,
