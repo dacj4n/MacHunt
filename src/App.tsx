@@ -10,6 +10,7 @@ type ThemeMode = "system" | "light" | "dark";
 type ViewMode = "search" | "settings";
 type Language = "zh" | "en";
 
+const DEFAULT_WINDOW_TOGGLE_SHORTCUT = "CmdOrCtrl+Shift+KeyF";
 const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
   name: 500,
   path: 420,
@@ -33,6 +34,7 @@ const LEGACY_SEARCH_MODE_STORAGE_KEY = "machunt.search.mode";
 const REGEX_ENABLED_STORAGE_KEY = "machunt.search.regex_enabled";
 const CASE_SENSITIVE_STORAGE_KEY = "machunt.search.case_sensitive";
 const EVENT_OPEN_SETTINGS = "app://open-settings";
+const EVENT_FOCUS_SEARCH = "app://focus-search";
 const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives"];
 const PREVIEW_OPEN_MS = 240;
 const PREVIEW_CLOSE_MS = 220;
@@ -99,7 +101,16 @@ const I18N = {
     languageZhTitle: "中文",
     languageZhDesc: "界面使用中文。",
     languageEnTitle: "English",
-    languageEnDesc: "Interface in English."
+    languageEnDesc: "Interface in English.",
+    shortcutTitle: "快捷键",
+    shortcutDesc: "设置全局快捷键用于显示/隐藏窗口。",
+    shortcutInputHint: "点击输入框后直接按组合键",
+    shortcutInputPlaceholder: "例如：Cmd+Shift+F",
+    shortcutCurrent: "当前快捷键",
+    shortcutApply: "应用",
+    shortcutReset: "恢复默认",
+    shortcutSaved: "快捷键已保存",
+    shortcutNeedModifier: "快捷键至少需要一个修饰键（Cmd/Ctrl/Alt/Shift）"
   },
   en: {
     searchPlaceholder: "Search files, folders, content...",
@@ -162,7 +173,16 @@ const I18N = {
     languageZhTitle: "中文",
     languageZhDesc: "Show interface in Chinese.",
     languageEnTitle: "English",
-    languageEnDesc: "Show interface in English."
+    languageEnDesc: "Show interface in English.",
+    shortcutTitle: "Shortcut",
+    shortcutDesc: "Set a global shortcut to show/hide the window.",
+    shortcutInputHint: "Focus this field and press a key combination",
+    shortcutInputPlaceholder: "Example: Cmd+Shift+F",
+    shortcutCurrent: "Current shortcut",
+    shortcutApply: "Apply",
+    shortcutReset: "Reset Default",
+    shortcutSaved: "Shortcut saved",
+    shortcutNeedModifier: "Shortcut must include at least one modifier (Cmd/Ctrl/Alt/Shift)"
   }
 } as const;
 
@@ -460,6 +480,91 @@ function detectDefaultLanguage(): Language {
   return "en";
 }
 
+function isMacPlatform(): boolean {
+  if (typeof navigator === "undefined") {
+    return true;
+  }
+  return /mac/i.test(navigator.platform);
+}
+
+function displayShortcut(shortcut: string): string {
+  const tokens = shortcut
+    .split("+")
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+  if (tokens.length === 0) {
+    return "";
+  }
+
+  const isMac = isMacPlatform();
+  return tokens
+    .map((token) => {
+      const upper = token.toUpperCase();
+      if (upper === "CMDORCTRL" || upper === "COMMANDORCONTROL" || upper === "COMMANDORCTRL" || upper === "CMDORCONTROL") {
+        return isMac ? "Cmd" : "Ctrl";
+      }
+      if (upper === "CMD" || upper === "COMMAND" || upper === "SUPER") {
+        return "Cmd";
+      }
+      if (upper === "CTRL" || upper === "CONTROL") {
+        return "Ctrl";
+      }
+      if (upper === "ALT" || upper === "OPTION") {
+        return isMac ? "Option" : "Alt";
+      }
+      if (upper === "SHIFT") {
+        return "Shift";
+      }
+      if (upper.startsWith("KEY") && upper.length === 4) {
+        return upper.slice(3);
+      }
+      if (upper.startsWith("DIGIT") && upper.length === 6) {
+        return upper.slice(5);
+      }
+      if (upper === "SPACE") {
+        return "Space";
+      }
+      return token;
+    })
+    .join("+");
+}
+
+function shortcutFromKeyboardEvent(event: React.KeyboardEvent<HTMLInputElement>): string | null {
+  const modifierCodes = new Set([
+    "MetaLeft",
+    "MetaRight",
+    "ControlLeft",
+    "ControlRight",
+    "AltLeft",
+    "AltRight",
+    "ShiftLeft",
+    "ShiftRight"
+  ]);
+
+  const modifiers: string[] = [];
+  if (event.metaKey || event.ctrlKey) {
+    modifiers.push("CmdOrCtrl");
+  }
+  if (event.altKey) {
+    modifiers.push("Alt");
+  }
+  if (event.shiftKey) {
+    modifiers.push("Shift");
+  }
+  if (modifiers.length === 0 || modifierCodes.has(event.code)) {
+    return null;
+  }
+
+  let keyToken = event.code;
+  if (keyToken === "NumpadDecimal") {
+    keyToken = "Period";
+  }
+  if (keyToken === "NumpadAdd") {
+    keyToken = "Equal";
+  }
+  return `${modifiers.join("+")}+${keyToken}`;
+}
+
 function fmt(template: string, vars: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (_, key: string) => String(vars[key] ?? ""));
 }
@@ -540,6 +645,10 @@ function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
   const [systemDark, setSystemDark] = useState(systemPrefersDark());
   const [language, setLanguage] = useState<Language>(detectDefaultLanguage());
+  const [windowToggleShortcut, setWindowToggleShortcut] = useState(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
+  const [shortcutDraft, setShortcutDraft] = useState(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
+  const [shortcutStatus, setShortcutStatus] = useState("");
+  const [isShortcutSaving, setIsShortcutSaving] = useState(false);
   const [query, setQuery] = useState("");
   const [pathPrefix, setPathPrefix] = useState("");
   const [pathSuggestions, setPathSuggestions] = useState<string[]>([]);
@@ -574,6 +683,7 @@ function App() {
   );
   const [activeResizer, setActiveResizer] = useState<string | null>(null);
   const tableShellRef = useRef<HTMLElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const pathPickerRef = useRef<HTMLDivElement | null>(null);
   const pathInputRef = useRef<HTMLInputElement | null>(null);
   const rowRefs = useRef(new Map<string, HTMLElement>());
@@ -871,6 +981,56 @@ function App() {
     return () => {
       if (unlistenMenu) {
         unlistenMenu();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadShortcut = async () => {
+      try {
+        const shortcut = await invoke<string>("get_window_toggle_shortcut");
+        if (!mounted) {
+          return;
+        }
+        const normalized = shortcut.trim().length > 0 ? shortcut : DEFAULT_WINDOW_TOGGLE_SHORTCUT;
+        setWindowToggleShortcut(normalized);
+        setShortcutDraft(normalized);
+      } catch {
+        if (!mounted) {
+          return;
+        }
+        setWindowToggleShortcut(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
+        setShortcutDraft(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
+      }
+    };
+
+    void loadShortcut();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlistenFocus: (() => void) | undefined;
+    void listen(EVENT_FOCUS_SEARCH, () => {
+      setActiveView("search");
+      window.requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      });
+    })
+      .then((dispose) => {
+        unlistenFocus = dispose;
+      })
+      .catch(() => {
+        // Keep app usable even if focus event binding fails.
+      });
+
+    return () => {
+      if (unlistenFocus) {
+        unlistenFocus();
       }
     };
   }, []);
@@ -1196,6 +1356,36 @@ function App() {
     } finally {
       setIsWatchPending(false);
     }
+  };
+
+  const applyWindowToggleShortcut = async (shortcut: string) => {
+    const normalized = shortcut.trim();
+    if (!normalized) {
+      setShortcutStatus(t.shortcutNeedModifier);
+      return;
+    }
+
+    setError(null);
+    setShortcutStatus("");
+    setIsShortcutSaving(true);
+    try {
+      const saved = await invoke<string>("set_window_toggle_shortcut", { shortcut: normalized });
+      const next = saved.trim().length > 0 ? saved : normalized;
+      setWindowToggleShortcut(next);
+      setShortcutDraft(next);
+      setShortcutStatus(t.shortcutSaved);
+    } catch (err) {
+      const message = String(err);
+      setError(message);
+      setShortcutStatus(message);
+    } finally {
+      setIsShortcutSaving(false);
+    }
+  };
+
+  const resetWindowToggleShortcut = async () => {
+    setShortcutDraft(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
+    await applyWindowToggleShortcut(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
   };
 
   const pickPath = async () => {
@@ -1608,6 +1798,7 @@ function App() {
             <section className="search-panel">
               <div className="search-input-wrap">
                 <input
+                  ref={searchInputRef}
                   className="search-input"
                   placeholder={t.searchPlaceholder}
                   value={query}
@@ -1897,6 +2088,70 @@ function App() {
                   </button>
                 ))}
               </div>
+            </article>
+
+            <article className="settings-card">
+              <h3>{t.shortcutTitle}</h3>
+              <p className="shortcut-desc">{t.shortcutDesc}</p>
+              <p className="shortcut-input-hint">{t.shortcutInputHint}</p>
+              <div className="shortcut-editor">
+                <input
+                  className="shortcut-input"
+                  value={displayShortcut(shortcutDraft)}
+                  placeholder={t.shortcutInputPlaceholder}
+                  readOnly
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  onKeyDown={(event) => {
+                    if (event.key === "Tab") {
+                      return;
+                    }
+                    if (event.key === "Escape") {
+                      event.currentTarget.blur();
+                      return;
+                    }
+                    if (event.key === "Backspace" || event.key === "Delete") {
+                      event.preventDefault();
+                      setShortcutDraft("");
+                      setShortcutStatus("");
+                      return;
+                    }
+
+                    const next = shortcutFromKeyboardEvent(event);
+                    event.preventDefault();
+                    if (!next) {
+                      setShortcutStatus(t.shortcutNeedModifier);
+                      return;
+                    }
+
+                    setShortcutDraft(next);
+                    setShortcutStatus("");
+                    void applyWindowToggleShortcut(next);
+                  }}
+                />
+                <div className="shortcut-actions">
+                  <button
+                    className="action-btn"
+                    disabled={isShortcutSaving}
+                    onClick={() => void applyWindowToggleShortcut(shortcutDraft)}
+                  >
+                    {t.shortcutApply}
+                  </button>
+                  <button
+                    className="action-btn"
+                    disabled={isShortcutSaving}
+                    onClick={() => void resetWindowToggleShortcut()}
+                  >
+                    {t.shortcutReset}
+                  </button>
+                </div>
+              </div>
+              <div className="shortcut-current-line">
+                {t.shortcutCurrent}: {displayShortcut(windowToggleShortcut)}
+              </div>
+              {shortcutStatus && <div className="shortcut-status">{shortcutStatus}</div>}
             </article>
           </section>
         )}
