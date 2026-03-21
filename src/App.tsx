@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
 
-type SearchMode = "Substring" | "Pattern";
 type TabId = "all" | "files" | "folders" | "documents" | "images" | "media" | "code" | "archives";
 type SortKey = "name" | "path" | "size" | "modified";
 type ColumnKey = "name" | "path" | "size" | "modified";
@@ -28,7 +27,8 @@ const MIN_COLUMN_WIDTHS: Record<ColumnKey, number> = {
 const THEME_STORAGE_KEY = "machunt.theme.mode";
 const LANGUAGE_STORAGE_KEY = "machunt.language";
 const COLUMN_WIDTHS_STORAGE_KEY = "machunt.table.column.widths";
-const SEARCH_MODE_STORAGE_KEY = "machunt.search.mode";
+const LEGACY_SEARCH_MODE_STORAGE_KEY = "machunt.search.mode";
+const REGEX_ENABLED_STORAGE_KEY = "machunt.search.regex_enabled";
 const CASE_SENSITIVE_STORAGE_KEY = "machunt.search.case_sensitive";
 const EVENT_OPEN_SETTINGS = "app://open-settings";
 const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives"];
@@ -45,8 +45,7 @@ const I18N = {
     menuCopyName: "拷贝名称",
     menuCopyPath: "拷贝路径",
     menuTrash: "移到废纸篓",
-    modeSubstring: "子串",
-    modeWildcard: "通配符",
+    regexEnabled: "正则",
     caseSensitive: "区分大小写",
     build: "构建",
     rebuild: "重建",
@@ -103,8 +102,7 @@ const I18N = {
     menuCopyName: "Copy Name",
     menuCopyPath: "Copy Path",
     menuTrash: "Move to Trash",
-    modeSubstring: "Substring",
-    modeWildcard: "Wildcard",
+    regexEnabled: "Regex",
     caseSensitive: "Case Sensitive",
     build: "Build",
     rebuild: "Rebuild",
@@ -346,15 +344,16 @@ function buildSearchRequest(
   query: string,
   tab: TabId,
   pathPrefix: string,
-  mode: SearchMode,
-  caseSensitive: boolean
+  caseSensitive: boolean,
+  regexEnabled: boolean
 ) {
   const includeFiles = tab !== "folders";
   const includeDirs = tab === "all" || tab === "folders";
   return {
     request: {
       query,
-      mode,
+      mode: "Substring",
+      regexEnabled,
       caseSensitive,
       pathPrefix: pathPrefix.trim() || null,
       includeFiles,
@@ -423,13 +422,24 @@ function loadStoredColumnWidths(): Record<ColumnKey, number> | null {
   }
 }
 
-function loadStoredSearchMode(): SearchMode | null {
+function loadStoredRegexEnabled(): boolean | null {
   if (typeof window === "undefined") {
     return null;
   }
-  const raw = window.localStorage.getItem(SEARCH_MODE_STORAGE_KEY);
-  if (raw === "Substring" || raw === "Pattern") {
-    return raw;
+  const raw = window.localStorage.getItem(REGEX_ENABLED_STORAGE_KEY);
+  if (raw === "1") {
+    return true;
+  }
+  if (raw === "0") {
+    return false;
+  }
+
+  const legacy = window.localStorage.getItem(LEGACY_SEARCH_MODE_STORAGE_KEY);
+  if (legacy === "Pattern") {
+    return true;
+  }
+  if (legacy === "Substring") {
+    return false;
   }
   return null;
 }
@@ -458,7 +468,7 @@ function App() {
   const [pathSuggestions, setPathSuggestions] = useState<string[]>([]);
   const [isPathDropdownOpen, setIsPathDropdownOpen] = useState(false);
   const [activePathSuggestion, setActivePathSuggestion] = useState(-1);
-  const [mode, setMode] = useState<SearchMode>(() => loadStoredSearchMode() ?? "Substring");
+  const [regexEnabled, setRegexEnabled] = useState(() => loadStoredRegexEnabled() ?? false);
   const [caseSensitive, setCaseSensitive] = useState(() => loadStoredCaseSensitive() ?? false);
   const [activeTab, setActiveTab] = useState<TabId>("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
@@ -685,8 +695,8 @@ function App() {
   }, [themeMode]);
 
   useEffect(() => {
-    localStorage.setItem(SEARCH_MODE_STORAGE_KEY, mode);
-  }, [mode]);
+    localStorage.setItem(REGEX_ENABLED_STORAGE_KEY, regexEnabled ? "1" : "0");
+  }, [regexEnabled]);
 
   useEffect(() => {
     localStorage.setItem(CASE_SENSITIVE_STORAGE_KEY, caseSensitive ? "1" : "0");
@@ -982,7 +992,7 @@ function App() {
       try {
         const response = await invoke<SearchResponse>(
           "search",
-          buildSearchRequest(needle, activeTab, pathPrefix, mode, caseSensitive)
+          buildSearchRequest(needle, activeTab, pathPrefix, caseSensitive, regexEnabled)
         );
         if (cancelled) {
           return;
@@ -1012,7 +1022,7 @@ function App() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, pathPrefix, activeTab, mode, caseSensitive, sortKey, sortAscending]);
+  }, [query, pathPrefix, activeTab, regexEnabled, caseSensitive, sortKey, sortAscending]);
 
   const runBuild = async (rebuild: boolean) => {
     if (isBuilding) {
@@ -1229,20 +1239,13 @@ function App() {
                 </div>
 
                 <div className="mode-controls">
-                  <div className="segmented">
-                    <button
-                      className={mode === "Substring" ? "seg-btn active" : "seg-btn"}
-                      onClick={() => setMode("Substring")}
-                    >
-                      {t.modeSubstring}
-                    </button>
-                    <button
-                      className={mode === "Pattern" ? "seg-btn active" : "seg-btn"}
-                      onClick={() => setMode("Pattern")}
-                    >
-                      {t.modeWildcard}
-                    </button>
-                  </div>
+                  <button
+                    className={regexEnabled ? "case-btn active" : "case-btn"}
+                    onClick={() => setRegexEnabled((prev) => !prev)}
+                    title={t.regexEnabled}
+                  >
+                    {t.regexEnabled}
+                  </button>
                   <button
                     className={caseSensitive ? "case-btn active" : "case-btn"}
                     onClick={() => setCaseSensitive((prev) => !prev)}
