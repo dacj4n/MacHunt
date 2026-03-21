@@ -5,7 +5,8 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Instant, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::Emitter;
@@ -14,6 +15,8 @@ struct AppState {
     engine: Engine,
     watch_started: AtomicBool,
     index_loaded: AtomicBool,
+    preview_process: Arc<Mutex<Option<u32>>>,
+    preview_session_seq: AtomicU64,
 }
 
 impl AppState {
@@ -22,6 +25,8 @@ impl AppState {
             engine: Engine::new(false),
             watch_started: AtomicBool::new(false),
             index_loaded: AtomicBool::new(false),
+            preview_process: Arc::new(Mutex::new(None)),
+            preview_session_seq: AtomicU64::new(0),
         }
     }
 }
@@ -80,6 +85,13 @@ struct BuildEvent {
     phase: String,
     indexed: Option<usize>,
     took_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewStatusEvent {
+    phase: String,
+    session_id: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -240,6 +252,82 @@ fn open_search_result(path: String) -> Result<(), String> {
     } else {
         Err("Failed to open target".to_string())
     }
+}
+
+#[tauri::command]
+fn preview_search_result(
+    paths: Vec<String>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    if let Ok(mut running_pid) = state.preview_process.lock() {
+        if let Some(pid) = running_pid.take() {
+            let _ = Command::new("kill")
+                .arg("-TERM")
+                .arg(pid.to_string())
+                .status();
+        }
+    }
+
+    let session_id = state.preview_session_seq.fetch_add(1, Ordering::SeqCst) + 1;
+    let mut cmd = Command::new("qlmanage");
+    cmd.arg("-p");
+    let mut valid_count = 0usize;
+    for path in paths {
+        let target = PathBuf::from(path);
+        if !target.exists() {
+            continue;
+        }
+        valid_count += 1;
+        cmd.arg(target);
+    }
+    if valid_count == 0 {
+        return Err("Target path does not exist".to_string());
+    }
+
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let pid = child.id();
+
+    if let Ok(mut running_pid) = state.preview_process.lock() {
+        *running_pid = Some(pid);
+    }
+
+    let _ = app.emit(
+        "preview://status",
+        PreviewStatusEvent {
+            phase: "opened".to_string(),
+            session_id,
+        },
+    );
+
+    let preview_process = state.preview_process.clone();
+    let app_handle = app.clone();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+        if let Ok(mut running_pid) = preview_process.lock() {
+            if running_pid.as_ref().copied() == Some(pid) {
+                *running_pid = None;
+            }
+        }
+        let _ = app_handle.emit(
+            "preview://status",
+            PreviewStatusEvent {
+                phase: "closed".to_string(),
+                session_id,
+            },
+        );
+    });
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -750,6 +838,7 @@ pub fn run() {
             list_path_suggestions,
             pick_path_in_finder,
             open_search_result,
+            preview_search_result,
             reveal_in_finder,
             open_in_qspace,
             open_in_terminal,
