@@ -190,6 +190,12 @@ fn normalize_shortcut_input(raw: &str) -> Result<String, String> {
 }
 
 fn show_main_window_internal<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+        let _ = app.set_dock_visibility(true);
+    }
+
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "Main window not found".to_string())?;
@@ -201,6 +207,12 @@ fn show_main_window_internal<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Re
 }
 
 fn hide_main_window_internal<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        let _ = app.set_dock_visibility(false);
+    }
+
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "Main window not found".to_string())?;
