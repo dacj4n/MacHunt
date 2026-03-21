@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -34,6 +34,8 @@ const REGEX_ENABLED_STORAGE_KEY = "machunt.search.regex_enabled";
 const CASE_SENSITIVE_STORAGE_KEY = "machunt.search.case_sensitive";
 const EVENT_OPEN_SETTINGS = "app://open-settings";
 const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives"];
+const PREVIEW_OPEN_MS = 240;
+const PREVIEW_CLOSE_MS = 220;
 
 const I18N = {
   zh: {
@@ -49,6 +51,8 @@ const I18N = {
     menuWezTerm: "在 WezTerm 中打开",
     menuCopyName: "拷贝名称",
     menuCopyPath: "拷贝路径",
+    menuCopyAllNames: "拷贝所有文件名",
+    menuCopyAllPaths: "拷贝所有文件路径",
     menuTrash: "移到废纸篓",
     regexEnabled: "正则",
     caseSensitive: "区分大小写",
@@ -110,6 +114,8 @@ const I18N = {
     menuWezTerm: "Open in WezTerm",
     menuCopyName: "Copy Name",
     menuCopyPath: "Copy Path",
+    menuCopyAllNames: "Copy All Names",
+    menuCopyAllPaths: "Copy All Paths",
     menuTrash: "Move to Trash",
     regexEnabled: "Regex",
     caseSensitive: "Case Sensitive",
@@ -200,10 +206,26 @@ interface WatchResponse {
   lastEventId?: number;
 }
 
+interface PreviewStatusEvent {
+  phase: "opened" | "closed";
+  sessionId: number;
+}
+
 interface ContextMenuState {
   x: number;
   y: number;
   item: SearchResultItem;
+  multiSelection: boolean;
+}
+
+interface PreviewZoomState {
+  id: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  opacity: number;
+  transitionMs: number;
 }
 
 function extensionOf(name: string): string {
@@ -376,6 +398,24 @@ function setCellPreviewTooltip(
   }
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
+}
+
+function blurActiveEditable(): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && isEditableTarget(active)) {
+    active.blur();
+  }
+}
+
 function buildSearchRequest(
   query: string,
   tab: TabId,
@@ -524,6 +564,9 @@ function App() {
   const [isPickingPath, setIsPickingPath] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [openWithVisible, setOpenWithVisible] = useState(false);
+  const [selectedItemPaths, setSelectedItemPaths] = useState<string[]>([]);
+  const [selectionAnchorPath, setSelectionAnchorPath] = useState<string | null>(null);
+  const [previewZoom, setPreviewZoom] = useState<PreviewZoomState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>(
     () => loadStoredColumnWidths() ?? DEFAULT_COLUMN_WIDTHS
@@ -532,7 +575,12 @@ function App() {
   const tableShellRef = useRef<HTMLElement | null>(null);
   const pathPickerRef = useRef<HTMLDivElement | null>(null);
   const pathInputRef = useRef<HTMLInputElement | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLElement>());
   const openWithCloseTimerRef = useRef<number | null>(null);
+  const previewZoomCleanupRef = useRef<number | null>(null);
+  const previewZoomRef = useRef<PreviewZoomState | null>(null);
+  const previewSourcePathRef = useRef<string | null>(null);
+  const previewActiveSessionRef = useRef<number | null>(null);
   const columnWidthsRef = useRef(columnWidths);
   const resizeStateRef = useRef<{
     left: ColumnKey;
@@ -568,6 +616,16 @@ function App() {
     })
     .slice(0, 8);
   const isPathDropdownVisible = isPathDropdownOpen && visiblePathSuggestions.length > 0;
+  const selectedItemPathSet = useMemo(() => new Set(selectedItemPaths), [selectedItemPaths]);
+  const selectedItemsInOrder = useMemo(
+    () => items.filter((item) => selectedItemPathSet.has(item.path)),
+    [items, selectedItemPathSet]
+  );
+  const selectedPathsInOrder = useMemo(
+    () => selectedItemsInOrder.map((item) => item.path),
+    [selectedItemsInOrder]
+  );
+  const hasMultiSelection = selectedPathsInOrder.length > 1;
 
   const tabLabel = (tab: TabId): string => t[`tab_${tab}` as const];
   const formatIndexedItems = (count: number): string => fmt(t.indexedItems, { count: count.toLocaleString() });
@@ -664,8 +722,17 @@ function App() {
   }, [columnWidths]);
 
   useEffect(() => {
+    previewZoomRef.current = previewZoom;
+  }, [previewZoom]);
+
+  useEffect(() => {
     return () => {
       clearOpenWithCloseTimer();
+      if (previewZoomCleanupRef.current !== null) {
+        window.clearTimeout(previewZoomCleanupRef.current);
+        previewZoomCleanupRef.current = null;
+      }
+      previewActiveSessionRef.current = null;
     };
   }, []);
 
@@ -719,6 +786,15 @@ function App() {
       window.removeEventListener("scroll", close, true);
     };
   }, [contextMenu]);
+
+  useEffect(() => {
+    const visible = new Set(items.map((item) => item.path));
+    setSelectedItemPaths((prev) => {
+      const next = prev.filter((path) => visible.has(path));
+      return next.length === prev.length ? prev : next;
+    });
+    setSelectionAnchorPath((prev) => (prev && visible.has(prev) ? prev : null));
+  }, [items]);
 
   useEffect(() => {
     const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
@@ -1130,6 +1206,19 @@ function App() {
     }
   };
 
+  const previewResults = async (paths: string[]) => {
+    if (paths.length === 0) {
+      return;
+    }
+    try {
+      await invoke("preview_search_result", { paths });
+    } catch (err) {
+      setPreviewZoom(null);
+      previewActiveSessionRef.current = null;
+      setError(String(err));
+    }
+  };
+
   const revealInFinder = async (path: string) => {
     try {
       await invoke("reveal_in_finder", { path });
@@ -1170,6 +1259,14 @@ function App() {
     }
   };
 
+  const copyAllSelectedNames = async () => {
+    await copyText(selectedItemsInOrder.map((item) => item.name).join("\n"));
+  };
+
+  const copyAllSelectedPaths = async () => {
+    await copyText(selectedItemsInOrder.map((item) => item.path).join("\n"));
+  };
+
   const moveToTrash = async (path: string) => {
     try {
       await invoke("move_to_trash", { path });
@@ -1195,19 +1292,269 @@ function App() {
     setSortAscending(true);
   };
 
+  const getRowRect = (path: string): DOMRect | null => {
+    const row = rowRefs.current.get(path);
+    if (!row) {
+      return null;
+    }
+    const rect = row.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+    return rect;
+  };
+
+  const getPreviewTargetRect = (): { left: number; top: number; width: number; height: number } => {
+    const width = Math.max(620, Math.min(window.innerWidth * 0.74, 1040));
+    const height = Math.max(420, Math.min(window.innerHeight * 0.76, 740));
+    return {
+      left: Math.round((window.innerWidth - width) / 2),
+      top: Math.round((window.innerHeight - height) / 2),
+      width: Math.round(width),
+      height: Math.round(height)
+    };
+  };
+
+  const animatePreviewOpen = (path: string) => {
+    const source = getRowRect(path);
+    if (!source) {
+      return;
+    }
+    const target = getPreviewTargetRect();
+    previewSourcePathRef.current = path;
+    const id = Date.now();
+    setPreviewZoom({
+      id,
+      left: source.left,
+      top: source.top,
+      width: source.width,
+      height: source.height,
+      opacity: 0.92,
+      transitionMs: 0
+    });
+    window.requestAnimationFrame(() => {
+      setPreviewZoom((prev) => {
+        if (!prev || prev.id !== id) {
+          return prev;
+        }
+        return {
+          ...prev,
+          left: target.left,
+          top: target.top,
+          width: target.width,
+          height: target.height,
+          opacity: 0.28,
+          transitionMs: PREVIEW_OPEN_MS
+        };
+      });
+    });
+  };
+
+  const animatePreviewClose = () => {
+    const current = previewZoomRef.current;
+    if (!current) {
+      return;
+    }
+    const sourcePath = previewSourcePathRef.current;
+    const destinationRect = sourcePath ? getRowRect(sourcePath) : null;
+    const fallback = {
+      left: current.left + (current.width - 340) / 2,
+      top: current.top + (current.height - 46) / 2,
+      width: 340,
+      height: 46
+    };
+    const target = destinationRect
+      ? {
+          left: destinationRect.left,
+          top: destinationRect.top,
+          width: destinationRect.width,
+          height: destinationRect.height
+        }
+      : fallback;
+
+    const id = Date.now();
+    setPreviewZoom({
+      id,
+      left: current.left,
+      top: current.top,
+      width: current.width,
+      height: current.height,
+      opacity: current.opacity,
+      transitionMs: 0
+    });
+    window.requestAnimationFrame(() => {
+      setPreviewZoom((prev) => {
+        if (!prev || prev.id !== id) {
+          return prev;
+        }
+        return {
+          ...prev,
+          left: target.left,
+          top: target.top,
+          width: target.width,
+          height: target.height,
+          opacity: 0,
+          transitionMs: PREVIEW_CLOSE_MS
+        };
+      });
+    });
+    if (previewZoomCleanupRef.current !== null) {
+      window.clearTimeout(previewZoomCleanupRef.current);
+    }
+    previewZoomCleanupRef.current = window.setTimeout(() => {
+      setPreviewZoom((prev) => (prev && prev.id === id ? null : prev));
+      previewZoomCleanupRef.current = null;
+    }, PREVIEW_CLOSE_MS + 30);
+  };
+
+  const handleRowClick = (event: React.MouseEvent<HTMLElement>, item: SearchResultItem, index: number) => {
+    blurActiveEditable();
+    const path = item.path;
+    const isMetaMulti = event.metaKey;
+
+    if (event.shiftKey) {
+      const anchorPath = selectionAnchorPath ?? selectedPathsInOrder[0] ?? path;
+      const anchorIndex = items.findIndex((entry) => entry.path === anchorPath);
+      if (anchorIndex < 0) {
+        setSelectedItemPaths([path]);
+        setSelectionAnchorPath(path);
+        return;
+      }
+
+      const rangeStart = Math.min(anchorIndex, index);
+      const rangeEnd = Math.max(anchorIndex, index);
+      const rangePaths = items.slice(rangeStart, rangeEnd + 1).map((entry) => entry.path);
+
+      if (isMetaMulti) {
+        const merged = new Set(selectedPathsInOrder);
+        for (const p of rangePaths) {
+          merged.add(p);
+        }
+        setSelectedItemPaths(Array.from(merged));
+      } else {
+        setSelectedItemPaths(rangePaths);
+      }
+      setSelectionAnchorPath(path);
+      return;
+    }
+
+    if (isMetaMulti) {
+      if (selectedItemPathSet.has(path)) {
+        const next = selectedItemPaths.filter((p) => p !== path);
+        setSelectedItemPaths(next);
+        setSelectionAnchorPath(next.length > 0 ? next[next.length - 1] : null);
+      } else {
+        setSelectedItemPaths([...selectedItemPaths, path]);
+        setSelectionAnchorPath(path);
+      }
+      return;
+    }
+
+    setSelectedItemPaths([path]);
+    setSelectionAnchorPath(path);
+  };
+
+  const moveSelectionByArrow = (delta: number) => {
+    if (items.length === 0) {
+      return;
+    }
+
+    const anchorPath = selectionAnchorPath ?? selectedPathsInOrder[0] ?? null;
+    const anchorIndex = anchorPath ? items.findIndex((entry) => entry.path === anchorPath) : -1;
+    const startIndex = anchorIndex >= 0 ? anchorIndex : delta > 0 ? -1 : items.length;
+    const nextIndex = Math.max(0, Math.min(items.length - 1, startIndex + delta));
+    const nextPath = items[nextIndex].path;
+
+    setSelectedItemPaths([nextPath]);
+    setSelectionAnchorPath(nextPath);
+
+    window.requestAnimationFrame(() => {
+      rowRefs.current.get(nextPath)?.scrollIntoView({ block: "nearest" });
+    });
+  };
+
   const openResultContextMenu = (event: React.MouseEvent<HTMLElement>, item: SearchResultItem) => {
     event.preventDefault();
+    blurActiveEditable();
     const menuWidth = 230;
-    const menuHeight = 320;
+    const keepsMultiSelection = selectedItemPathSet.has(item.path);
+    const menuIsMulti = keepsMultiSelection && hasMultiSelection;
+    const menuHeight = menuIsMulti ? 392 : 332;
     const x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
     const y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
+    if (!selectedItemPathSet.has(item.path)) {
+      setSelectedItemPaths([item.path]);
+      setSelectionAnchorPath(item.path);
+    }
     setContextMenu({
       x,
       y,
-      item
+      item,
+      multiSelection: menuIsMulti
     });
     setOpenWithVisible(false);
   };
+
+  useEffect(() => {
+    let unlistenPreview: (() => void) | undefined;
+    void listen<PreviewStatusEvent>("preview://status", (event) => {
+      const payload = event.payload;
+      if (payload.phase === "opened") {
+        previewActiveSessionRef.current = payload.sessionId;
+        return;
+      }
+      if (previewActiveSessionRef.current !== payload.sessionId) {
+        return;
+      }
+      previewActiveSessionRef.current = null;
+      animatePreviewClose();
+    })
+      .then((dispose) => {
+        unlistenPreview = dispose;
+      })
+      .catch(() => {
+        // Keep app usable even if preview status event binding fails.
+      });
+
+    return () => {
+      if (unlistenPreview) {
+        unlistenPreview();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && activeView === "search" && !contextMenu) {
+        if (!isEditableTarget(event.target)) {
+          event.preventDefault();
+          moveSelectionByArrow(event.key === "ArrowDown" ? 1 : -1);
+        }
+        return;
+      }
+
+      if (event.key !== " " && event.code !== "Space") {
+        return;
+      }
+      if (event.repeat || activeView !== "search" || selectedPathsInOrder.length === 0 || contextMenu) {
+        return;
+      }
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+      event.preventDefault();
+      const leadPath = selectedPathsInOrder[0];
+      blurActiveEditable();
+      previewActiveSessionRef.current = null;
+      animatePreviewOpen(leadPath);
+      void previewResults(selectedPathsInOrder);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [activeView, contextMenu, selectedPathsInOrder]);
 
   const settingsThemeOptions: Array<{ mode: ThemeMode; title: string; description: string }> = [
     { mode: "system", title: t.themeSystemTitle, description: t.themeSystemDesc },
@@ -1219,6 +1566,20 @@ function App() {
     { code: "zh", title: t.languageZhTitle, description: t.languageZhDesc },
     { code: "en", title: t.languageEnTitle, description: t.languageEnDesc }
   ];
+
+  const previewZoomStyle = previewZoom
+    ? {
+        left: `${previewZoom.left}px`,
+        top: `${previewZoom.top}px`,
+        width: `${previewZoom.width}px`,
+        height: `${previewZoom.height}px`,
+        opacity: previewZoom.opacity,
+        transition:
+          previewZoom.transitionMs > 0
+            ? `left ${previewZoom.transitionMs}ms cubic-bezier(0.2, 0.85, 0.16, 1), top ${previewZoom.transitionMs}ms cubic-bezier(0.2, 0.85, 0.16, 1), width ${previewZoom.transitionMs}ms cubic-bezier(0.2, 0.85, 0.16, 1), height ${previewZoom.transitionMs}ms cubic-bezier(0.2, 0.85, 0.16, 1), opacity ${previewZoom.transitionMs}ms ease-out`
+            : "none"
+      }
+    : undefined;
 
   return (
     <div className="app-background">
@@ -1398,8 +1759,21 @@ function App() {
                   return (
                     <article
                       key={`${item.path}-${index}`}
-                      className="row"
+                      ref={(element) => {
+                        if (element) {
+                          rowRefs.current.set(item.path, element);
+                        } else {
+                          rowRefs.current.delete(item.path);
+                        }
+                      }}
+                      className={selectedItemPathSet.has(item.path) ? "row selected" : "row"}
                       style={{ gridTemplateColumns }}
+                      onMouseDown={(event) => {
+                        if (event.button === 0) {
+                          blurActiveEditable();
+                        }
+                      }}
+                      onClick={(event) => handleRowClick(event, item, index)}
                       onDoubleClick={() => void openResult(item.path)}
                       onContextMenu={(event) => openResultContextMenu(event, item)}
                     >
@@ -1500,6 +1874,7 @@ function App() {
 
         {error && <aside className="error-box">{error}</aside>}
       </main>
+      {previewZoom && <div className="preview-zoom" style={previewZoomStyle} />}
       {contextMenu && (
         <div
           className="context-menu-layer"
@@ -1576,6 +1951,22 @@ function App() {
             >
               {t.menuCopyPath}
             </button>
+            {contextMenu.multiSelection && (
+              <>
+                <button
+                  className="context-menu-btn"
+                  onClick={() => void runContextAction(copyAllSelectedNames)}
+                >
+                  {t.menuCopyAllNames}
+                </button>
+                <button
+                  className="context-menu-btn"
+                  onClick={() => void runContextAction(copyAllSelectedPaths)}
+                >
+                  {t.menuCopyAllPaths}
+                </button>
+              </>
+            )}
             <button
               className="context-menu-btn danger"
               onClick={() => void runContextAction(() => moveToTrash(contextMenu.item.path))}

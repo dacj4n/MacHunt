@@ -543,6 +543,8 @@ body {
   min-height: 0;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .row {
@@ -552,10 +554,16 @@ body {
   padding: 0 16px;
   min-height: 46px;
   transition: background-color 120ms ease;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .row:hover {
   background: rgba(47, 134, 255, 0.08);
+}
+
+.row.selected {
+  background: rgba(47, 134, 255, 0.14);
 }
 
 .cell {
@@ -697,6 +705,17 @@ body {
   padding: 10px 12px;
   font-size: 12px;
   font-weight: 600;
+}
+
+.preview-zoom {
+  position: fixed;
+  z-index: 1100;
+  border-radius: 12px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+  will-change: left, top, width, height, opacity;
 }
 
 .context-menu-layer {
@@ -978,6 +997,10 @@ body {
   background: rgba(94, 160, 255, 0.15);
 }
 
+:root[data-theme="dark"] .row.selected {
+  background: rgba(94, 160, 255, 0.24);
+}
+
 :root[data-theme="dark"] .cell {
   color: #b5c0d1;
 }
@@ -1016,6 +1039,12 @@ body {
   border-color: #3a475b;
   background: #1a2432;
   box-shadow: 0 18px 38px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme="dark"] .preview-zoom {
+  border: none;
+  background: transparent;
+  box-shadow: none;
 }
 
 :root[data-theme="dark"] .context-menu-btn {
