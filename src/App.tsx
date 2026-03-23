@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -20,12 +20,13 @@ const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
 };
 
 const MIN_COLUMN_WIDTHS: Record<ColumnKey, number> = {
-  name: 300,
-  path: 220,
-  type: 110,
-  size: 90,
-  modified: 170
+  name: 160,
+  path: 120,
+  type: 90,
+  size: 72,
+  modified: 120
 };
+const COLUMN_KEYS: ColumnKey[] = ["name", "path", "type", "size", "modified"];
 
 const THEME_STORAGE_KEY = "machunt.theme.mode";
 const LANGUAGE_STORAGE_KEY = "machunt.language";
@@ -683,6 +684,7 @@ function App() {
   );
   const [activeResizer, setActiveResizer] = useState<string | null>(null);
   const tableShellRef = useRef<HTMLElement | null>(null);
+  const tableBodyRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const pathPickerRef = useRef<HTMLDivElement | null>(null);
   const pathInputRef = useRef<HTMLInputElement | null>(null);
@@ -697,8 +699,7 @@ function App() {
     left: ColumnKey;
     right: ColumnKey;
     startX: number;
-    leftStart: number;
-    rightStart: number;
+    startWidths: Record<ColumnKey, number>;
   } | null>(null);
 
   const gridTemplateColumns = `${columnWidths.name}px ${columnWidths.path}px ${columnWidths.type}px ${columnWidths.size}px ${columnWidths.modified}px`;
@@ -1109,38 +1110,39 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    const fitColumnsToContainer = () => {
-      const shell = tableShellRef.current;
-      if (!shell) {
-        return;
+  const fitColumnsToContainer = useCallback(() => {
+    const body = tableBodyRef.current;
+    const shell = tableShellRef.current;
+    const hostWidth = body?.clientWidth ?? shell?.clientWidth ?? 0;
+    if (hostWidth <= 0) {
+      return;
+    }
+    const available = Math.max(0, hostWidth - 32);
+    setColumnWidths((prev) => {
+      const total = prev.name + prev.path + prev.type + prev.size + prev.modified;
+      if (total === available) {
+        return prev;
       }
-      const available = Math.max(0, shell.clientWidth - 32);
-      setColumnWidths((prev) => {
-        const total = prev.name + prev.path + prev.type + prev.size + prev.modified;
-        if (total <= available) {
-          return prev;
-        }
 
+      if (total < available) {
+        const deficit = available - total;
         const next = { ...prev };
-        let overflow = total - available;
-        const order: ColumnKey[] = ["path", "modified", "size", "name", "type"];
-
-        for (const key of order) {
-          if (overflow <= 0) {
-            break;
-          }
-          const minWidth = MIN_COLUMN_WIDTHS[key];
-          const current = next[key];
-          const reducible = Math.max(0, current - minWidth);
-          if (reducible <= 0) {
-            continue;
-          }
-          const cut = Math.min(reducible, overflow);
-          next[key] = Math.round(current - cut);
-          overflow -= cut;
+        const weightTotal = COLUMN_KEYS.reduce((sum, key) => sum + DEFAULT_COLUMN_WIDTHS[key], 0);
+        let distributed = 0;
+        for (const key of COLUMN_KEYS) {
+          const add = Math.floor((deficit * DEFAULT_COLUMN_WIDTHS[key]) / weightTotal);
+          next[key] = Math.round(next[key] + add);
+          distributed += add;
         }
-
+        let remaining = deficit - distributed;
+        const growOrder: ColumnKey[] = ["path", "name", "modified", "type", "size"];
+        let cursor = 0;
+        while (remaining > 0) {
+          const key = growOrder[cursor % growOrder.length];
+          next[key] = Math.round(next[key] + 1);
+          remaining -= 1;
+          cursor += 1;
+        }
         if (
           next.name === prev.name &&
           next.path === prev.path &&
@@ -1151,15 +1153,47 @@ function App() {
           return prev;
         }
         return next;
-      });
-    };
+      }
 
+      const next = { ...prev };
+      let overflow = total - available;
+      const order: ColumnKey[] = ["path", "modified", "size", "name", "type"];
+
+      for (const key of order) {
+        if (overflow <= 0) {
+          break;
+        }
+        const minWidth = MIN_COLUMN_WIDTHS[key];
+        const current = next[key];
+        const reducible = Math.max(0, current - minWidth);
+        if (reducible <= 0) {
+          continue;
+        }
+        const cut = Math.min(reducible, overflow);
+        next[key] = Math.round(current - cut);
+        overflow -= cut;
+      }
+
+      if (
+        next.name === prev.name &&
+        next.path === prev.path &&
+        next.type === prev.type &&
+        next.size === prev.size &&
+        next.modified === prev.modified
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
     fitColumnsToContainer();
     window.addEventListener("resize", fitColumnsToContainer);
     return () => {
       window.removeEventListener("resize", fitColumnsToContainer);
     };
-  }, []);
+  }, [fitColumnsToContainer]);
 
   useEffect(() => {
     const onMouseMove = (event: MouseEvent) => {
@@ -1168,27 +1202,52 @@ function App() {
         return;
       }
       const delta = event.clientX - state.startX;
-      const total = state.leftStart + state.rightStart;
-      const minLeft = MIN_COLUMN_WIDTHS[state.left];
-      const minRight = MIN_COLUMN_WIDTHS[state.right];
-
-      let nextLeft = state.leftStart + delta;
-      if (nextLeft < minLeft) {
-        nextLeft = minLeft;
+      const start = state.startWidths;
+      const leftKey = state.left;
+      const leftIndex = COLUMN_KEYS.indexOf(leftKey);
+      const rightIndex = COLUMN_KEYS.indexOf(state.right);
+      if (leftIndex < 0 || rightIndex < 0 || rightIndex !== leftIndex + 1) {
+        return;
       }
-      if (nextLeft > total - minRight) {
-        nextLeft = total - minRight;
-      }
-      const nextRight = total - nextLeft;
 
-      setColumnWidths((prev) => ({
-        ...prev,
-        [state.left]: Math.round(nextLeft),
-        [state.right]: Math.round(nextRight)
-      }));
+      const next: Record<ColumnKey, number> = { ...start };
+      if (delta >= 0) {
+        let remaining = delta;
+        for (let i = rightIndex; i < COLUMN_KEYS.length && remaining > 0; i += 1) {
+          const key = COLUMN_KEYS[i];
+          const minWidth = MIN_COLUMN_WIDTHS[key];
+          const reducible = Math.max(0, next[key] - minWidth);
+          if (reducible <= 0) {
+            continue;
+          }
+          const cut = Math.min(reducible, remaining);
+          next[key] = Math.round(next[key] - cut);
+          remaining -= cut;
+        }
+        const grown = delta - remaining;
+        next[leftKey] = Math.round(start[leftKey] + grown);
+      } else {
+        let remaining = -delta;
+        for (let i = leftIndex; i >= 0 && remaining > 0; i -= 1) {
+          const key = COLUMN_KEYS[i];
+          const minWidth = MIN_COLUMN_WIDTHS[key];
+          const reducible = Math.max(0, next[key] - minWidth);
+          if (reducible <= 0) {
+            continue;
+          }
+          const cut = Math.min(reducible, remaining);
+          next[key] = Math.round(next[key] - cut);
+          remaining -= cut;
+        }
+        const shrink = -delta - remaining;
+        const rightKey = COLUMN_KEYS[rightIndex];
+        next[rightKey] = Math.round(start[rightKey] + shrink);
+      }
+
+      setColumnWidths(next);
     };
 
-    const onMouseUp = () => {
+    const finishResize = () => {
       if (resizeStateRef.current && typeof window !== "undefined") {
         try {
           window.localStorage.setItem(COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(columnWidthsRef.current));
@@ -1199,28 +1258,38 @@ function App() {
       resizeStateRef.current = null;
       setActiveResizer(null);
       document.body.style.userSelect = "";
+      document.body.style.cursor = "";
     };
 
     window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("mouseup", finishResize);
+    window.addEventListener("blur", finishResize);
+    window.addEventListener("mouseleave", finishResize);
+
     return () => {
       window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("mouseup", finishResize);
+      window.removeEventListener("blur", finishResize);
+      window.removeEventListener("mouseleave", finishResize);
     };
   }, []);
 
   const startResize =
-    (left: ColumnKey, right: ColumnKey, marker: string) => (event: React.MouseEvent<HTMLDivElement>) => {
+    (left: ColumnKey, right: ColumnKey, marker: string) => (event: React.MouseEvent<HTMLSpanElement>) => {
+      if (event.button !== 0) {
+        return;
+      }
       event.preventDefault();
+      event.stopPropagation();
       resizeStateRef.current = {
         left,
         right,
         startX: event.clientX,
-        leftStart: columnWidths[left],
-        rightStart: columnWidths[right]
+        startWidths: { ...columnWidthsRef.current }
       };
       setActiveResizer(marker);
       document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
     };
 
   useEffect(() => {
@@ -1985,7 +2054,7 @@ function App() {
                 </span>
               </div>
 
-              <div className="table-body" onMouseDown={clearSelectionOnBlankArea}>
+              <div className="table-body" ref={tableBodyRef} onMouseDown={clearSelectionOnBlankArea}>
                 {items.map((item, index) => {
                   const token = iconToken(item);
                   return (
