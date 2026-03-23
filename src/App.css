@@ -467,7 +467,7 @@ body {
 .header-cell {
   position: relative;
   min-width: 0;
-  padding-right: 22px;
+  padding-right: 28px;
   overflow: visible;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -521,10 +521,10 @@ body {
 .column-resizer {
   position: absolute;
   top: 0;
-  right: -10px;
-  width: 20px;
+  right: -14px;
+  width: 28px;
   height: 100%;
-  z-index: 2;
+  z-index: 5;
   touch-action: none;
   cursor: col-resize !important;
 }
@@ -532,10 +532,10 @@ body {
 .column-resizer::after {
   content: "";
   position: absolute;
-  left: 9px;
+  left: 12px;
   top: 5px;
   bottom: 5px;
-  width: 3px;
+  width: 4px;
   border-radius: 2px;
   background: #aeb9c9;
   opacity: 0.7;
@@ -543,13 +543,16 @@ body {
 }
 
 .header-cell:hover .column-resizer::after,
+.column-resizer:hover::after,
 .column-resizer.active::after {
   opacity: 1;
   background: #7f9bc1;
 }
 
 .table-body {
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
   min-height: 0;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
