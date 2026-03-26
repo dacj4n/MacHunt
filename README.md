@@ -17,6 +17,10 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 - Showing window by shortcut auto-focuses the search input.
 - Settings page now supports vertical scrolling.
 - Clicking blank area in result list clears current selection.
+- Clipboard copy in bundled builds is now hardened with multi-path fallback.
+- Settings now include **Launch at Login** and **Silent Startup** options.
+- Launch-at-login now integrates with macOS **Login Items** (not only background items).
+- Startup settings card now has complete dark-theme styling.
 
 ## Core Capabilities
 
@@ -52,6 +56,7 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 - Theme settings (system/light/dark)
 - Language settings (zh/en)
 - Global shortcut settings for show/hide window
+- Startup settings: launch at login + silent startup (applies to auto-launch only)
 
 ## Tech Stack
 
@@ -206,7 +211,7 @@ Wildcard rules (`--regex`):
 ## Runtime Data
 
 - DB: `~/.machunt/data/index.db`
-- GUI shortcut settings: `~/.machunt/gui/settings.json`
+- GUI settings: `~/.machunt/gui/settings.json` (shortcut + launch-at-login + silent-start)
 - Logs: `~/.machunt/logs/`
 
 ## Why DB Can Be Large
