@@ -960,17 +960,54 @@ body {
   border-radius: 12px;
   background: #f7f9fc;
   padding: 12px 14px;
+  transition: border-color 120ms ease, background-color 120ms ease;
 }
 
-.startup-toggle-row input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  accent-color: #3f8cff;
+.startup-toggle-row:hover {
+  border-color: #9fb0c8;
 }
 
-.startup-toggle-row.disabled {
-  opacity: 0.66;
+.mac-switch {
+  position: relative;
+  width: 46px;
+  height: 28px;
+  flex: 0 0 46px;
+  border: none;
+  border-radius: 999px;
+  background: #c3cad6;
+  padding: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  cursor: pointer;
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.mac-switch.is-on {
+  background: #34c759;
+}
+
+.mac-switch-knob {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(28, 38, 53, 0.3), 0 0 0 0.5px rgba(24, 33, 46, 0.2);
+  transition: transform 160ms cubic-bezier(0.22, 0.9, 0.3, 1);
+}
+
+.mac-switch.is-on .mac-switch-knob {
+  transform: translateX(18px);
+}
+
+.mac-switch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(68, 138, 255, 0.33);
+}
+
+.mac-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .startup-toggle-copy {
@@ -1157,11 +1194,6 @@ body {
   background: #1d2735;
 }
 
-:root[data-theme="dark"] .startup-toggle-row.disabled {
-  background: #1a2330;
-  border-color: #2e3d53;
-}
-
 :root[data-theme="dark"] .startup-toggle-title {
   color: #dfe7f5;
 }
@@ -1170,8 +1202,20 @@ body {
   color: #98a8bf;
 }
 
-:root[data-theme="dark"] .startup-toggle-row input[type="checkbox"] {
-  accent-color: #7fb4ff;
+:root[data-theme="dark"] .mac-switch {
+  background: #4c586d;
+}
+
+:root[data-theme="dark"] .mac-switch.is-on {
+  background: #30d158;
+}
+
+:root[data-theme="dark"] .mac-switch-knob {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.46), 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="dark"] .mac-switch:focus-visible {
+  box-shadow: 0 0 0 3px rgba(122, 182, 255, 0.38);
 }
 
 :root[data-theme="dark"] .context-menu,

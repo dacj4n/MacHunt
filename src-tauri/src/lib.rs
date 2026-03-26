@@ -11,6 +11,8 @@ use std::time::{Instant, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+#[cfg(target_os = "macos")]
+use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
 const DEFAULT_WINDOW_TOGGLE_SHORTCUT: &str = "CmdOrCtrl+Shift+KeyF";
 const EVENT_OPEN_SETTINGS: &str = "app://open-settings";
@@ -305,6 +307,52 @@ fn run_osascript(script: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
+fn macos_major_version() -> Option<u32> {
+    let output = Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let major = raw.trim().split('.').next()?;
+    major.parse::<u32>().ok()
+}
+
+#[cfg(target_os = "macos")]
+fn supports_smappservice() -> bool {
+    macos_major_version()
+        .map(|major| major >= 13)
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn apply_launch_settings_via_service_management(launch_at_login: bool) -> Result<(), String> {
+    let service = unsafe { SMAppService::mainAppService() };
+    let status = unsafe { service.status() };
+    let is_registered =
+        status.0 == SMAppServiceStatus::Enabled.0 || status.0 == SMAppServiceStatus::RequiresApproval.0;
+
+    if launch_at_login {
+        if is_registered {
+            return Ok(());
+        }
+        unsafe { service.registerAndReturnError() }
+            .map_err(|err| format!("Failed to register login item via ServiceManagement: {err:?}"))?;
+        return Ok(());
+    }
+
+    if !is_registered {
+        return Ok(());
+    }
+
+    unsafe { service.unregisterAndReturnError() }
+        .map_err(|err| format!("Failed to unregister login item via ServiceManagement: {err:?}"))?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
 fn current_bundle_path() -> Result<PathBuf, String> {
     let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
     let bundle = exe_path
@@ -334,9 +382,7 @@ fn remove_login_item_by_name(name: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn apply_launch_settings(launch_at_login: bool, silent_start: bool) -> Result<(), String> {
-    cleanup_legacy_launch_agent_file();
-
+fn apply_launch_settings_via_system_events(launch_at_login: bool) -> Result<(), String> {
     let mut cleanup_names = vec![DEFAULT_LOGIN_ITEM_NAME.to_string()];
     if let Ok(bundle_path) = current_bundle_path() {
         if let Some(bundle_name) = bundle_path.file_stem().and_then(|s| s.to_str()) {
@@ -359,20 +405,29 @@ fn apply_launch_settings(launch_at_login: bool, silent_start: bool) -> Result<()
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or(DEFAULT_LOGIN_ITEM_NAME);
-    let hidden = if silent_start { "true" } else { "false" };
     let script = format!(
         "tell application \"System Events\"\n\
-         make login item at end with properties {{name:\"{name}\", path:\"{path}\", hidden:{hidden}}}\n\
+         make login item at end with properties {{name:\"{name}\", path:\"{path}\"}}\n\
          end tell",
         name = applescript_escape(bundle_name),
-        path = applescript_escape(&bundle_path.to_string_lossy()),
-        hidden = hidden
+        path = applescript_escape(&bundle_path.to_string_lossy())
     );
     run_osascript(&script)
 }
 
+#[cfg(target_os = "macos")]
+fn apply_launch_settings(launch_at_login: bool) -> Result<(), String> {
+    cleanup_legacy_launch_agent_file();
+
+    if supports_smappservice() {
+        return apply_launch_settings_via_service_management(launch_at_login);
+    }
+
+    apply_launch_settings_via_system_events(launch_at_login)
+}
+
 #[cfg(not(target_os = "macos"))]
-fn apply_launch_settings(_launch_at_login: bool, _silent_start: bool) -> Result<(), String> {
+fn apply_launch_settings(_launch_at_login: bool) -> Result<(), String> {
     Ok(())
 }
 
@@ -1133,7 +1188,7 @@ fn set_launch_settings(
     silent_start: bool,
     state: tauri::State<'_, AppState>,
 ) -> Result<LaunchSettingsResponse, String> {
-    apply_launch_settings(launch_at_login, silent_start)?;
+    apply_launch_settings(launch_at_login)?;
 
     {
         let mut guard = state
@@ -1351,7 +1406,11 @@ pub fn run() {
                 .lock()
                 .map(|value| *value)
                 .unwrap_or(false);
-            let _ = apply_launch_settings(launch_at_login, silent_start);
+            let _ = apply_launch_settings(launch_at_login);
+
+            if silent_start {
+                let _ = hide_main_window_internal(&app.handle().clone());
+            }
 
             Ok(())
         })

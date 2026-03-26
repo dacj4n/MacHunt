@@ -1,6 +1,6 @@
 [package]
 name = "machunt-gui"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Tauri GUI for MacHunt"
 
@@ -17,3 +17,4 @@ tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 machunt = { path = ".." }
+objc2-service-management = "0.3.2"
