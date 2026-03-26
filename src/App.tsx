@@ -1529,12 +1529,51 @@ function App() {
     }
   };
 
+  const copyViaExecCommand = (text: string): boolean => {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.top = "0";
+    textarea.style.left = "-9999px";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(textarea);
+    return ok;
+  };
+
   const copyText = async (text: string) => {
+    const errors: string[] = [];
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+    } catch (err) {
+      errors.push(`navigator.clipboard: ${String(err)}`);
+    }
+
+    try {
+      if (copyViaExecCommand(text)) {
+        return;
+      }
+      errors.push("document.execCommand(copy) returned false");
+    } catch (err) {
+      errors.push(`document.execCommand(copy): ${String(err)}`);
+    }
+
     try {
       await invoke("copy_to_clipboard", { text });
+      return;
     } catch (err) {
-      setError(String(err));
+      errors.push(`tauri invoke copy_to_clipboard: ${String(err)}`);
     }
+
+    setError(`Copy failed. ${errors.join("; ")}`);
   };
 
   const copyAllSelectedNames = async () => {
