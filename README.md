@@ -7,7 +7,7 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 ## Version
 
 - GUI: `v1.1.0` (base release)
-- CLI/Core: `v0.2.1` (base release)
+- CLI/Core: `v0.2.2` (base release)
 
 ## Latest Branch Updates (after v1.1.0)
 

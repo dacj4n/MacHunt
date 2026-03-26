@@ -113,11 +113,11 @@ const I18N = {
     shortcutSaved: "快捷键已保存",
     shortcutNeedModifier: "快捷键至少需要一个修饰键（Cmd/Ctrl/Alt/Shift）",
     startupTitle: "启动",
-    startupDesc: "设置登录后自动启动，并可选择静默启动（不显示窗口）。",
+    startupDesc: "分别设置开机自启与应用静默启动（启动后不显示窗口，可用快捷键唤起）。",
     startupLaunchAtLogin: "开机自启",
     startupLaunchAtLoginDesc: "登录 macOS 后自动启动 MacHunt。",
     startupSilentStart: "静默启动",
-    startupSilentStartDesc: "仅在开机自启时生效，启动后隐藏窗口。",
+    startupSilentStartDesc: "开启后，启动应用时默认隐藏窗口，可随时用全局快捷键唤起。",
     startupSaved: "启动设置已保存",
     startupSaving: "正在保存启动设置...",
     startupSaveFailed: "保存启动设置失败"
@@ -194,11 +194,11 @@ const I18N = {
     shortcutSaved: "Shortcut saved",
     shortcutNeedModifier: "Shortcut must include at least one modifier (Cmd/Ctrl/Alt/Shift)",
     startupTitle: "Startup",
-    startupDesc: "Configure launch at login and whether startup should stay silent.",
+    startupDesc: "Configure launch at login and silent app startup independently.",
     startupLaunchAtLogin: "Launch at Login",
     startupLaunchAtLoginDesc: "Start MacHunt automatically after signing in to macOS.",
     startupSilentStart: "Silent Startup",
-    startupSilentStartDesc: "Only applies to launch-at-login. Starts hidden.",
+    startupSilentStartDesc: "When enabled, app launches hidden; use the global shortcut to reveal it.",
     startupSaved: "Startup settings saved",
     startupSaving: "Saving startup settings...",
     startupSaveFailed: "Failed to save startup settings"
@@ -2358,24 +2358,34 @@ function App() {
                     <div className="startup-toggle-title">{t.startupLaunchAtLogin}</div>
                     <div className="startup-toggle-desc">{t.startupLaunchAtLoginDesc}</div>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={launchAtLogin}
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={launchAtLogin}
+                    aria-label={t.startupLaunchAtLogin}
+                    className={launchAtLogin ? "mac-switch is-on" : "mac-switch"}
                     disabled={isLaunchSettingsSaving}
-                    onChange={() => void applyLaunchSettings(!launchAtLogin, silentStart)}
-                  />
+                    onClick={() => void applyLaunchSettings(!launchAtLogin, silentStart)}
+                  >
+                    <span className="mac-switch-knob" />
+                  </button>
                 </label>
-                <label className={!launchAtLogin ? "startup-toggle-row disabled" : "startup-toggle-row"}>
+                <label className="startup-toggle-row">
                   <div className="startup-toggle-copy">
                     <div className="startup-toggle-title">{t.startupSilentStart}</div>
                     <div className="startup-toggle-desc">{t.startupSilentStartDesc}</div>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={silentStart}
-                    disabled={isLaunchSettingsSaving || !launchAtLogin}
-                    onChange={() => void applyLaunchSettings(launchAtLogin, !silentStart)}
-                  />
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={silentStart}
+                    aria-label={t.startupSilentStart}
+                    className={silentStart ? "mac-switch is-on" : "mac-switch"}
+                    disabled={isLaunchSettingsSaving}
+                    onClick={() => void applyLaunchSettings(launchAtLogin, !silentStart)}
+                  >
+                    <span className="mac-switch-knob" />
+                  </button>
                 </label>
               </div>
               {launchSettingsStatus && <div className="shortcut-status">{launchSettingsStatus}</div>}
