@@ -608,6 +608,7 @@ fn reveal_in_finder(path: String) -> Result<(), String> {
     };
 
     if status.success() {
+        let _ = activate_application("Finder");
         Ok(())
     } else {
         Err("Failed to reveal in Finder".to_string())
@@ -626,6 +627,7 @@ fn open_in_qspace(path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     if status.success() {
+        let _ = activate_application("QSpace Pro");
         Ok(())
     } else {
         Err("Failed to open in QSpace Pro (check whether QSpace Pro is installed)".to_string())
@@ -648,6 +650,88 @@ fn open_container_path(path: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| "Unable to resolve parent directory".to_string())
 }
 
+fn is_process_running(process_name: &str) -> bool {
+    Command::new("pgrep")
+        .arg("-x")
+        .arg(process_name)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn is_wezterm_running() -> bool {
+    is_process_running("wezterm-gui")
+        || is_process_running("wezterm")
+        || is_process_running("WezTerm")
+}
+
+#[cfg(target_os = "macos")]
+fn activate_application(app_name: &str) -> Result<(), String> {
+    let script = format!(
+        "tell application \"{}\" to activate",
+        applescript_escape(app_name)
+    );
+    let status = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("Failed to activate {}", app_name))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn activate_application(_app_name: &str) -> Result<(), String> {
+    Ok(())
+}
+
+fn wezterm_executable_candidates() -> Vec<PathBuf> {
+    let mut candidates = vec![PathBuf::from("wezterm")];
+
+    #[cfg(target_os = "macos")]
+    {
+        candidates.push(PathBuf::from("/Applications/WezTerm.app/Contents/MacOS/wezterm"));
+        if let Ok(home) = std::env::var("HOME") {
+            candidates.push(
+                PathBuf::from(home)
+                    .join("Applications")
+                    .join("WezTerm.app")
+                    .join("Contents")
+                    .join("MacOS")
+                    .join("wezterm"),
+            );
+        }
+    }
+
+    candidates
+}
+
+fn try_spawn_wezterm_tab(open_target: &Path) -> bool {
+    for executable in wezterm_executable_candidates() {
+        let status = Command::new(&executable)
+            .arg("cli")
+            .arg("spawn")
+            .arg("--cwd")
+            .arg(open_target)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+
+        if let Ok(status) = status {
+            if status.success() {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 #[tauri::command]
 fn open_in_terminal(path: String) -> Result<(), String> {
     let open_target = open_container_path(&path)?;
@@ -660,6 +744,7 @@ fn open_in_terminal(path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     if status.success() {
+        let _ = activate_application("Terminal");
         Ok(())
     } else {
         Err("Failed to open in Terminal".to_string())
@@ -669,6 +754,11 @@ fn open_in_terminal(path: String) -> Result<(), String> {
 #[tauri::command]
 fn open_in_wezterm(path: String) -> Result<(), String> {
     let open_target = open_container_path(&path)?;
+
+    if is_wezterm_running() && try_spawn_wezterm_tab(&open_target) {
+        let _ = activate_application("WezTerm");
+        return Ok(());
+    }
 
     let status = Command::new("open")
         .arg("-a")
@@ -681,6 +771,7 @@ fn open_in_wezterm(path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     if status.success() {
+        let _ = activate_application("WezTerm");
         Ok(())
     } else {
         Err("Failed to open in WezTerm (check whether WezTerm is installed)".to_string())
