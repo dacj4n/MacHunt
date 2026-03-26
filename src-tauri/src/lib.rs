@@ -561,24 +561,38 @@ fn open_in_wezterm(path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn copy_to_clipboard(text: String) -> Result<(), String> {
-    let mut child = Command::new("pbcopy")
+    let mut child = match Command::new("/usr/bin/pbcopy")
         .stdin(Stdio::piped())
         .spawn()
-        .map_err(|e| e.to_string())?;
+    {
+        Ok(child) => child,
+        Err(_) => Command::new("pbcopy")
+            .stdin(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to launch pbcopy: {}", e))?,
+    };
 
     if let Some(mut stdin) = child.stdin.take() {
         stdin
             .write_all(text.as_bytes())
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("Failed to write clipboard data: {}", e))?;
     } else {
         return Err("Unable to access clipboard pipe".to_string());
     }
 
-    let status = child.wait().map_err(|e| e.to_string())?;
+    let status = child
+        .wait()
+        .map_err(|e| format!("Failed waiting for pbcopy: {}", e))?;
     if status.success() {
         Ok(())
     } else {
-        Err("Failed to copy to clipboard".to_string())
+        Err(format!(
+            "pbcopy exited with status {}",
+            status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        ))
     }
 }
 
