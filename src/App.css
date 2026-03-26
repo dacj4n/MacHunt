@@ -946,6 +946,48 @@ body {
   font-size: 12px;
 }
 
+.startup-toggle-list {
+  display: grid;
+  gap: 10px;
+}
+
+.startup-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: #f7f9fc;
+  padding: 12px 14px;
+}
+
+.startup-toggle-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.startup-toggle-row.disabled {
+  opacity: 0.66;
+}
+
+.startup-toggle-copy {
+  min-width: 0;
+}
+
+.startup-toggle-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.startup-toggle-desc {
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+
 :root[data-theme="dark"] .search-input {
   background: #1a2330;
   border-color: #334357;
