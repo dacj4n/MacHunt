@@ -16,17 +16,25 @@ const DEFAULT_WINDOW_TOGGLE_SHORTCUT: &str = "CmdOrCtrl+Shift+KeyF";
 const EVENT_OPEN_SETTINGS: &str = "app://open-settings";
 const EVENT_FOCUS_SEARCH: &str = "app://focus-search";
 const MENU_OPEN_SETTINGS_ID: &str = "open_settings";
+const AUTOSTART_MARKER_ARG: &str = "--autostart";
+const SILENT_START_ARG: &str = "--silent-start";
+#[cfg(target_os = "macos")]
+const AUTOSTART_LAUNCH_AGENT_LABEL: &str = "com.dacj4n.machunt.autostart";
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 struct GuiSettings {
     window_toggle_shortcut: String,
+    launch_at_login: bool,
+    silent_start: bool,
 }
 
 impl Default for GuiSettings {
     fn default() -> Self {
         Self {
             window_toggle_shortcut: DEFAULT_WINDOW_TOGGLE_SHORTCUT.to_string(),
+            launch_at_login: false,
+            silent_start: false,
         }
     }
 }
@@ -70,6 +78,8 @@ struct AppState {
     preview_process: Arc<Mutex<Option<u32>>>,
     preview_session_seq: AtomicU64,
     window_toggle_shortcut: Mutex<String>,
+    launch_at_login: Mutex<bool>,
+    silent_start: Mutex<bool>,
     is_quitting: AtomicBool,
 }
 
@@ -83,6 +93,8 @@ impl AppState {
             preview_process: Arc::new(Mutex::new(None)),
             preview_session_seq: AtomicU64::new(0),
             window_toggle_shortcut: Mutex::new(settings.window_toggle_shortcut),
+            launch_at_login: Mutex::new(settings.launch_at_login),
+            silent_start: Mutex::new(settings.silent_start),
             is_quitting: AtomicBool::new(false),
         }
     }
@@ -158,6 +170,13 @@ struct WatchResponse {
     mode: String,
     message: String,
     last_event_id: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchSettingsResponse {
+    launch_at_login: bool,
+    silent_start: bool,
 }
 
 fn watch_response(running: bool, mode: &str, last_event_id: Option<u64>) -> WatchResponse {
@@ -246,6 +265,88 @@ fn register_window_toggle_shortcut<R: tauri::Runtime>(
             }
         })
         .map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn xml_escape(raw: &str) -> String {
+    raw.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+#[cfg(target_os = "macos")]
+fn launch_agent_path() -> Result<PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+    Ok(PathBuf::from(home)
+        .join("Library")
+        .join("LaunchAgents")
+        .join(format!("{}.plist", AUTOSTART_LAUNCH_AGENT_LABEL)))
+}
+
+#[cfg(target_os = "macos")]
+fn write_launch_agent_file(silent_start: bool) -> Result<(), String> {
+    let plist_path = launch_agent_path()?;
+    if let Some(parent) = plist_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut program_args = vec![exe_path.to_string_lossy().to_string(), AUTOSTART_MARKER_ARG.to_string()];
+    if silent_start {
+        program_args.push(SILENT_START_ARG.to_string());
+    }
+    let args_xml = program_args
+        .into_iter()
+        .map(|arg| format!("      <string>{}</string>", xml_escape(&arg)))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>{}</string>
+    <key>ProgramArguments</key>
+    <array>
+{}
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+  </dict>
+</plist>
+"#,
+        AUTOSTART_LAUNCH_AGENT_LABEL, args_xml
+    );
+
+    fs::write(plist_path, plist).map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn remove_launch_agent_file() -> Result<(), String> {
+    let plist_path = launch_agent_path()?;
+    match fs::remove_file(plist_path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn apply_launch_settings(launch_at_login: bool, silent_start: bool) -> Result<(), String> {
+    if launch_at_login {
+        write_launch_agent_file(silent_start)
+    } else {
+        remove_launch_agent_file()
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_launch_settings(_launch_at_login: bool, _silent_start: bool) -> Result<(), String> {
+    Ok(())
 }
 
 fn to_search_options(req: &SearchRequest, mode: SearchMode, limit: Option<usize>) -> SearchOptions {
@@ -865,6 +966,14 @@ fn set_window_toggle_shortcut(
 ) -> Result<String, String> {
     let normalized = normalize_shortcut_input(&shortcut)?;
     register_window_toggle_shortcut(&app, &normalized)?;
+    let launch_at_login = *state
+        .launch_at_login
+        .lock()
+        .map_err(|_| "Failed to access launch-at-login setting".to_string())?;
+    let silent_start = *state
+        .silent_start
+        .lock()
+        .map_err(|_| "Failed to access silent-start setting".to_string())?;
 
     {
         let mut guard = state
@@ -876,9 +985,68 @@ fn set_window_toggle_shortcut(
 
     save_gui_settings(&GuiSettings {
         window_toggle_shortcut: normalized.clone(),
+        launch_at_login,
+        silent_start,
     })?;
 
     Ok(normalized)
+}
+
+#[tauri::command]
+fn get_launch_settings(state: tauri::State<'_, AppState>) -> Result<LaunchSettingsResponse, String> {
+    let launch_at_login = *state
+        .launch_at_login
+        .lock()
+        .map_err(|_| "Failed to access launch-at-login setting".to_string())?;
+    let silent_start = *state
+        .silent_start
+        .lock()
+        .map_err(|_| "Failed to access silent-start setting".to_string())?;
+
+    Ok(LaunchSettingsResponse {
+        launch_at_login,
+        silent_start,
+    })
+}
+
+#[tauri::command]
+fn set_launch_settings(
+    launch_at_login: bool,
+    silent_start: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<LaunchSettingsResponse, String> {
+    apply_launch_settings(launch_at_login, silent_start)?;
+
+    {
+        let mut guard = state
+            .launch_at_login
+            .lock()
+            .map_err(|_| "Failed to access launch-at-login setting".to_string())?;
+        *guard = launch_at_login;
+    }
+    {
+        let mut guard = state
+            .silent_start
+            .lock()
+            .map_err(|_| "Failed to access silent-start setting".to_string())?;
+        *guard = silent_start;
+    }
+
+    let window_toggle_shortcut = state
+        .window_toggle_shortcut
+        .lock()
+        .map_err(|_| "Failed to access shortcut setting".to_string())?
+        .clone();
+    save_gui_settings(&GuiSettings {
+        window_toggle_shortcut,
+        launch_at_login,
+        silent_start,
+    })?;
+
+    Ok(LaunchSettingsResponse {
+        launch_at_login,
+        silent_start,
+    })
 }
 
 #[tauri::command]
@@ -1034,9 +1202,41 @@ pub fn run() {
                 if let Ok(mut guard) = app.state::<AppState>().window_toggle_shortcut.lock() {
                     *guard = fallback.clone();
                 }
+                let launch_at_login = app
+                    .state::<AppState>()
+                    .launch_at_login
+                    .lock()
+                    .map(|value| *value)
+                    .unwrap_or(false);
+                let silent_start = app
+                    .state::<AppState>()
+                    .silent_start
+                    .lock()
+                    .map(|value| *value)
+                    .unwrap_or(false);
                 let _ = save_gui_settings(&GuiSettings {
                     window_toggle_shortcut: fallback,
+                    launch_at_login,
+                    silent_start,
                 });
+            }
+
+            let launch_at_login = app
+                .state::<AppState>()
+                .launch_at_login
+                .lock()
+                .map(|value| *value)
+                .unwrap_or(false);
+            let silent_start = app
+                .state::<AppState>()
+                .silent_start
+                .lock()
+                .map(|value| *value)
+                .unwrap_or(false);
+            let _ = apply_launch_settings(launch_at_login, silent_start);
+
+            if std::env::args().any(|arg| arg == SILENT_START_ARG) {
+                let _ = hide_main_window_internal(&app.handle().clone());
             }
 
             Ok(())
@@ -1062,6 +1262,8 @@ pub fn run() {
             persist_watch_cursor,
             get_window_toggle_shortcut,
             set_window_toggle_shortcut,
+            get_launch_settings,
+            set_launch_settings,
             toggle_main_window
         ])
         .build(tauri::generate_context!())

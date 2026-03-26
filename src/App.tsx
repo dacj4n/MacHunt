@@ -111,7 +111,16 @@ const I18N = {
     shortcutApply: "应用",
     shortcutReset: "恢复默认",
     shortcutSaved: "快捷键已保存",
-    shortcutNeedModifier: "快捷键至少需要一个修饰键（Cmd/Ctrl/Alt/Shift）"
+    shortcutNeedModifier: "快捷键至少需要一个修饰键（Cmd/Ctrl/Alt/Shift）",
+    startupTitle: "启动",
+    startupDesc: "设置登录后自动启动，并可选择静默启动（不显示窗口）。",
+    startupLaunchAtLogin: "开机自启",
+    startupLaunchAtLoginDesc: "登录 macOS 后自动启动 MacHunt。",
+    startupSilentStart: "静默启动",
+    startupSilentStartDesc: "仅在开机自启时生效，启动后隐藏窗口。",
+    startupSaved: "启动设置已保存",
+    startupSaving: "正在保存启动设置...",
+    startupSaveFailed: "保存启动设置失败"
   },
   en: {
     searchPlaceholder: "Search files, folders, content...",
@@ -183,7 +192,16 @@ const I18N = {
     shortcutApply: "Apply",
     shortcutReset: "Reset Default",
     shortcutSaved: "Shortcut saved",
-    shortcutNeedModifier: "Shortcut must include at least one modifier (Cmd/Ctrl/Alt/Shift)"
+    shortcutNeedModifier: "Shortcut must include at least one modifier (Cmd/Ctrl/Alt/Shift)",
+    startupTitle: "Startup",
+    startupDesc: "Configure launch at login and whether startup should stay silent.",
+    startupLaunchAtLogin: "Launch at Login",
+    startupLaunchAtLoginDesc: "Start MacHunt automatically after signing in to macOS.",
+    startupSilentStart: "Silent Startup",
+    startupSilentStartDesc: "Only applies to launch-at-login. Starts hidden.",
+    startupSaved: "Startup settings saved",
+    startupSaving: "Saving startup settings...",
+    startupSaveFailed: "Failed to save startup settings"
   }
 } as const;
 
@@ -225,6 +243,11 @@ interface WatchResponse {
   mode: string;
   message: string;
   lastEventId?: number;
+}
+
+interface LaunchSettingsResponse {
+  launchAtLogin: boolean;
+  silentStart: boolean;
 }
 
 interface PreviewStatusEvent {
@@ -650,6 +673,10 @@ function App() {
   const [shortcutDraft, setShortcutDraft] = useState(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
   const [shortcutStatus, setShortcutStatus] = useState("");
   const [isShortcutSaving, setIsShortcutSaving] = useState(false);
+  const [launchAtLogin, setLaunchAtLogin] = useState(false);
+  const [silentStart, setSilentStart] = useState(false);
+  const [isLaunchSettingsSaving, setIsLaunchSettingsSaving] = useState(false);
+  const [launchSettingsStatus, setLaunchSettingsStatus] = useState("");
   const [query, setQuery] = useState("");
   const [pathPrefix, setPathPrefix] = useState("");
   const [pathSuggestions, setPathSuggestions] = useState<string[]>([]);
@@ -1007,6 +1034,31 @@ function App() {
     };
 
     void loadShortcut();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadLaunchSettings = async () => {
+      try {
+        const settings = await invoke<LaunchSettingsResponse>("get_launch_settings");
+        if (!mounted) {
+          return;
+        }
+        setLaunchAtLogin(settings.launchAtLogin);
+        setSilentStart(settings.silentStart);
+      } catch (err) {
+        if (!mounted) {
+          return;
+        }
+        setError(String(err));
+      }
+    };
+
+    void loadLaunchSettings();
 
     return () => {
       mounted = false;
@@ -1455,6 +1507,29 @@ function App() {
   const resetWindowToggleShortcut = async () => {
     setShortcutDraft(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
     await applyWindowToggleShortcut(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
+  };
+
+  const applyLaunchSettings = async (nextLaunchAtLogin: boolean, nextSilentStart: boolean) => {
+    if (isLaunchSettingsSaving) {
+      return;
+    }
+    setIsLaunchSettingsSaving(true);
+    setLaunchSettingsStatus(t.startupSaving);
+    setError(null);
+    try {
+      const saved = await invoke<LaunchSettingsResponse>("set_launch_settings", {
+        launchAtLogin: nextLaunchAtLogin,
+        silentStart: nextSilentStart
+      });
+      setLaunchAtLogin(saved.launchAtLogin);
+      setSilentStart(saved.silentStart);
+      setLaunchSettingsStatus(t.startupSaved);
+    } catch (err) {
+      setLaunchSettingsStatus(t.startupSaveFailed);
+      setError(String(err));
+    } finally {
+      setIsLaunchSettingsSaving(false);
+    }
   };
 
   const pickPath = async () => {
@@ -2272,6 +2347,38 @@ function App() {
                 {t.shortcutCurrent}: {displayShortcut(windowToggleShortcut)}
               </div>
               {shortcutStatus && <div className="shortcut-status">{shortcutStatus}</div>}
+            </article>
+
+            <article className="settings-card">
+              <h3>{t.startupTitle}</h3>
+              <p className="shortcut-desc">{t.startupDesc}</p>
+              <div className="startup-toggle-list">
+                <label className="startup-toggle-row">
+                  <div className="startup-toggle-copy">
+                    <div className="startup-toggle-title">{t.startupLaunchAtLogin}</div>
+                    <div className="startup-toggle-desc">{t.startupLaunchAtLoginDesc}</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={launchAtLogin}
+                    disabled={isLaunchSettingsSaving}
+                    onChange={() => void applyLaunchSettings(!launchAtLogin, silentStart)}
+                  />
+                </label>
+                <label className={!launchAtLogin ? "startup-toggle-row disabled" : "startup-toggle-row"}>
+                  <div className="startup-toggle-copy">
+                    <div className="startup-toggle-title">{t.startupSilentStart}</div>
+                    <div className="startup-toggle-desc">{t.startupSilentStartDesc}</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={silentStart}
+                    disabled={isLaunchSettingsSaving || !launchAtLogin}
+                    onChange={() => void applyLaunchSettings(launchAtLogin, !silentStart)}
+                  />
+                </label>
+              </div>
+              {launchSettingsStatus && <div className="shortcut-status">{launchSettingsStatus}</div>}
             </article>
           </section>
         )}
