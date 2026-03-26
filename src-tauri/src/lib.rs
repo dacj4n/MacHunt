@@ -16,10 +16,10 @@ const DEFAULT_WINDOW_TOGGLE_SHORTCUT: &str = "CmdOrCtrl+Shift+KeyF";
 const EVENT_OPEN_SETTINGS: &str = "app://open-settings";
 const EVENT_FOCUS_SEARCH: &str = "app://focus-search";
 const MENU_OPEN_SETTINGS_ID: &str = "open_settings";
-const AUTOSTART_MARKER_ARG: &str = "--autostart";
-const SILENT_START_ARG: &str = "--silent-start";
 #[cfg(target_os = "macos")]
 const AUTOSTART_LAUNCH_AGENT_LABEL: &str = "com.dacj4n.machunt.autostart";
+#[cfg(target_os = "macos")]
+const DEFAULT_LOGIN_ITEM_NAME: &str = "MacHunt";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -268,80 +268,107 @@ fn register_window_toggle_shortcut<R: tauri::Runtime>(
 }
 
 #[cfg(target_os = "macos")]
-fn xml_escape(raw: &str) -> String {
-    raw.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('\"', "&quot;")
-        .replace('\'', "&apos;")
+fn applescript_escape(raw: &str) -> String {
+    raw.replace('\\', "\\\\").replace('\"', "\\\"")
 }
 
 #[cfg(target_os = "macos")]
-fn launch_agent_path() -> Result<PathBuf, String> {
-    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
-    Ok(PathBuf::from(home)
+fn legacy_launch_agent_path() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(
+        PathBuf::from(home)
         .join("Library")
         .join("LaunchAgents")
-        .join(format!("{}.plist", AUTOSTART_LAUNCH_AGENT_LABEL)))
+        .join(format!("{}.plist", AUTOSTART_LAUNCH_AGENT_LABEL)),
+    )
 }
 
 #[cfg(target_os = "macos")]
-fn write_launch_agent_file(silent_start: bool) -> Result<(), String> {
-    let plist_path = launch_agent_path()?;
-    if let Some(parent) = plist_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+fn cleanup_legacy_launch_agent_file() {
+    if let Some(path) = legacy_launch_agent_path() {
+        let _ = fs::remove_file(path);
     }
+}
 
+#[cfg(target_os = "macos")]
+fn run_osascript(script: &str) -> Result<(), String> {
+    let status = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Failed to update login item via System Events".to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn current_bundle_path() -> Result<PathBuf, String> {
     let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
-    let mut program_args = vec![exe_path.to_string_lossy().to_string(), AUTOSTART_MARKER_ARG.to_string()];
-    if silent_start {
-        program_args.push(SILENT_START_ARG.to_string());
+    let bundle = exe_path
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .ok_or_else(|| "Failed to resolve bundle path".to_string())?
+        .to_path_buf();
+    if bundle.extension().and_then(|ext| ext.to_str()) != Some("app") {
+        return Err("Launch at login requires running the bundled .app".to_string());
     }
-    let args_xml = program_args
-        .into_iter()
-        .map(|arg| format!("      <string>{}</string>", xml_escape(&arg)))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let plist = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-  <dict>
-    <key>Label</key>
-    <string>{}</string>
-    <key>ProgramArguments</key>
-    <array>
-{}
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-  </dict>
-</plist>
-"#,
-        AUTOSTART_LAUNCH_AGENT_LABEL, args_xml
-    );
-
-    fs::write(plist_path, plist).map_err(|e| e.to_string())
+    Ok(bundle)
 }
 
 #[cfg(target_os = "macos")]
-fn remove_launch_agent_file() -> Result<(), String> {
-    let plist_path = launch_agent_path()?;
-    match fs::remove_file(plist_path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err.to_string()),
-    }
+fn remove_login_item_by_name(name: &str) -> Result<(), String> {
+    let escaped_name = applescript_escape(name);
+    let script = format!(
+        "tell application \"System Events\"\n\
+         if exists login item \"{name}\" then\n\
+           delete login item \"{name}\"\n\
+         end if\n\
+         end tell",
+        name = escaped_name
+    );
+    run_osascript(&script)
 }
 
 #[cfg(target_os = "macos")]
 fn apply_launch_settings(launch_at_login: bool, silent_start: bool) -> Result<(), String> {
-    if launch_at_login {
-        write_launch_agent_file(silent_start)
-    } else {
-        remove_launch_agent_file()
+    cleanup_legacy_launch_agent_file();
+
+    let mut cleanup_names = vec![DEFAULT_LOGIN_ITEM_NAME.to_string()];
+    if let Ok(bundle_path) = current_bundle_path() {
+        if let Some(bundle_name) = bundle_path.file_stem().and_then(|s| s.to_str()) {
+            if !cleanup_names.iter().any(|name| name == bundle_name) {
+                cleanup_names.push(bundle_name.to_string());
+            }
+        }
     }
+
+    for name in &cleanup_names {
+        remove_login_item_by_name(name)?;
+    }
+
+    if !launch_at_login {
+        return Ok(());
+    }
+
+    let bundle_path = current_bundle_path()?;
+    let bundle_name = bundle_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(DEFAULT_LOGIN_ITEM_NAME);
+    let hidden = if silent_start { "true" } else { "false" };
+    let script = format!(
+        "tell application \"System Events\"\n\
+         make login item at end with properties {{name:\"{name}\", path:\"{path}\", hidden:{hidden}}}\n\
+         end tell",
+        name = applescript_escape(bundle_name),
+        path = applescript_escape(&bundle_path.to_string_lossy()),
+        hidden = hidden
+    );
+    run_osascript(&script)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1234,10 +1261,6 @@ pub fn run() {
                 .map(|value| *value)
                 .unwrap_or(false);
             let _ = apply_launch_settings(launch_at_login, silent_start);
-
-            if std::env::args().any(|arg| arg == SILENT_START_ARG) {
-                let _ = hide_main_window_internal(&app.handle().clone());
-            }
 
             Ok(())
         })
