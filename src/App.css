@@ -966,6 +966,7 @@ body {
   width: 16px;
   height: 16px;
   flex: 0 0 auto;
+  accent-color: #3f8cff;
 }
 
 .startup-toggle-row.disabled {
@@ -1149,6 +1150,28 @@ body {
 
 :root[data-theme="dark"] .theme-option.active {
   background: #253751;
+}
+
+:root[data-theme="dark"] .startup-toggle-row {
+  border-color: #334357;
+  background: #1d2735;
+}
+
+:root[data-theme="dark"] .startup-toggle-row.disabled {
+  background: #1a2330;
+  border-color: #2e3d53;
+}
+
+:root[data-theme="dark"] .startup-toggle-title {
+  color: #dfe7f5;
+}
+
+:root[data-theme="dark"] .startup-toggle-desc {
+  color: #98a8bf;
+}
+
+:root[data-theme="dark"] .startup-toggle-row input[type="checkbox"] {
+  accent-color: #7fb4ff;
 }
 
 :root[data-theme="dark"] .context-menu,
