@@ -80,10 +80,6 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 - `src-tauri/`: Tauri backend commands and window/menu lifecycle
 - `src/App.tsx`: GUI application logic and interactions
 
-Detailed architecture and optimization notes:
-
-- [doc/PROJECT_ARCHITECTURE_CN.md](doc/PROJECT_ARCHITECTURE_CN.md)
-
 ## Build and Run
 
 ### Requirements

@@ -75,10 +75,6 @@
 - `src-tauri/`：Tauri 命令层 + 窗口生命周期 + 菜单
 - `src/App.tsx`：GUI 交互层
 
-完整架构说明与优化细节见：
-
-- [doc/PROJECT_ARCHITECTURE_CN.md](doc/PROJECT_ARCHITECTURE_CN.md)
-
 ## 构建与运行
 
 ### 环境要求
