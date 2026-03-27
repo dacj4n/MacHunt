@@ -2024,6 +2024,7 @@ dependencies = [
 name = "machunt-gui"
 version = "0.2.2"
 dependencies = [
+ "cc",
  "machunt",
  "objc2-service-management",
  "serde",

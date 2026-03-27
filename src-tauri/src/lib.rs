@@ -1,18 +1,22 @@
 use machunt::{Engine, SearchMode, SearchOptions};
+#[cfg(target_os = "macos")]
+use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
+#[cfg(target_os = "macos")]
+use std::ffi::CString;
 use std::fs;
 use std::io::Write;
+#[cfg(target_os = "macos")]
+use std::os::raw::c_char;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{Instant, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-#[cfg(target_os = "macos")]
-use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
 const DEFAULT_WINDOW_TOGGLE_SHORTCUT: &str = "CmdOrCtrl+Shift+KeyF";
 const EVENT_OPEN_SETTINGS: &str = "app://open-settings";
@@ -77,8 +81,6 @@ struct AppState {
     engine: Engine,
     watch_started: AtomicBool,
     index_loaded: AtomicBool,
-    preview_process: Arc<Mutex<Option<u32>>>,
-    preview_session_seq: AtomicU64,
     window_toggle_shortcut: Mutex<String>,
     launch_at_login: Mutex<bool>,
     silent_start: Mutex<bool>,
@@ -92,14 +94,17 @@ impl AppState {
             engine: Engine::new(false),
             watch_started: AtomicBool::new(false),
             index_loaded: AtomicBool::new(false),
-            preview_process: Arc::new(Mutex::new(None)),
-            preview_session_seq: AtomicU64::new(0),
             window_toggle_shortcut: Mutex::new(settings.window_toggle_shortcut),
             launch_at_login: Mutex::new(settings.launch_at_login),
             silent_start: Mutex::new(settings.silent_start),
             is_quitting: AtomicBool::new(false),
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn open_quicklook(paths: *const *const c_char, len: usize, index: usize) -> bool;
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,13 +161,6 @@ struct BuildEvent {
     phase: String,
     indexed: Option<usize>,
     took_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PreviewStatusEvent {
-    phase: String,
-    session_id: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -240,7 +238,9 @@ fn hide_main_window_internal<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Re
     window.hide().map_err(|e| e.to_string())
 }
 
-fn toggle_main_window_internal<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<bool, String> {
+fn toggle_main_window_internal<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<bool, String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "Main window not found".to_string())?;
@@ -279,9 +279,9 @@ fn legacy_launch_agent_path() -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
     Some(
         PathBuf::from(home)
-        .join("Library")
-        .join("LaunchAgents")
-        .join(format!("{}.plist", AUTOSTART_LAUNCH_AGENT_LABEL)),
+            .join("Library")
+            .join("LaunchAgents")
+            .join(format!("{}.plist", AUTOSTART_LAUNCH_AGENT_LABEL)),
     )
 }
 
@@ -331,15 +331,16 @@ fn supports_smappservice() -> bool {
 fn apply_launch_settings_via_service_management(launch_at_login: bool) -> Result<(), String> {
     let service = unsafe { SMAppService::mainAppService() };
     let status = unsafe { service.status() };
-    let is_registered =
-        status.0 == SMAppServiceStatus::Enabled.0 || status.0 == SMAppServiceStatus::RequiresApproval.0;
+    let is_registered = status.0 == SMAppServiceStatus::Enabled.0
+        || status.0 == SMAppServiceStatus::RequiresApproval.0;
 
     if launch_at_login {
         if is_registered {
             return Ok(());
         }
-        unsafe { service.registerAndReturnError() }
-            .map_err(|err| format!("Failed to register login item via ServiceManagement: {err:?}"))?;
+        unsafe { service.registerAndReturnError() }.map_err(|err| {
+            format!("Failed to register login item via ServiceManagement: {err:?}")
+        })?;
         return Ok(());
     }
 
@@ -565,79 +566,40 @@ fn open_search_result(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn preview_search_result(
-    paths: Vec<String>,
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
+fn preview_search_result(paths: Vec<String>) -> Result<(), String> {
     if paths.is_empty() {
         return Ok(());
     }
 
-    if let Ok(mut running_pid) = state.preview_process.lock() {
-        if let Some(pid) = running_pid.take() {
-            let _ = Command::new("kill")
-                .arg("-TERM")
-                .arg(pid.to_string())
-                .status();
-        }
-    }
-
-    let session_id = state.preview_session_seq.fetch_add(1, Ordering::SeqCst) + 1;
-    let mut cmd = Command::new("qlmanage");
-    cmd.arg("-p");
-    let mut valid_count = 0usize;
-    for path in paths {
-        let target = PathBuf::from(path);
-        if !target.exists() {
-            continue;
-        }
-        valid_count += 1;
-        cmd.arg(target);
-    }
-    if valid_count == 0 {
-        return Err("Target path does not exist".to_string());
-    }
-
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let pid = child.id();
-
-    if let Ok(mut running_pid) = state.preview_process.lock() {
-        *running_pid = Some(pid);
-    }
-
-    let _ = app.emit(
-        "preview://status",
-        PreviewStatusEvent {
-            phase: "opened".to_string(),
-            session_id,
-        },
-    );
-
-    let preview_process = state.preview_process.clone();
-    let app_handle = app.clone();
-    std::thread::spawn(move || {
-        let _ = child.wait();
-        if let Ok(mut running_pid) = preview_process.lock() {
-            if running_pid.as_ref().copied() == Some(pid) {
-                *running_pid = None;
+    #[cfg(target_os = "macos")]
+    {
+        let mut c_paths = Vec::new();
+        for path in paths {
+            let target = PathBuf::from(path);
+            if !target.exists() {
+                continue;
             }
+            let c_path = CString::new(target.to_string_lossy().into_owned())
+                .map_err(|_| "Target path contains NUL byte".to_string())?;
+            c_paths.push(c_path);
         }
-        let _ = app_handle.emit(
-            "preview://status",
-            PreviewStatusEvent {
-                phase: "closed".to_string(),
-                session_id,
-            },
-        );
-    });
+        if c_paths.is_empty() {
+            return Err("Target path does not exist".to_string());
+        }
 
-    Ok(())
+        let raw_paths: Vec<*const c_char> = c_paths.iter().map(|p| p.as_ptr()).collect();
+        let opened = unsafe { open_quicklook(raw_paths.as_ptr(), raw_paths.len(), 0) };
+        if opened {
+            Ok(())
+        } else {
+            Err("Failed to open native Quick Look preview".to_string())
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = paths;
+        Err("Quick Look preview is only supported on macOS".to_string())
+    }
 }
 
 #[tauri::command]
@@ -750,7 +712,9 @@ fn wezterm_executable_candidates() -> Vec<PathBuf> {
 
     #[cfg(target_os = "macos")]
     {
-        candidates.push(PathBuf::from("/Applications/WezTerm.app/Contents/MacOS/wezterm"));
+        candidates.push(PathBuf::from(
+            "/Applications/WezTerm.app/Contents/MacOS/wezterm",
+        ));
         if let Ok(home) = std::env::var("HOME") {
             candidates.push(
                 PathBuf::from(home)
@@ -942,7 +906,9 @@ async fn search(
             }
 
             if !matches!(query_limit, Some(0))
-                && query_limit.map(|limit| merged.len() < limit).unwrap_or(true)
+                && query_limit
+                    .map(|limit| merged.len() < limit)
+                    .unwrap_or(true)
             {
                 for path in engine.search(regex_options) {
                     if seen.insert(path.clone()) {
@@ -1166,7 +1132,9 @@ fn set_window_toggle_shortcut(
 }
 
 #[tauri::command]
-fn get_launch_settings(state: tauri::State<'_, AppState>) -> Result<LaunchSettingsResponse, String> {
+fn get_launch_settings(
+    state: tauri::State<'_, AppState>,
+) -> Result<LaunchSettingsResponse, String> {
     let launch_at_login = *state
         .launch_at_login
         .lock()

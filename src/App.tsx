@@ -37,8 +37,6 @@ const CASE_SENSITIVE_STORAGE_KEY = "machunt.search.case_sensitive";
 const EVENT_OPEN_SETTINGS = "app://open-settings";
 const EVENT_FOCUS_SEARCH = "app://focus-search";
 const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives"];
-const PREVIEW_OPEN_MS = 240;
-const PREVIEW_CLOSE_MS = 220;
 
 const I18N = {
   zh: {
@@ -250,26 +248,11 @@ interface LaunchSettingsResponse {
   silentStart: boolean;
 }
 
-interface PreviewStatusEvent {
-  phase: "opened" | "closed";
-  sessionId: number;
-}
-
 interface ContextMenuState {
   x: number;
   y: number;
   item: SearchResultItem;
   multiSelection: boolean;
-}
-
-interface PreviewZoomState {
-  id: number;
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-  opacity: number;
-  transitionMs: number;
 }
 
 function extensionOf(name: string): string {
@@ -704,7 +687,6 @@ function App() {
   const [openWithVisible, setOpenWithVisible] = useState(false);
   const [selectedItemPaths, setSelectedItemPaths] = useState<string[]>([]);
   const [selectionAnchorPath, setSelectionAnchorPath] = useState<string | null>(null);
-  const [previewZoom, setPreviewZoom] = useState<PreviewZoomState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>(
     () => loadStoredColumnWidths() ?? DEFAULT_COLUMN_WIDTHS
@@ -717,10 +699,6 @@ function App() {
   const pathInputRef = useRef<HTMLInputElement | null>(null);
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const openWithCloseTimerRef = useRef<number | null>(null);
-  const previewZoomCleanupRef = useRef<number | null>(null);
-  const previewZoomRef = useRef<PreviewZoomState | null>(null);
-  const previewSourcePathRef = useRef<string | null>(null);
-  const previewActiveSessionRef = useRef<number | null>(null);
   const columnWidthsRef = useRef(columnWidths);
   const resizeStateRef = useRef<{
     left: ColumnKey;
@@ -861,17 +839,8 @@ function App() {
   }, [columnWidths]);
 
   useEffect(() => {
-    previewZoomRef.current = previewZoom;
-  }, [previewZoom]);
-
-  useEffect(() => {
     return () => {
       clearOpenWithCloseTimer();
-      if (previewZoomCleanupRef.current !== null) {
-        window.clearTimeout(previewZoomCleanupRef.current);
-        previewZoomCleanupRef.current = null;
-      }
-      previewActiveSessionRef.current = null;
     };
   }, []);
 
@@ -1566,8 +1535,6 @@ function App() {
     try {
       await invoke("preview_search_result", { paths });
     } catch (err) {
-      setPreviewZoom(null);
-      previewActiveSessionRef.current = null;
       setError(String(err));
     }
   };
@@ -1684,121 +1651,6 @@ function App() {
     setSortAscending(true);
   };
 
-  const getRowRect = (path: string): DOMRect | null => {
-    const row = rowRefs.current.get(path);
-    if (!row) {
-      return null;
-    }
-    const rect = row.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) {
-      return null;
-    }
-    return rect;
-  };
-
-  const getPreviewTargetRect = (): { left: number; top: number; width: number; height: number } => {
-    const width = Math.max(620, Math.min(window.innerWidth * 0.74, 1040));
-    const height = Math.max(420, Math.min(window.innerHeight * 0.76, 740));
-    return {
-      left: Math.round((window.innerWidth - width) / 2),
-      top: Math.round((window.innerHeight - height) / 2),
-      width: Math.round(width),
-      height: Math.round(height)
-    };
-  };
-
-  const animatePreviewOpen = (path: string) => {
-    const source = getRowRect(path);
-    if (!source) {
-      return;
-    }
-    const target = getPreviewTargetRect();
-    previewSourcePathRef.current = path;
-    const id = Date.now();
-    setPreviewZoom({
-      id,
-      left: source.left,
-      top: source.top,
-      width: source.width,
-      height: source.height,
-      opacity: 0.92,
-      transitionMs: 0
-    });
-    window.requestAnimationFrame(() => {
-      setPreviewZoom((prev) => {
-        if (!prev || prev.id !== id) {
-          return prev;
-        }
-        return {
-          ...prev,
-          left: target.left,
-          top: target.top,
-          width: target.width,
-          height: target.height,
-          opacity: 0.28,
-          transitionMs: PREVIEW_OPEN_MS
-        };
-      });
-    });
-  };
-
-  const animatePreviewClose = () => {
-    const current = previewZoomRef.current;
-    if (!current) {
-      return;
-    }
-    const sourcePath = previewSourcePathRef.current;
-    const destinationRect = sourcePath ? getRowRect(sourcePath) : null;
-    const fallback = {
-      left: current.left + (current.width - 340) / 2,
-      top: current.top + (current.height - 46) / 2,
-      width: 340,
-      height: 46
-    };
-    const target = destinationRect
-      ? {
-          left: destinationRect.left,
-          top: destinationRect.top,
-          width: destinationRect.width,
-          height: destinationRect.height
-        }
-      : fallback;
-
-    const id = Date.now();
-    setPreviewZoom({
-      id,
-      left: current.left,
-      top: current.top,
-      width: current.width,
-      height: current.height,
-      opacity: current.opacity,
-      transitionMs: 0
-    });
-    window.requestAnimationFrame(() => {
-      setPreviewZoom((prev) => {
-        if (!prev || prev.id !== id) {
-          return prev;
-        }
-        return {
-          ...prev,
-          left: target.left,
-          top: target.top,
-          width: target.width,
-          height: target.height,
-          opacity: 0,
-          transitionMs: PREVIEW_CLOSE_MS
-        };
-      });
-    });
-    if (previewZoomCleanupRef.current !== null) {
-      window.clearTimeout(previewZoomCleanupRef.current);
-    }
-    previewZoomCleanupRef.current = window.setTimeout(() => {
-      setPreviewZoom((prev) => (prev && prev.id === id ? null : prev));
-      previewZoomCleanupRef.current = null;
-    }, PREVIEW_CLOSE_MS + 30);
-  };
-
   const handleRowClick = (event: React.MouseEvent<HTMLElement>, item: SearchResultItem, index: number) => {
     blurActiveEditable();
     const path = item.path;
@@ -1900,34 +1752,6 @@ function App() {
   };
 
   useEffect(() => {
-    let unlistenPreview: (() => void) | undefined;
-    void listen<PreviewStatusEvent>("preview://status", (event) => {
-      const payload = event.payload;
-      if (payload.phase === "opened") {
-        previewActiveSessionRef.current = payload.sessionId;
-        return;
-      }
-      if (previewActiveSessionRef.current !== payload.sessionId) {
-        return;
-      }
-      previewActiveSessionRef.current = null;
-      animatePreviewClose();
-    })
-      .then((dispose) => {
-        unlistenPreview = dispose;
-      })
-      .catch(() => {
-        // Keep app usable even if preview status event binding fails.
-      });
-
-    return () => {
-      if (unlistenPreview) {
-        unlistenPreview();
-      }
-    };
-  }, []);
-
-  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.key === "ArrowDown" || event.key === "ArrowUp") && activeView === "search" && !contextMenu) {
         if (!isEditableTarget(event.target)) {
@@ -1947,10 +1771,7 @@ function App() {
         return;
       }
       event.preventDefault();
-      const leadPath = selectedPathsInOrder[0];
       blurActiveEditable();
-      previewActiveSessionRef.current = null;
-      animatePreviewOpen(leadPath);
       void previewResults(selectedPathsInOrder);
     };
 
@@ -1970,20 +1791,6 @@ function App() {
     { code: "zh", title: t.languageZhTitle, description: t.languageZhDesc },
     { code: "en", title: t.languageEnTitle, description: t.languageEnDesc }
   ];
-
-  const previewZoomStyle = previewZoom
-    ? {
-        left: `${previewZoom.left}px`,
-        top: `${previewZoom.top}px`,
-        width: `${previewZoom.width}px`,
-        height: `${previewZoom.height}px`,
-        opacity: previewZoom.opacity,
-        transition:
-          previewZoom.transitionMs > 0
-            ? `left ${previewZoom.transitionMs}ms cubic-bezier(0.2, 0.85, 0.16, 1), top ${previewZoom.transitionMs}ms cubic-bezier(0.2, 0.85, 0.16, 1), width ${previewZoom.transitionMs}ms cubic-bezier(0.2, 0.85, 0.16, 1), height ${previewZoom.transitionMs}ms cubic-bezier(0.2, 0.85, 0.16, 1), opacity ${previewZoom.transitionMs}ms ease-out`
-            : "none"
-      }
-    : undefined;
 
   return (
     <div className="app-background">
@@ -2395,7 +2202,6 @@ function App() {
 
         {error && <aside className="error-box">{error}</aside>}
       </main>
-      {previewZoom && <div className="preview-zoom" style={previewZoomStyle} />}
       {contextMenu && (
         <div
           className="context-menu-layer"
