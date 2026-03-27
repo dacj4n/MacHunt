@@ -217,8 +217,8 @@ machunt optimize [--vacuum]
 ## 运行时数据位置
 
 - 索引库：`~/.machunt/data/index.db`
-- GUI 配置：`~/.machunt/gui/settings.json`（快捷键 + 开机自启 + 静默启动）
-- 排除目录规则：保存在 `~/.machunt/data/index.db` 的 `meta` 表
+- GUI 配置：`~/.machunt/gui/settings.json`（快捷键 + 开机自启 + 静默启动 + 排除目录规则）
+- 排除目录规则：保存在 `~/.machunt/gui/settings.json`（`excludeExactDirs` / `excludePatternDirs`）
 - 日志：`~/.machunt/logs/`
 
 ## 为什么 DB 会很大

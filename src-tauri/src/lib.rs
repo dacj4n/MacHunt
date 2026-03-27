@@ -27,12 +27,14 @@ const AUTOSTART_LAUNCH_AGENT_LABEL: &str = "com.dacj4n.machunt.autostart";
 #[cfg(target_os = "macos")]
 const DEFAULT_LOGIN_ITEM_NAME: &str = "MacHunt";
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 struct GuiSettings {
     window_toggle_shortcut: String,
     launch_at_login: bool,
     silent_start: bool,
+    exclude_exact_dirs: Vec<String>,
+    exclude_pattern_dirs: Vec<String>,
 }
 
 impl Default for GuiSettings {
@@ -41,6 +43,8 @@ impl Default for GuiSettings {
             window_toggle_shortcut: DEFAULT_WINDOW_TOGGLE_SHORTCUT.to_string(),
             launch_at_login: false,
             silent_start: false,
+            exclude_exact_dirs: Vec::new(),
+            exclude_pattern_dirs: Vec::new(),
         }
     }
 }
@@ -77,6 +81,40 @@ fn save_gui_settings(settings: &GuiSettings) -> Result<(), String> {
     Ok(())
 }
 
+fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
+    let window_toggle_shortcut = state
+        .window_toggle_shortcut
+        .lock()
+        .map_err(|_| "Failed to access shortcut setting".to_string())?
+        .clone();
+    let launch_at_login = *state
+        .launch_at_login
+        .lock()
+        .map_err(|_| "Failed to access launch-at-login setting".to_string())?;
+    let silent_start = *state
+        .silent_start
+        .lock()
+        .map_err(|_| "Failed to access silent-start setting".to_string())?;
+    let exclude_exact_dirs = state
+        .exclude_exact_dirs
+        .lock()
+        .map_err(|_| "Failed to access exact exclude directories".to_string())?
+        .clone();
+    let exclude_pattern_dirs = state
+        .exclude_pattern_dirs
+        .lock()
+        .map_err(|_| "Failed to access pattern exclude directories".to_string())?
+        .clone();
+
+    Ok(GuiSettings {
+        window_toggle_shortcut,
+        launch_at_login,
+        silent_start,
+        exclude_exact_dirs,
+        exclude_pattern_dirs,
+    })
+}
+
 struct AppState {
     engine: Engine,
     watch_started: AtomicBool,
@@ -91,9 +129,23 @@ struct AppState {
 
 impl AppState {
     fn new() -> Self {
-        let settings = load_gui_settings();
+        let mut settings = load_gui_settings();
         let engine = Engine::new(false);
-        let (exclude_exact_dirs, exclude_pattern_dirs) = engine.get_exclude_dir_settings();
+        let (legacy_exact_dirs, legacy_pattern_dirs) = engine.get_exclude_dir_settings();
+        if settings.exclude_exact_dirs.is_empty()
+            && settings.exclude_pattern_dirs.is_empty()
+            && (!legacy_exact_dirs.is_empty() || !legacy_pattern_dirs.is_empty())
+        {
+            settings.exclude_exact_dirs = legacy_exact_dirs;
+            settings.exclude_pattern_dirs = legacy_pattern_dirs;
+            let _ = save_gui_settings(&settings);
+        }
+        let (exclude_exact_dirs, exclude_pattern_dirs) = engine
+            .set_exclude_dir_settings(
+                settings.exclude_exact_dirs.clone(),
+                settings.exclude_pattern_dirs.clone(),
+            )
+            .unwrap_or_else(|_| (Vec::new(), Vec::new()));
         Self {
             engine,
             watch_started: AtomicBool::new(false),
@@ -1118,15 +1170,6 @@ fn set_window_toggle_shortcut(
 ) -> Result<String, String> {
     let normalized = normalize_shortcut_input(&shortcut)?;
     register_window_toggle_shortcut(&app, &normalized)?;
-    let launch_at_login = *state
-        .launch_at_login
-        .lock()
-        .map_err(|_| "Failed to access launch-at-login setting".to_string())?;
-    let silent_start = *state
-        .silent_start
-        .lock()
-        .map_err(|_| "Failed to access silent-start setting".to_string())?;
-
     {
         let mut guard = state
             .window_toggle_shortcut
@@ -1135,11 +1178,8 @@ fn set_window_toggle_shortcut(
         *guard = normalized.clone();
     }
 
-    save_gui_settings(&GuiSettings {
-        window_toggle_shortcut: normalized.clone(),
-        launch_at_login,
-        silent_start,
-    })?;
+    let settings = snapshot_gui_settings(&state)?;
+    save_gui_settings(&settings)?;
 
     Ok(normalized)
 }
@@ -1186,16 +1226,8 @@ fn set_launch_settings(
         *guard = silent_start;
     }
 
-    let window_toggle_shortcut = state
-        .window_toggle_shortcut
-        .lock()
-        .map_err(|_| "Failed to access shortcut setting".to_string())?
-        .clone();
-    save_gui_settings(&GuiSettings {
-        window_toggle_shortcut,
-        launch_at_login,
-        silent_start,
-    })?;
+    let settings = snapshot_gui_settings(&state)?;
+    save_gui_settings(&settings)?;
 
     Ok(LaunchSettingsResponse {
         launch_at_login,
@@ -1248,6 +1280,9 @@ fn set_exclude_dir_settings(
             .map_err(|_| "Failed to access pattern exclude directories".to_string())?;
         *guard = saved_pattern_dirs.clone();
     }
+
+    let settings = snapshot_gui_settings(&state)?;
+    save_gui_settings(&settings)?;
 
     Ok(ExcludeDirSettingsResponse {
         exact_dirs: saved_exact_dirs,
@@ -1408,23 +1443,9 @@ pub fn run() {
                 if let Ok(mut guard) = app.state::<AppState>().window_toggle_shortcut.lock() {
                     *guard = fallback.clone();
                 }
-                let launch_at_login = app
-                    .state::<AppState>()
-                    .launch_at_login
-                    .lock()
-                    .map(|value| *value)
-                    .unwrap_or(false);
-                let silent_start = app
-                    .state::<AppState>()
-                    .silent_start
-                    .lock()
-                    .map(|value| *value)
-                    .unwrap_or(false);
-                let _ = save_gui_settings(&GuiSettings {
-                    window_toggle_shortcut: fallback,
-                    launch_at_login,
-                    silent_start,
-                });
+                if let Ok(settings) = snapshot_gui_settings(&app.state::<AppState>()) {
+                    let _ = save_gui_settings(&settings);
+                }
             }
 
             let launch_at_login = app

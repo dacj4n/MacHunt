@@ -221,8 +221,8 @@ Wildcard rules (`--regex`):
 ## Runtime Data
 
 - DB: `~/.machunt/data/index.db`
-- GUI settings: `~/.machunt/gui/settings.json` (shortcut + launch-at-login + silent-start)
-- Exclude directory rules: stored in `meta` table of `~/.machunt/data/index.db`
+- GUI settings: `~/.machunt/gui/settings.json` (shortcut + launch-at-login + silent-start + excluded-directory rules)
+- Exclude directory rules: stored in `~/.machunt/gui/settings.json` (`excludeExactDirs` / `excludePatternDirs`)
 - Logs: `~/.machunt/logs/`
 
 ## Why DB Can Be Large

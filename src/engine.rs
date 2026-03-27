@@ -123,9 +123,6 @@ impl Engine {
         let sanitized_pattern = sanitize_rules(pattern_dirs);
         validate_pattern_rules(&sanitized_pattern)?;
 
-        self.db.save_exclude_exact_dirs(&sanitized_exact);
-        self.db.save_exclude_pattern_dirs(&sanitized_pattern);
-
         {
             let mut guard = self
                 .exclude_exact_dirs
