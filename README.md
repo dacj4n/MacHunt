@@ -6,10 +6,10 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 
 ## Version
 
-- GUI: `v0.2.3`
-- CLI/Core: `v0.2.3`
+- GUI: `v0.2.4`
+- CLI/Core: `v0.2.4`
 
-## Latest Updates (v0.2.3)
+## Latest Updates (v0.2.4)
 
 - Replaced `qlmanage -p` preview with native macOS Quick Look (`QLPreviewPanel`) integration.
 - Space preview now uses native Finder-style panel behavior with proper key-window focus and responder chain.
@@ -25,6 +25,12 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 - Settings now include **Launch at Login** and **Silent Startup** options.
 - Launch-at-login now integrates with macOS **Login Items** (not only background items).
 - Startup settings card now has complete dark-theme styling.
+- Added **Excluded Directories** settings for index build/rebuild filtering.
+- Exclusion rules support:
+  - Exact directory paths (e.g. `/Volumes/`)
+  - Regex or wildcard directory patterns (e.g. `*/.git/*`)
+- Exact-directory mode now supports Finder path picker + manual add.
+- Fixed wildcard exclusion semantics so `*/.git/*` correctly excludes any path segment containing `/.git/`.
 
 ## Core Capabilities
 
@@ -61,6 +67,10 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 - Language settings (zh/en)
 - Global shortcut settings for show/hide window
 - Startup settings: launch at login + silent startup (applies to auto-launch only)
+- Excluded-directory settings:
+  - Exact directory rules + regex/wildcard rules
+  - Finder picker for exact rules
+  - Rules are persisted and applied during build/rebuild
 
 ## Tech Stack
 
@@ -212,6 +222,7 @@ Wildcard rules (`--regex`):
 
 - DB: `~/.machunt/data/index.db`
 - GUI settings: `~/.machunt/gui/settings.json` (shortcut + launch-at-login + silent-start)
+- Exclude directory rules: stored in `meta` table of `~/.machunt/data/index.db`
 - Logs: `~/.machunt/logs/`
 
 ## Why DB Can Be Large
