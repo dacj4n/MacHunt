@@ -9,6 +9,7 @@ type ColumnKey = "name" | "path" | "type" | "size" | "modified";
 type ThemeMode = "system" | "light" | "dark";
 type ViewMode = "search" | "settings";
 type Language = "zh" | "en";
+type ExcludeRuleType = "exact" | "pattern";
 
 const DEFAULT_WINDOW_TOGGLE_SHORTCUT = "CmdOrCtrl+Shift+KeyF";
 const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
@@ -118,7 +119,21 @@ const I18N = {
     startupSilentStartDesc: "开启后，启动应用时默认隐藏窗口，可随时用全局快捷键唤起。",
     startupSaved: "启动设置已保存",
     startupSaving: "正在保存启动设置...",
-    startupSaveFailed: "保存启动设置失败"
+    startupSaveFailed: "保存启动设置失败",
+    excludeDirsTitle: "排除目录",
+    excludeDirsDesc: "这些规则会在构建/重建索引时跳过匹配目录。支持完整目录和正则（同时兼容 * 通配符）。",
+    excludeRuleType: "规则类型",
+    excludeRuleExact: "完整目录",
+    excludeRulePattern: "正则/通配符",
+    excludeRuleInputPlaceholderExact: "例如：/Volumes/",
+    excludeRuleInputPlaceholderPattern: "例如：*/.git/",
+    excludeAdd: "添加",
+    excludeSaveFailed: "保存排除目录失败",
+    excludeEmptyHint: "当前没有排除规则。",
+    excludeExactListTitle: "完整目录规则",
+    excludePatternListTitle: "正则/通配符规则",
+    removeRule: "删除",
+    excludeSaved: "排除目录规则已保存"
   },
   en: {
     searchPlaceholder: "Search files, folders, content...",
@@ -199,7 +214,21 @@ const I18N = {
     startupSilentStartDesc: "When enabled, app launches hidden; use the global shortcut to reveal it.",
     startupSaved: "Startup settings saved",
     startupSaving: "Saving startup settings...",
-    startupSaveFailed: "Failed to save startup settings"
+    startupSaveFailed: "Failed to save startup settings",
+    excludeDirsTitle: "Excluded Directories",
+    excludeDirsDesc: "These rules are applied during build/rebuild to skip matching directories. Supports exact paths and regex (also accepts * wildcards).",
+    excludeRuleType: "Rule Type",
+    excludeRuleExact: "Exact Directory",
+    excludeRulePattern: "Regex / Wildcard",
+    excludeRuleInputPlaceholderExact: "Example: /Volumes/",
+    excludeRuleInputPlaceholderPattern: "Example: */.git/",
+    excludeAdd: "Add",
+    excludeSaveFailed: "Failed to save excluded directories",
+    excludeEmptyHint: "No exclusion rules yet.",
+    excludeExactListTitle: "Exact Directory Rules",
+    excludePatternListTitle: "Regex / Wildcard Rules",
+    removeRule: "Remove",
+    excludeSaved: "Excluded directory rules saved"
   }
 } as const;
 
@@ -246,6 +275,11 @@ interface WatchResponse {
 interface LaunchSettingsResponse {
   launchAtLogin: boolean;
   silentStart: boolean;
+}
+
+interface ExcludeDirSettingsResponse {
+  exactDirs: string[];
+  patternDirs: string[];
 }
 
 interface ContextMenuState {
@@ -660,6 +694,12 @@ function App() {
   const [silentStart, setSilentStart] = useState(false);
   const [isLaunchSettingsSaving, setIsLaunchSettingsSaving] = useState(false);
   const [launchSettingsStatus, setLaunchSettingsStatus] = useState("");
+  const [excludeRuleType, setExcludeRuleType] = useState<ExcludeRuleType>("exact");
+  const [excludeRuleDraft, setExcludeRuleDraft] = useState("");
+  const [excludeExactDirs, setExcludeExactDirs] = useState<string[]>([]);
+  const [excludePatternDirs, setExcludePatternDirs] = useState<string[]>([]);
+  const [excludeDirStatus, setExcludeDirStatus] = useState("");
+  const [isExcludeDirSaving, setIsExcludeDirSaving] = useState(false);
   const [query, setQuery] = useState("");
   const [pathPrefix, setPathPrefix] = useState("");
   const [pathSuggestions, setPathSuggestions] = useState<string[]>([]);
@@ -1028,6 +1068,31 @@ function App() {
     };
 
     void loadLaunchSettings();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadExcludeDirSettings = async () => {
+      try {
+        const settings = await invoke<ExcludeDirSettingsResponse>("get_exclude_dir_settings");
+        if (!mounted) {
+          return;
+        }
+        setExcludeExactDirs(settings.exactDirs);
+        setExcludePatternDirs(settings.patternDirs);
+      } catch (err) {
+        if (!mounted) {
+          return;
+        }
+        setError(String(err));
+      }
+    };
+
+    void loadExcludeDirSettings();
 
     return () => {
       mounted = false;
@@ -1498,6 +1563,74 @@ function App() {
       setError(String(err));
     } finally {
       setIsLaunchSettingsSaving(false);
+    }
+  };
+
+  const applyExcludeDirSettings = async (nextExactDirs: string[], nextPatternDirs: string[]) => {
+    if (isExcludeDirSaving) {
+      return;
+    }
+    setIsExcludeDirSaving(true);
+    setExcludeDirStatus("");
+    setError(null);
+    try {
+      const saved = await invoke<ExcludeDirSettingsResponse>("set_exclude_dir_settings", {
+        exactDirs: nextExactDirs,
+        patternDirs: nextPatternDirs
+      });
+      setExcludeExactDirs(saved.exactDirs);
+      setExcludePatternDirs(saved.patternDirs);
+      setExcludeDirStatus(t.excludeSaved);
+    } catch (err) {
+      setExcludeDirStatus(t.excludeSaveFailed);
+      setError(String(err));
+    } finally {
+      setIsExcludeDirSaving(false);
+    }
+  };
+
+  const addExcludeRule = async () => {
+    const rule = excludeRuleDraft.trim();
+    if (!rule) {
+      return;
+    }
+    if (excludeRuleType === "exact") {
+      await applyExcludeDirSettings([...excludeExactDirs, rule], excludePatternDirs);
+    } else {
+      await applyExcludeDirSettings(excludeExactDirs, [...excludePatternDirs, rule]);
+    }
+    setExcludeRuleDraft("");
+  };
+
+  const removeExcludeRule = async (type: ExcludeRuleType, rule: string) => {
+    if (type === "exact") {
+      await applyExcludeDirSettings(
+        excludeExactDirs.filter((item) => item !== rule),
+        excludePatternDirs
+      );
+      return;
+    }
+    await applyExcludeDirSettings(
+      excludeExactDirs,
+      excludePatternDirs.filter((item) => item !== rule)
+    );
+  };
+
+  const pickExcludeRulePath = async () => {
+    if (isPickingPath || excludeRuleType !== "exact") {
+      return;
+    }
+    setError(null);
+    setIsPickingPath(true);
+    try {
+      const selected = await invoke<string | null>("pick_path_in_finder");
+      if (selected && selected.trim().length > 0) {
+        setExcludeRuleDraft(selected.trim());
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setIsPickingPath(false);
     }
   };
 
@@ -2196,6 +2329,111 @@ function App() {
                 </label>
               </div>
               {launchSettingsStatus && <div className="shortcut-status">{launchSettingsStatus}</div>}
+            </article>
+
+            <article className="settings-card">
+              <h3>{t.excludeDirsTitle}</h3>
+              <p className="shortcut-desc">{t.excludeDirsDesc}</p>
+              <div className="exclude-rule-editor">
+                <label className="exclude-rule-type">
+                  <span>{t.excludeRuleType}</span>
+                  <select
+                    value={excludeRuleType}
+                    disabled={isExcludeDirSaving}
+                    onChange={(event) => setExcludeRuleType(event.target.value as ExcludeRuleType)}
+                  >
+                    <option value="exact">{t.excludeRuleExact}</option>
+                    <option value="pattern">{t.excludeRulePattern}</option>
+                  </select>
+                </label>
+                <div className="exclude-rule-input-row">
+                  <input
+                    className="shortcut-input"
+                    value={excludeRuleDraft}
+                    placeholder={
+                      excludeRuleType === "exact"
+                        ? t.excludeRuleInputPlaceholderExact
+                        : t.excludeRuleInputPlaceholderPattern
+                    }
+                    disabled={isExcludeDirSaving}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    onChange={(event) => setExcludeRuleDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void addExcludeRule();
+                      }
+                    }}
+                  />
+                  {excludeRuleType === "exact" && (
+                    <button
+                      className="action-btn"
+                      disabled={isExcludeDirSaving || isPickingPath}
+                      onClick={() => void pickExcludeRulePath()}
+                    >
+                      {t.choosePath}
+                    </button>
+                  )}
+                  <button
+                    className="action-btn"
+                    disabled={isExcludeDirSaving || excludeRuleDraft.trim().length === 0}
+                    onClick={() => void addExcludeRule()}
+                  >
+                    {t.excludeAdd}
+                  </button>
+                </div>
+              </div>
+
+              <div className="exclude-rule-list-wrap">
+                <div className="exclude-rule-list-title">{t.excludeExactListTitle}</div>
+                {excludeExactDirs.length === 0 ? (
+                  <div className="shortcut-input-hint">{t.excludeEmptyHint}</div>
+                ) : (
+                  <div className="exclude-rule-list">
+                    {excludeExactDirs.map((rule) => (
+                      <div key={`exact-${rule}`} className="exclude-rule-item">
+                        <span className="exclude-rule-tag">{t.excludeRuleExact}</span>
+                        <span className="exclude-rule-value">{rule}</span>
+                        <button
+                          className="action-btn"
+                          disabled={isExcludeDirSaving}
+                          onClick={() => void removeExcludeRule("exact", rule)}
+                        >
+                          {t.removeRule}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="exclude-rule-list-wrap">
+                <div className="exclude-rule-list-title">{t.excludePatternListTitle}</div>
+                {excludePatternDirs.length === 0 ? (
+                  <div className="shortcut-input-hint">{t.excludeEmptyHint}</div>
+                ) : (
+                  <div className="exclude-rule-list">
+                    {excludePatternDirs.map((rule) => (
+                      <div key={`pattern-${rule}`} className="exclude-rule-item">
+                        <span className="exclude-rule-tag">{t.excludeRulePattern}</span>
+                        <span className="exclude-rule-value">{rule}</span>
+                        <button
+                          className="action-btn"
+                          disabled={isExcludeDirSaving}
+                          onClick={() => void removeExcludeRule("pattern", rule)}
+                        >
+                          {t.removeRule}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {excludeDirStatus && <div className="shortcut-status">{excludeDirStatus}</div>}
             </article>
           </section>
         )}

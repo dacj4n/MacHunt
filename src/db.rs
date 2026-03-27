@@ -80,11 +80,12 @@ impl Db {
 
     fn files_has_column(conn: &Connection, column_name: &str) -> bool {
         let mut stmt = conn.prepare("PRAGMA table_info(files)").unwrap();
-        let rows = stmt
+        let names = stmt
             .query_map([], |row| row.get::<_, String>(1))
-            .unwrap();
-        let has_column = rows.flatten().any(|name| name == column_name);
-        has_column
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        names.into_iter().any(|name| name == column_name)
     }
 
     fn create_v2_tables(conn: &Connection) {
@@ -226,12 +227,11 @@ impl Db {
                 *id
             } else {
                 let _ = insert_dir_stmt.execute(params![dir_path.as_str()]);
-                let id: i64 = match select_dir_stmt
-                    .query_row(params![dir_path.as_str()], |r| r.get(0))
-                {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
+                let id: i64 =
+                    match select_dir_stmt.query_row(params![dir_path.as_str()], |r| r.get(0)) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
                 dir_cache.insert(dir_path.clone(), id);
                 id
             };
@@ -239,7 +239,7 @@ impl Db {
             let _ = insert_file_stmt.execute(params![name, name_lower, dir_id]);
             migrated += 1;
 
-            if migrated % 500_000 == 0 {
+            if migrated.is_multiple_of(500_000) {
                 println!("Migrated {} rows...", migrated);
             }
         }
@@ -251,7 +251,8 @@ impl Db {
         drop(insert_dir_stmt);
 
         tx.execute("DROP TABLE files", []).unwrap();
-        tx.execute("ALTER TABLE files_v2 RENAME TO files", []).unwrap();
+        tx.execute("ALTER TABLE files_v2 RENAME TO files", [])
+            .unwrap();
         let _ = tx.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2')",
             [],
@@ -376,18 +377,16 @@ impl Db {
                     *id
                 } else {
                     let _ = insert_dir_stmt.execute(params![dir_path.as_str()]);
-                    let id: i64 = match select_dir_stmt
-                        .query_row(params![dir_path.as_str()], |r| r.get(0))
-                    {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
+                    let id: i64 =
+                        match select_dir_stmt.query_row(params![dir_path.as_str()], |r| r.get(0)) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
                     dir_cache.insert(dir_path.clone(), id);
                     id
                 };
 
-                let _ =
-                    insert_file_stmt.execute(params![stored_name, stored_name_lower, dir_id]);
+                let _ = insert_file_stmt.execute(params![stored_name, stored_name_lower, dir_id]);
             }
         }
 
@@ -467,7 +466,9 @@ impl Db {
             )
             .unwrap();
         let rows = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
             .unwrap();
         let mut out = Vec::new();
         for row in rows.flatten() {
@@ -507,11 +508,55 @@ impl Db {
 
     pub fn load_include_dirs(&self) -> Option<bool> {
         let conn = self.conn.lock();
-        conn.query_row("SELECT value FROM meta WHERE key = 'include_dirs'", [], |row| {
-            row.get::<_, String>(0)
-        })
+        conn.query_row(
+            "SELECT value FROM meta WHERE key = 'include_dirs'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
         .ok()
         .map(|v| v == "1")
+    }
+
+    pub fn save_exclude_exact_dirs(&self, dirs: &[String]) {
+        let conn = self.conn.lock();
+        let value = serde_json::to_string(dirs).unwrap_or_else(|_| "[]".to_string());
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('exclude_exact_dirs', ?1)",
+            params![value],
+        );
+    }
+
+    pub fn load_exclude_exact_dirs(&self) -> Vec<String> {
+        let conn = self.conn.lock();
+        let raw = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'exclude_exact_dirs'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_else(|_| "[]".to_string());
+        serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default()
+    }
+
+    pub fn save_exclude_pattern_dirs(&self, dirs: &[String]) {
+        let conn = self.conn.lock();
+        let value = serde_json::to_string(dirs).unwrap_or_else(|_| "[]".to_string());
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('exclude_pattern_dirs', ?1)",
+            params![value],
+        );
+    }
+
+    pub fn load_exclude_pattern_dirs(&self) -> Vec<String> {
+        let conn = self.conn.lock();
+        let raw = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'exclude_pattern_dirs'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_else(|_| "[]".to_string());
+        serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default()
     }
 
     pub fn checkpoint_truncate(&self) {

@@ -935,6 +935,80 @@ body {
   font-size: 12px;
 }
 
+.exclude-rule-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.exclude-rule-type {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+
+.exclude-rule-type select {
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #f7f9fc;
+  color: var(--text-main);
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.exclude-rule-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.exclude-rule-list-wrap {
+  margin-top: 14px;
+}
+
+.exclude-rule-list-title {
+  margin-bottom: 8px;
+  color: var(--text-subtle);
+  font-size: 13px;
+}
+
+.exclude-rule-list {
+  display: grid;
+  gap: 8px;
+}
+
+.exclude-rule-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #f7f9fc;
+  padding: 8px 10px;
+}
+
+.exclude-rule-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #e8f1ff;
+  color: #2f6cc6;
+  font-size: 11px;
+  padding: 2px 8px;
+  flex: 0 0 auto;
+}
+
+.exclude-rule-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: "SF Mono", "Menlo", "Monaco", "PingFang SC", monospace;
+  font-size: 12px;
+  color: var(--text-main);
+  word-break: break-all;
+}
+
 .startup-toggle-list {
   display: grid;
   gap: 10px;
@@ -1023,6 +1097,7 @@ body {
 :root[data-theme="dark"] .search-shortcut,
 :root[data-theme="dark"] .path-input,
 :root[data-theme="dark"] .shortcut-input,
+:root[data-theme="dark"] .exclude-rule-type select,
 :root[data-theme="dark"] .segmented,
 :root[data-theme="dark"] .case-btn,
 :root[data-theme="dark"] .action-btn,
@@ -1079,6 +1154,16 @@ body {
   background: #274a72;
   color: #ecf4ff;
   box-shadow: 0 0 0 1px rgba(111, 170, 255, 0.26);
+}
+
+:root[data-theme="dark"] .exclude-rule-item {
+  border-color: #334357;
+  background: #1d2735;
+}
+
+:root[data-theme="dark"] .exclude-rule-tag {
+  background: #274a72;
+  color: #e7f1ff;
 }
 
 :root[data-theme="dark"] .action-btn:focus-visible,

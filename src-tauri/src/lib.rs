@@ -84,19 +84,25 @@ struct AppState {
     window_toggle_shortcut: Mutex<String>,
     launch_at_login: Mutex<bool>,
     silent_start: Mutex<bool>,
+    exclude_exact_dirs: Mutex<Vec<String>>,
+    exclude_pattern_dirs: Mutex<Vec<String>>,
     is_quitting: AtomicBool,
 }
 
 impl AppState {
     fn new() -> Self {
         let settings = load_gui_settings();
+        let engine = Engine::new(false);
+        let (exclude_exact_dirs, exclude_pattern_dirs) = engine.get_exclude_dir_settings();
         Self {
-            engine: Engine::new(false),
+            engine,
             watch_started: AtomicBool::new(false),
             index_loaded: AtomicBool::new(false),
             window_toggle_shortcut: Mutex::new(settings.window_toggle_shortcut),
             launch_at_login: Mutex::new(settings.launch_at_login),
             silent_start: Mutex::new(settings.silent_start),
+            exclude_exact_dirs: Mutex::new(exclude_exact_dirs),
+            exclude_pattern_dirs: Mutex::new(exclude_pattern_dirs),
             is_quitting: AtomicBool::new(false),
         }
     }
@@ -177,6 +183,13 @@ struct WatchResponse {
 struct LaunchSettingsResponse {
     launch_at_login: bool,
     silent_start: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExcludeDirSettingsResponse {
+    exact_dirs: Vec<String>,
+    pattern_dirs: Vec<String>,
 }
 
 fn watch_response(running: bool, mode: &str, last_event_id: Option<u64>) -> WatchResponse {
@@ -1191,6 +1204,58 @@ fn set_launch_settings(
 }
 
 #[tauri::command]
+fn get_exclude_dir_settings(
+    state: tauri::State<'_, AppState>,
+) -> Result<ExcludeDirSettingsResponse, String> {
+    let exact_dirs = state
+        .exclude_exact_dirs
+        .lock()
+        .map_err(|_| "Failed to access exact exclude directories".to_string())?
+        .clone();
+    let pattern_dirs = state
+        .exclude_pattern_dirs
+        .lock()
+        .map_err(|_| "Failed to access pattern exclude directories".to_string())?
+        .clone();
+
+    Ok(ExcludeDirSettingsResponse {
+        exact_dirs,
+        pattern_dirs,
+    })
+}
+
+#[tauri::command]
+fn set_exclude_dir_settings(
+    exact_dirs: Vec<String>,
+    pattern_dirs: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<ExcludeDirSettingsResponse, String> {
+    let (saved_exact_dirs, saved_pattern_dirs) = state
+        .engine
+        .set_exclude_dir_settings(exact_dirs, pattern_dirs)?;
+
+    {
+        let mut guard = state
+            .exclude_exact_dirs
+            .lock()
+            .map_err(|_| "Failed to access exact exclude directories".to_string())?;
+        *guard = saved_exact_dirs.clone();
+    }
+    {
+        let mut guard = state
+            .exclude_pattern_dirs
+            .lock()
+            .map_err(|_| "Failed to access pattern exclude directories".to_string())?;
+        *guard = saved_pattern_dirs.clone();
+    }
+
+    Ok(ExcludeDirSettingsResponse {
+        exact_dirs: saved_exact_dirs,
+        pattern_dirs: saved_pattern_dirs,
+    })
+}
+
+#[tauri::command]
 fn toggle_main_window(app: tauri::AppHandle) -> Result<bool, String> {
     toggle_main_window_internal(&app)
 }
@@ -1405,6 +1470,8 @@ pub fn run() {
             set_window_toggle_shortcut,
             get_launch_settings,
             set_launch_settings,
+            get_exclude_dir_settings,
+            set_exclude_dir_settings,
             toggle_main_window
         ])
         .build(tauri::generate_context!())

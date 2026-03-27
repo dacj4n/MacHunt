@@ -5,6 +5,7 @@ use crate::search;
 use crate::utils::{num_cpus, Logger};
 use crate::watcher;
 use dashmap::DashMap;
+use regex::Regex;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -19,6 +20,8 @@ pub struct Engine {
     last_event_id: Arc<AtomicU64>,
     index_write_lock: Arc<Mutex<()>>,
     include_dirs: Arc<AtomicBool>,
+    exclude_exact_dirs: Arc<Mutex<Vec<String>>>,
+    exclude_pattern_dirs: Arc<Mutex<Vec<String>>>,
 }
 
 impl Engine {
@@ -30,6 +33,8 @@ impl Engine {
         let last_event_id = Arc::new(AtomicU64::new(0));
         let index_write_lock = Arc::new(Mutex::new(()));
         let include_dirs = Arc::new(AtomicBool::new(db.load_include_dirs().unwrap_or(true)));
+        let exclude_exact_dirs = Arc::new(Mutex::new(db.load_exclude_exact_dirs()));
+        let exclude_pattern_dirs = Arc::new(Mutex::new(db.load_exclude_pattern_dirs()));
         Self {
             index,
             db,
@@ -37,6 +42,8 @@ impl Engine {
             last_event_id,
             index_write_lock,
             include_dirs,
+            exclude_exact_dirs,
+            exclude_pattern_dirs,
         }
     }
 
@@ -59,13 +66,29 @@ impl Engine {
     pub fn build_index(&self, path: Option<String>, rebuild: bool, include_dirs: bool) -> usize {
         self.include_dirs.store(include_dirs, Ordering::Relaxed);
         self.db.save_include_dirs(include_dirs);
+        let exclude_exact_dirs = self
+            .exclude_exact_dirs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let exclude_pattern_dirs = self
+            .exclude_pattern_dirs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let filters = builder::BuildFilterSettings {
+            include_dirs,
+            exclude_exact_dirs,
+            exclude_pattern_dirs,
+        };
+
         let count = builder::build_index(
             &self.db,
             &self.index,
             &self.index_write_lock,
             path,
             rebuild,
-            include_dirs,
+            &filters,
         );
         let current_event_id = unsafe { watcher::FSEventsGetCurrentEventId() };
         self.db.save_last_event_id(current_event_id);
@@ -75,6 +98,50 @@ impl Engine {
             current_event_id
         );
         count
+    }
+
+    pub fn get_exclude_dir_settings(&self) -> (Vec<String>, Vec<String>) {
+        let exact_dirs = self
+            .exclude_exact_dirs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let pattern_dirs = self
+            .exclude_pattern_dirs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        (exact_dirs, pattern_dirs)
+    }
+
+    pub fn set_exclude_dir_settings(
+        &self,
+        exact_dirs: Vec<String>,
+        pattern_dirs: Vec<String>,
+    ) -> Result<(Vec<String>, Vec<String>), String> {
+        let sanitized_exact = sanitize_rules(exact_dirs);
+        let sanitized_pattern = sanitize_rules(pattern_dirs);
+        validate_pattern_rules(&sanitized_pattern)?;
+
+        self.db.save_exclude_exact_dirs(&sanitized_exact);
+        self.db.save_exclude_pattern_dirs(&sanitized_pattern);
+
+        {
+            let mut guard = self
+                .exclude_exact_dirs
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *guard = sanitized_exact.clone();
+        }
+        {
+            let mut guard = self
+                .exclude_pattern_dirs
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *guard = sanitized_pattern.clone();
+        }
+
+        Ok((sanitized_exact, sanitized_pattern))
     }
 
     pub fn start_watch(&self, since_event_id: Option<u64>) {
@@ -200,4 +267,63 @@ impl Engine {
             );
         });
     }
+}
+
+fn sanitize_rules(values: Vec<String>) -> Vec<String> {
+    let mut out = Vec::<String>::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if out.iter().any(|existing| existing == trimmed) {
+            continue;
+        }
+        out.push(trimmed.to_string());
+    }
+    out
+}
+
+fn wildcard_to_regex(pattern: &str) -> Result<Regex, regex::Error> {
+    let mut regex_pattern = String::new();
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0usize;
+
+    while i < chars.len() {
+        match chars[i] {
+            '*' => {
+                if i + 1 < chars.len() && chars[i + 1] == '*' {
+                    regex_pattern.push_str(".*");
+                    i += 2;
+                } else {
+                    regex_pattern.push_str(".*");
+                    i += 1;
+                }
+            }
+            '?' => {
+                regex_pattern.push('.');
+                i += 1;
+            }
+            c => {
+                regex_pattern.push_str(&regex::escape(&c.to_string()));
+                i += 1;
+            }
+        }
+    }
+
+    Regex::new(&format!("(?i)^{}$", regex_pattern))
+}
+
+fn compile_pattern(pattern: &str) -> Result<Regex, String> {
+    Regex::new(pattern)
+        .or_else(|_| wildcard_to_regex(pattern))
+        .map_err(|err| err.to_string())
+}
+
+fn validate_pattern_rules(patterns: &[String]) -> Result<(), String> {
+    for pattern in patterns {
+        compile_pattern(pattern)
+            .map_err(|err| format!("Invalid pattern '{}': {}", pattern, err))?;
+    }
+    Ok(())
 }

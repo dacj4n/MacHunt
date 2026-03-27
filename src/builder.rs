@@ -2,7 +2,8 @@ use crate::db::Db;
 use crate::utils::{get_root_directories, should_skip_path};
 use crossbeam::channel::Sender;
 use dashmap::DashMap;
-use std::path::PathBuf;
+use regex::Regex;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
@@ -10,18 +11,135 @@ use walkdir::WalkDir;
 
 const BATCH_SIZE: usize = 50_000;
 
-fn scan_root(root: PathBuf, tx: Sender<Vec<(String, PathBuf)>>, include_dirs: bool) {
+#[derive(Clone, Debug)]
+pub struct BuildFilterSettings {
+    pub include_dirs: bool,
+    pub exclude_exact_dirs: Vec<String>,
+    pub exclude_pattern_dirs: Vec<String>,
+}
+
+struct ExcludeRules {
+    exact_dirs: Vec<PathBuf>,
+    regex_dirs: Vec<Regex>,
+}
+
+impl ExcludeRules {
+    fn compile(exact_dirs: &[String], regex_dirs: &[String]) -> Self {
+        let exact_dirs = sanitize_rules(exact_dirs)
+            .into_iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+
+        let mut compiled_regex = Vec::new();
+        for raw in sanitize_rules(regex_dirs) {
+            if let Ok(re) = compile_regex_rule(&raw) {
+                compiled_regex.push(re);
+            }
+        }
+
+        Self {
+            exact_dirs,
+            regex_dirs: compiled_regex,
+        }
+    }
+}
+
+fn sanitize_rules(values: &[String]) -> Vec<String> {
+    let mut out = Vec::<String>::new();
+    for value in values {
+        let normalized = value.trim();
+        if normalized.is_empty() {
+            continue;
+        }
+        if out.iter().any(|existing| existing == normalized) {
+            continue;
+        }
+        out.push(normalized.to_string());
+    }
+    out
+}
+
+fn wildcard_to_regex(pattern: &str) -> Result<Regex, regex::Error> {
+    let mut regex_pattern = String::new();
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0usize;
+
+    while i < chars.len() {
+        match chars[i] {
+            '*' => {
+                if i + 1 < chars.len() && chars[i + 1] == '*' {
+                    regex_pattern.push_str(".*");
+                    i += 2;
+                } else {
+                    regex_pattern.push_str(".*");
+                    i += 1;
+                }
+            }
+            '?' => {
+                regex_pattern.push('.');
+                i += 1;
+            }
+            c => {
+                regex_pattern.push_str(&regex::escape(&c.to_string()));
+                i += 1;
+            }
+        }
+    }
+
+    Regex::new(&format!("(?i)^{}$", regex_pattern))
+}
+
+fn compile_regex_rule(pattern: &str) -> Result<Regex, String> {
+    Regex::new(pattern)
+        .or_else(|_| wildcard_to_regex(pattern))
+        .map_err(|err| err.to_string())
+}
+
+fn to_matchable_path(path: &Path, is_dir: bool) -> String {
+    let mut s = path.to_string_lossy().to_string();
+    if is_dir && !s.ends_with('/') {
+        s.push('/');
+    }
+    s
+}
+
+fn is_excluded(path: &Path, is_dir: bool, rules: &ExcludeRules) -> bool {
+    if rules.exact_dirs.iter().any(|dir| path.starts_with(dir)) {
+        return true;
+    }
+
+    if rules.regex_dirs.is_empty() {
+        return false;
+    }
+
+    let path_text = to_matchable_path(path, is_dir);
+    rules.regex_dirs.iter().any(|re| re.is_match(&path_text))
+}
+
+fn scan_root(
+    root: PathBuf,
+    tx: Sender<Vec<(String, PathBuf)>>,
+    include_dirs: bool,
+    exclude_rules: Arc<ExcludeRules>,
+) {
     let mut batch = Vec::with_capacity(BATCH_SIZE);
 
     for entry in WalkDir::new(&root)
         .follow_links(false)
         .min_depth(1)
         .into_iter()
-        .filter_entry(|e| !should_skip_path(e.path()))
+        .filter_entry(|e| {
+            let path = e.path();
+            let is_dir = e.file_type().is_dir();
+            !should_skip_path(path) && !is_excluded(path, is_dir, &exclude_rules)
+        })
         .filter_map(|e| e.ok())
     {
         let file_type = entry.file_type();
-        if !file_type.is_file() && !(include_dirs && file_type.is_dir()) {
+        if is_excluded(entry.path(), file_type.is_dir(), &exclude_rules) {
+            continue;
+        }
+        if !(file_type.is_file() || include_dirs && file_type.is_dir()) {
             continue;
         }
         if let Some(name) = entry.file_name().to_str() {
@@ -59,7 +177,7 @@ pub fn build_index(
     index_write_lock: &Arc<Mutex<()>>,
     path: Option<String>,
     rebuild: bool,
-    include_dirs: bool,
+    filters: &BuildFilterSettings,
 ) -> usize {
     if rebuild {
         let _guard = index_write_lock
@@ -78,6 +196,11 @@ pub fn build_index(
     } else {
         get_root_directories()
     };
+    let exclude_rules = Arc::new(ExcludeRules::compile(
+        &filters.exclude_exact_dirs,
+        &filters.exclude_pattern_dirs,
+    ));
+    let include_dirs = filters.include_dirs;
 
     let (tx, rx) = crossbeam::channel::bounded::<Vec<(String, PathBuf)>>(256);
 
@@ -85,7 +208,8 @@ pub fn build_index(
         .into_iter()
         .map(|root| {
             let tx = tx.clone();
-            thread::spawn(move || scan_root(root, tx, include_dirs))
+            let exclude_rules = exclude_rules.clone();
+            thread::spawn(move || scan_root(root, tx, include_dirs, exclude_rules))
         })
         .collect();
     drop(tx);
@@ -129,9 +253,7 @@ pub fn build_index(
     println!("Scan + DB write took: {:?}", start.elapsed());
 
     if use_incremental_memory_update {
-        println!(
-            "Path-scoped build: in-memory index updated incrementally; skipped full reload"
-        );
+        println!("Path-scoped build: in-memory index updated incrementally; skipped full reload");
     } else {
         let t_mem = Instant::now();
         let _guard = index_write_lock

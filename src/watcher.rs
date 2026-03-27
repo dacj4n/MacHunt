@@ -1,6 +1,8 @@
 use crate::db::Db;
 use crate::utils::{should_skip_path, Logger};
-use core_foundation_sys::runloop::{CFRunLoopGetCurrent, CFRunLoopRef, CFRunLoopRun, CFRunLoopStop};
+use core_foundation_sys::runloop::{
+    CFRunLoopGetCurrent, CFRunLoopRef, CFRunLoopRun, CFRunLoopStop,
+};
 use dashmap::DashMap;
 use std::ffi::{c_void, CStr};
 use std::os::raw::{c_char, c_double, c_ulong};
