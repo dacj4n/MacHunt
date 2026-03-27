@@ -720,17 +720,6 @@ body {
   font-weight: 600;
 }
 
-.preview-zoom {
-  position: fixed;
-  z-index: 1100;
-  border-radius: 12px;
-  border: none;
-  background: transparent;
-  box-shadow: none;
-  pointer-events: none;
-  will-change: left, top, width, height, opacity;
-}
-
 .context-menu-layer {
   position: fixed;
   inset: 0;
@@ -1223,12 +1212,6 @@ body {
   border-color: #3a475b;
   background: #1a2432;
   box-shadow: 0 18px 38px rgba(0, 0, 0, 0.45);
-}
-
-:root[data-theme="dark"] .preview-zoom {
-  border: none;
-  background: transparent;
-  box-shadow: none;
 }
 
 :root[data-theme="dark"] .context-menu-btn {
