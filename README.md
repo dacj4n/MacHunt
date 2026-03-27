@@ -6,10 +6,14 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 
 ## Version
 
-- GUI: `v1.1.0` (base release)
-- CLI/Core: `v0.2.2` (base release)
+- GUI: `v0.2.3`
+- CLI/Core: `v0.2.3`
 
-## Latest Branch Updates (after v1.1.0)
+## Latest Updates (v0.2.3)
+
+- Replaced `qlmanage -p` preview with native macOS Quick Look (`QLPreviewPanel`) integration.
+- Space preview now uses native Finder-style panel behavior with proper key-window focus and responder chain.
+- Removed frontend synthetic preview zoom/status layer (`preview://status` + overlay animation), now relying on system-native transitions.
 
 - Window close behavior changed to **hide to background** (`Cmd+W` / red close button), while `Cmd+Q` still quits.
 - Hidden window now switches to macOS accessory mode, so it does **not appear in Cmd+Tab**.

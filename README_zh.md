@@ -6,10 +6,14 @@
 
 ## 版本
 
-- GUI：`v1.1.0`（基础发布版）
-- CLI/Core：`v0.2.2`（基础发布版）
+- GUI：`v0.2.3`
+- CLI/Core：`v0.2.3`
 
-## 分支最新更新（v1.1.0 之后）
+## 最新更新（v0.2.3）
+
+- 预览能力从 `qlmanage -p` 完全替换为原生 macOS Quick Look（`QLPreviewPanel`）桥接。
+- 空格预览改为系统原生 Finder 风格面板，焦点与响应链由 Quick Look 接管。
+- 移除前端伪预览动画与 `preview://status` 同步链路，预览过渡交由系统原生行为。
 
 - 关闭窗口改为**隐藏到后台**（红色关闭按钮 / `Cmd+W`），`Cmd+Q` 仍然完全退出。
 - 隐藏后切到 macOS Accessory 模式，应用**不会出现在 Cmd+Tab**。
