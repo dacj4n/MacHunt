@@ -63,7 +63,13 @@ impl Engine {
         count
     }
 
-    pub fn build_index(&self, path: Option<String>, rebuild: bool, include_dirs: bool) -> usize {
+    pub fn build_index(
+        &self,
+        path: Option<String>,
+        rebuild: bool,
+        include_dirs: bool,
+        auto_vacuum_on_rebuild: bool,
+    ) -> usize {
         self.include_dirs.store(include_dirs, Ordering::Relaxed);
         self.db.save_include_dirs(include_dirs);
         let exclude_exact_dirs = self
@@ -93,6 +99,14 @@ impl Engine {
         let current_event_id = unsafe { watcher::FSEventsGetCurrentEventId() };
         self.db.save_last_event_id(current_event_id);
         self.db.checkpoint_truncate();
+        if rebuild && auto_vacuum_on_rebuild {
+            let vacuumed = self
+                .db
+                .maybe_vacuum_after_rebuild(256 * 1024 * 1024, 32_768, 0.20);
+            if vacuumed {
+                println!("Auto VACUUM completed after rebuild");
+            }
+        }
         println!(
             "Saved EventID: {}, next watch will use incremental sync",
             current_event_id

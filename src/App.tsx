@@ -120,6 +120,13 @@ const I18N = {
     startupSaved: "启动设置已保存",
     startupSaving: "正在保存启动设置...",
     startupSaveFailed: "保存启动设置失败",
+    autoVacuumTitle: "索引维护",
+    autoVacuumDesc: "控制重建后是否自动执行数据库空间回收（VACUUM）。",
+    autoVacuumOn: "重建后自动压缩数据库",
+    autoVacuumOnDesc: "开启后，重建结束会按条件自动 VACUUM，减少 index.db 长期膨胀。",
+    autoVacuumSaved: "索引维护设置已保存",
+    autoVacuumSaving: "正在保存索引维护设置...",
+    autoVacuumSaveFailed: "保存索引维护设置失败",
     excludeDirsTitle: "排除目录",
     excludeDirsDesc: "这些规则会在构建/重建索引时跳过匹配目录。支持完整目录和正则（同时兼容 * 通配符）。",
     excludeRuleType: "规则类型",
@@ -215,6 +222,13 @@ const I18N = {
     startupSaved: "Startup settings saved",
     startupSaving: "Saving startup settings...",
     startupSaveFailed: "Failed to save startup settings",
+    autoVacuumTitle: "Index Maintenance",
+    autoVacuumDesc: "Control whether database space reclaim (VACUUM) runs automatically after rebuild.",
+    autoVacuumOn: "Auto vacuum after rebuild",
+    autoVacuumOnDesc: "When enabled, rebuild finishes with conditional VACUUM to reduce long-term index.db growth.",
+    autoVacuumSaved: "Index maintenance setting saved",
+    autoVacuumSaving: "Saving index maintenance setting...",
+    autoVacuumSaveFailed: "Failed to save index maintenance setting",
     excludeDirsTitle: "Excluded Directories",
     excludeDirsDesc: "These rules are applied during build/rebuild to skip matching directories. Supports exact paths and regex (also accepts * wildcards).",
     excludeRuleType: "Rule Type",
@@ -275,6 +289,10 @@ interface WatchResponse {
 interface LaunchSettingsResponse {
   launchAtLogin: boolean;
   silentStart: boolean;
+}
+
+interface AutoVacuumSettingsResponse {
+  autoVacuumOnRebuild: boolean;
 }
 
 interface ExcludeDirSettingsResponse {
@@ -694,6 +712,9 @@ function App() {
   const [silentStart, setSilentStart] = useState(false);
   const [isLaunchSettingsSaving, setIsLaunchSettingsSaving] = useState(false);
   const [launchSettingsStatus, setLaunchSettingsStatus] = useState("");
+  const [autoVacuumOnRebuild, setAutoVacuumOnRebuild] = useState(true);
+  const [isAutoVacuumSettingsSaving, setIsAutoVacuumSettingsSaving] = useState(false);
+  const [autoVacuumSettingsStatus, setAutoVacuumSettingsStatus] = useState("");
   const [excludeRuleType, setExcludeRuleType] = useState<ExcludeRuleType>("exact");
   const [excludeRuleDraft, setExcludeRuleDraft] = useState("");
   const [excludeExactDirs, setExcludeExactDirs] = useState<string[]>([]);
@@ -1043,6 +1064,30 @@ function App() {
     };
 
     void loadShortcut();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadAutoVacuumSettings = async () => {
+      try {
+        const settings = await invoke<AutoVacuumSettingsResponse>("get_auto_vacuum_settings");
+        if (!mounted) {
+          return;
+        }
+        setAutoVacuumOnRebuild(settings.autoVacuumOnRebuild);
+      } catch (err) {
+        if (!mounted) {
+          return;
+        }
+        setError(String(err));
+      }
+    };
+
+    void loadAutoVacuumSettings();
 
     return () => {
       mounted = false;
@@ -1563,6 +1608,27 @@ function App() {
       setError(String(err));
     } finally {
       setIsLaunchSettingsSaving(false);
+    }
+  };
+
+  const applyAutoVacuumSettings = async (nextAutoVacuumOnRebuild: boolean) => {
+    if (isAutoVacuumSettingsSaving) {
+      return;
+    }
+    setIsAutoVacuumSettingsSaving(true);
+    setAutoVacuumSettingsStatus(t.autoVacuumSaving);
+    setError(null);
+    try {
+      const saved = await invoke<AutoVacuumSettingsResponse>("set_auto_vacuum_settings", {
+        autoVacuumOnRebuild: nextAutoVacuumOnRebuild
+      });
+      setAutoVacuumOnRebuild(saved.autoVacuumOnRebuild);
+      setAutoVacuumSettingsStatus(t.autoVacuumSaved);
+    } catch (err) {
+      setAutoVacuumSettingsStatus(t.autoVacuumSaveFailed);
+      setError(String(err));
+    } finally {
+      setIsAutoVacuumSettingsSaving(false);
     }
   };
 
@@ -2329,6 +2395,31 @@ function App() {
                 </label>
               </div>
               {launchSettingsStatus && <div className="shortcut-status">{launchSettingsStatus}</div>}
+            </article>
+
+            <article className="settings-card">
+              <h3>{t.autoVacuumTitle}</h3>
+              <p className="shortcut-desc">{t.autoVacuumDesc}</p>
+              <div className="startup-toggle-list">
+                <label className="startup-toggle-row">
+                  <div className="startup-toggle-copy">
+                    <div className="startup-toggle-title">{t.autoVacuumOn}</div>
+                    <div className="startup-toggle-desc">{t.autoVacuumOnDesc}</div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={autoVacuumOnRebuild}
+                    aria-label={t.autoVacuumOn}
+                    className={autoVacuumOnRebuild ? "mac-switch is-on" : "mac-switch"}
+                    disabled={isAutoVacuumSettingsSaving}
+                    onClick={() => void applyAutoVacuumSettings(!autoVacuumOnRebuild)}
+                  >
+                    <span className="mac-switch-knob" />
+                  </button>
+                </label>
+              </div>
+              {autoVacuumSettingsStatus && <div className="shortcut-status">{autoVacuumSettingsStatus}</div>}
             </article>
 
             <article className="settings-card">

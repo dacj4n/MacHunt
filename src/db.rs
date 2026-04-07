@@ -564,6 +564,47 @@ impl Db {
         let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     }
 
+    pub fn maybe_vacuum_after_rebuild(
+        &self,
+        min_file_bytes: u64,
+        min_free_pages: u64,
+        min_free_ratio: f64,
+    ) -> bool {
+        let file_size = fs::metadata(&self.path).map(|meta| meta.len()).unwrap_or(0);
+        if file_size < min_file_bytes {
+            return false;
+        }
+
+        let (page_count, freelist_count, page_size) = {
+            let conn = self.conn.lock();
+            let page_count = conn
+                .query_row("PRAGMA page_count", [], |row| row.get::<_, i64>(0))
+                .unwrap_or(0)
+                .max(0) as u64;
+            let freelist_count = conn
+                .query_row("PRAGMA freelist_count", [], |row| row.get::<_, i64>(0))
+                .unwrap_or(0)
+                .max(0) as u64;
+            let page_size = conn
+                .query_row("PRAGMA page_size", [], |row| row.get::<_, i64>(0))
+                .unwrap_or(0)
+                .max(0) as u64;
+            (page_count, freelist_count, page_size)
+        };
+
+        if page_count == 0 || freelist_count < min_free_pages || page_size == 0 {
+            return false;
+        }
+
+        let free_ratio = freelist_count as f64 / page_count as f64;
+        if free_ratio < min_free_ratio {
+            return false;
+        }
+
+        self.vacuum();
+        true
+    }
+
     pub fn vacuum(&self) {
         let conn = self.conn.lock();
         let _ = conn.execute_batch("VACUUM;");

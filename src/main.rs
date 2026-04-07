@@ -121,7 +121,7 @@ fn main() {
             rebuild,
             include_dirs,
         }) => {
-            engine.build_index(path, rebuild, include_dirs);
+            engine.build_index(path, rebuild, include_dirs, true);
         }
         Some(Commands::Watch) => {
             let has_index = engine.load_index_from_db() > 0;
@@ -132,7 +132,7 @@ fn main() {
                 engine.start_watch(None);
                 let engine_bg = engine.clone();
                 std::thread::spawn(move || {
-                    engine_bg.build_index(None, true, true);
+                    engine_bg.build_index(None, true, true, true);
                 });
             } else {
                 match last_event_id {

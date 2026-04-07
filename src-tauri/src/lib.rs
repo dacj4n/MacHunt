@@ -27,12 +27,18 @@ const AUTOSTART_LAUNCH_AGENT_LABEL: &str = "com.dacj4n.machunt.autostart";
 #[cfg(target_os = "macos")]
 const DEFAULT_LOGIN_ITEM_NAME: &str = "MacHunt";
 
+fn default_auto_vacuum_on_rebuild() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 struct GuiSettings {
     window_toggle_shortcut: String,
     launch_at_login: bool,
     silent_start: bool,
+    #[serde(default = "default_auto_vacuum_on_rebuild")]
+    auto_vacuum_on_rebuild: bool,
     exclude_exact_dirs: Vec<String>,
     exclude_pattern_dirs: Vec<String>,
 }
@@ -43,6 +49,7 @@ impl Default for GuiSettings {
             window_toggle_shortcut: DEFAULT_WINDOW_TOGGLE_SHORTCUT.to_string(),
             launch_at_login: false,
             silent_start: false,
+            auto_vacuum_on_rebuild: default_auto_vacuum_on_rebuild(),
             exclude_exact_dirs: Vec::new(),
             exclude_pattern_dirs: Vec::new(),
         }
@@ -105,11 +112,16 @@ fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         .lock()
         .map_err(|_| "Failed to access pattern exclude directories".to_string())?
         .clone();
+    let auto_vacuum_on_rebuild = *state
+        .auto_vacuum_on_rebuild
+        .lock()
+        .map_err(|_| "Failed to access auto-vacuum setting".to_string())?;
 
     Ok(GuiSettings {
         window_toggle_shortcut,
         launch_at_login,
         silent_start,
+        auto_vacuum_on_rebuild,
         exclude_exact_dirs,
         exclude_pattern_dirs,
     })
@@ -122,6 +134,7 @@ struct AppState {
     window_toggle_shortcut: Mutex<String>,
     launch_at_login: Mutex<bool>,
     silent_start: Mutex<bool>,
+    auto_vacuum_on_rebuild: Mutex<bool>,
     exclude_exact_dirs: Mutex<Vec<String>>,
     exclude_pattern_dirs: Mutex<Vec<String>>,
     is_quitting: AtomicBool,
@@ -153,6 +166,7 @@ impl AppState {
             window_toggle_shortcut: Mutex::new(settings.window_toggle_shortcut),
             launch_at_login: Mutex::new(settings.launch_at_login),
             silent_start: Mutex::new(settings.silent_start),
+            auto_vacuum_on_rebuild: Mutex::new(settings.auto_vacuum_on_rebuild),
             exclude_exact_dirs: Mutex::new(exclude_exact_dirs),
             exclude_pattern_dirs: Mutex::new(exclude_pattern_dirs),
             is_quitting: AtomicBool::new(false),
@@ -235,6 +249,12 @@ struct WatchResponse {
 struct LaunchSettingsResponse {
     launch_at_login: bool,
     silent_start: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AutoVacuumSettingsResponse {
+    auto_vacuum_on_rebuild: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -1030,9 +1050,13 @@ async fn build_index(
 
     let engine = state.engine.clone();
     let include_dirs = include_dirs.unwrap_or(true);
+    let auto_vacuum_on_rebuild = *state
+        .auto_vacuum_on_rebuild
+        .lock()
+        .map_err(|_| "Failed to access auto-vacuum setting".to_string())?;
     let response = tauri::async_runtime::spawn_blocking(move || {
         let started = Instant::now();
-        let indexed = engine.build_index(path, rebuild, include_dirs);
+        let indexed = engine.build_index(path, rebuild, include_dirs, auto_vacuum_on_rebuild);
         BuildResponse {
             indexed,
             took_ms: started.elapsed().as_millis() as u64,
@@ -1079,8 +1103,12 @@ fn start_watch_auto(state: tauri::State<'_, AppState>) -> WatchResponse {
     if !has_index {
         state.engine.start_watch(None);
         let engine_bg = state.engine.clone();
+        let auto_vacuum_on_rebuild = *state
+            .auto_vacuum_on_rebuild
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         std::thread::spawn(move || {
-            let _ = engine_bg.build_index(None, true, true);
+            let _ = engine_bg.build_index(None, true, true, auto_vacuum_on_rebuild);
         });
 
         return WatchResponse {
@@ -1232,6 +1260,40 @@ fn set_launch_settings(
     Ok(LaunchSettingsResponse {
         launch_at_login,
         silent_start,
+    })
+}
+
+#[tauri::command]
+fn get_auto_vacuum_settings(
+    state: tauri::State<'_, AppState>,
+) -> Result<AutoVacuumSettingsResponse, String> {
+    let auto_vacuum_on_rebuild = *state
+        .auto_vacuum_on_rebuild
+        .lock()
+        .map_err(|_| "Failed to access auto-vacuum setting".to_string())?;
+    Ok(AutoVacuumSettingsResponse {
+        auto_vacuum_on_rebuild,
+    })
+}
+
+#[tauri::command]
+fn set_auto_vacuum_settings(
+    auto_vacuum_on_rebuild: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<AutoVacuumSettingsResponse, String> {
+    {
+        let mut guard = state
+            .auto_vacuum_on_rebuild
+            .lock()
+            .map_err(|_| "Failed to access auto-vacuum setting".to_string())?;
+        *guard = auto_vacuum_on_rebuild;
+    }
+
+    let settings = snapshot_gui_settings(&state)?;
+    save_gui_settings(&settings)?;
+
+    Ok(AutoVacuumSettingsResponse {
+        auto_vacuum_on_rebuild,
     })
 }
 
@@ -1491,6 +1553,8 @@ pub fn run() {
             set_window_toggle_shortcut,
             get_launch_settings,
             set_launch_settings,
+            get_auto_vacuum_settings,
+            set_auto_vacuum_settings,
             get_exclude_dir_settings,
             set_exclude_dir_settings,
             toggle_main_window
