@@ -495,7 +495,7 @@ function buildSearchRequest(
       pathPrefix: pathPrefix.trim() || null,
       includeFiles,
       includeDirs,
-      limit: 2500
+      limit: 500
     }
   };
 }
