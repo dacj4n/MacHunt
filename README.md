@@ -6,31 +6,14 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 
 ## Version
 
-- GUI: `v0.2.4`
-- CLI/Core: `v0.2.4`
+- GUI: `v0.2.5`
+- CLI/Core: `v0.2.5`
 
-## Latest Updates (v0.2.4)
+## Latest Updates (v0.2.5)
 
-- Replaced `qlmanage -p` preview with native macOS Quick Look (`QLPreviewPanel`) integration.
-- Space preview now uses native Finder-style panel behavior with proper key-window focus and responder chain.
-- Removed frontend synthetic preview zoom/status layer (`preview://status` + overlay animation), now relying on system-native transitions.
-
-- Window close behavior changed to **hide to background** (`Cmd+W` / red close button), while `Cmd+Q` still quits.
-- Hidden window now switches to macOS accessory mode, so it does **not appear in Cmd+Tab**.
-- Added configurable global shortcut to toggle window visibility.
-- Showing window by shortcut auto-focuses the search input.
-- Settings page now supports vertical scrolling.
-- Clicking blank area in result list clears current selection.
-- Clipboard copy in bundled builds is now hardened with multi-path fallback.
-- Settings now include **Launch at Login** and **Silent Startup** options.
-- Launch-at-login now integrates with macOS **Login Items** (not only background items).
-- Startup settings card now has complete dark-theme styling.
-- Added **Excluded Directories** settings for index build/rebuild filtering.
-- Exclusion rules support:
-  - Exact directory paths (e.g. `/Volumes/`)
-  - Regex or wildcard directory patterns (e.g. `*/.git/*`)
-- Exact-directory mode now supports Finder path picker + manual add.
-- Fixed wildcard exclusion semantics so `*/.git/*` correctly excludes any path segment containing `/.git/`.
+- Added conditional automatic `VACUUM` after rebuild to keep long-term DB size growth under control.
+- Added settings switch for rebuild-time auto `VACUUM` (enabled by default), with GUI persistence.
+- The number of search results displayed is limited to 500.
 
 ## Core Capabilities
 
@@ -67,6 +50,7 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 - Language settings (zh/en)
 - Global shortcut settings for show/hide window
 - Startup settings: launch at login + silent startup (applies to auto-launch only)
+- Index maintenance settings: enable/disable auto `VACUUM` after rebuild
 - Excluded-directory settings:
   - Exact directory rules + regex/wildcard rules
   - Finder picker for exact rules
@@ -221,7 +205,7 @@ Wildcard rules (`--regex`):
 ## Runtime Data
 
 - DB: `~/.machunt/data/index.db`
-- GUI settings: `~/.machunt/gui/settings.json` (shortcut + launch-at-login + silent-start + excluded-directory rules)
+- GUI settings: `~/.machunt/gui/settings.json` (shortcut + launch-at-login + silent-start + auto-vacuum-on-rebuild + excluded-directory rules)
 - Exclude directory rules: stored in `~/.machunt/gui/settings.json` (`excludeExactDirs` / `excludePatternDirs`)
 - Logs: `~/.machunt/logs/`
 

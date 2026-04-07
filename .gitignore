@@ -11,3 +11,4 @@
 /src-tauri/gen/
 .DS_Store
 /release/
+/scripts/bump_version.sh
