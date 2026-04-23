@@ -1,8 +1,8 @@
 use crate::db::Db;
-use crate::utils::{get_root_directories, should_skip_path};
+use crate::filters::{compile_exclude_rules, is_excluded, ExcludeRules};
+use crate::utils::{get_root_directories, normalize_path_for_index, should_skip_path};
 use crossbeam::channel::Sender;
 use dashmap::DashMap;
-use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -16,104 +16,7 @@ pub struct BuildFilterSettings {
     pub include_dirs: bool,
     pub exclude_exact_dirs: Vec<String>,
     pub exclude_pattern_dirs: Vec<String>,
-}
-
-struct ExcludeRules {
-    exact_dirs: Vec<PathBuf>,
-    regex_dirs: Vec<Regex>,
-}
-
-impl ExcludeRules {
-    fn compile(exact_dirs: &[String], regex_dirs: &[String]) -> Self {
-        let exact_dirs = sanitize_rules(exact_dirs)
-            .into_iter()
-            .map(PathBuf::from)
-            .collect::<Vec<_>>();
-
-        let mut compiled_regex = Vec::new();
-        for raw in sanitize_rules(regex_dirs) {
-            if let Ok(re) = compile_regex_rule(&raw) {
-                compiled_regex.push(re);
-            }
-        }
-
-        Self {
-            exact_dirs,
-            regex_dirs: compiled_regex,
-        }
-    }
-}
-
-fn sanitize_rules(values: &[String]) -> Vec<String> {
-    let mut out = Vec::<String>::new();
-    for value in values {
-        let normalized = value.trim();
-        if normalized.is_empty() {
-            continue;
-        }
-        if out.iter().any(|existing| existing == normalized) {
-            continue;
-        }
-        out.push(normalized.to_string());
-    }
-    out
-}
-
-fn wildcard_to_regex(pattern: &str) -> Result<Regex, regex::Error> {
-    let mut regex_pattern = String::new();
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut i = 0usize;
-
-    while i < chars.len() {
-        match chars[i] {
-            '*' => {
-                if i + 1 < chars.len() && chars[i + 1] == '*' {
-                    regex_pattern.push_str(".*");
-                    i += 2;
-                } else {
-                    regex_pattern.push_str(".*");
-                    i += 1;
-                }
-            }
-            '?' => {
-                regex_pattern.push('.');
-                i += 1;
-            }
-            c => {
-                regex_pattern.push_str(&regex::escape(&c.to_string()));
-                i += 1;
-            }
-        }
-    }
-
-    Regex::new(&format!("(?i)^{}$", regex_pattern))
-}
-
-fn compile_regex_rule(pattern: &str) -> Result<Regex, String> {
-    Regex::new(pattern)
-        .or_else(|_| wildcard_to_regex(pattern))
-        .map_err(|err| err.to_string())
-}
-
-fn to_matchable_path(path: &Path, is_dir: bool) -> String {
-    let mut s = path.to_string_lossy().to_string();
-    if is_dir && !s.ends_with('/') {
-        s.push('/');
-    }
-    s
-}
-
-fn is_excluded(path: &Path, is_dir: bool, rules: &ExcludeRules) -> bool {
-    if rules.exact_dirs.iter().any(|dir| path.starts_with(dir)) {
-        return true;
-    }
-
-    if rules.regex_dirs.is_empty() {
-        return false;
-    }
-
-    let path_text = to_matchable_path(path, is_dir);
-    rules.regex_dirs.iter().any(|re| re.is_match(&path_text))
+    pub watch_roots: Option<Vec<String>>,
 }
 
 fn scan_root(
@@ -143,7 +46,8 @@ fn scan_root(
             continue;
         }
         if let Some(name) = entry.file_name().to_str() {
-            batch.push((name.to_lowercase(), entry.into_path()));
+            let normalized_path = normalize_path_for_index(entry.path());
+            batch.push((name.to_lowercase(), normalized_path));
             if batch.len() >= BATCH_SIZE {
                 let _ = tx.send(std::mem::replace(
                     &mut batch,
@@ -179,6 +83,19 @@ pub fn build_index(
     rebuild: bool,
     filters: &BuildFilterSettings,
 ) -> usize {
+    if !rebuild {
+        if let Some(ref p) = path {
+            let root = PathBuf::from(p);
+            if root.exists() {
+                db.delete_under_root(root.as_path());
+                let _guard = index_write_lock
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                purge_index_under_root(index, root.as_path());
+            }
+        }
+    }
+
     if rebuild {
         let _guard = index_write_lock
             .lock()
@@ -189,14 +106,19 @@ pub fn build_index(
 
     let start = Instant::now();
     println!("Building file index...");
-    let use_incremental_memory_update = path.is_some();
-
     let roots = if let Some(p) = path {
         vec![PathBuf::from(p)]
+    } else if let Some(watch_roots) = &filters.watch_roots {
+        let configured: Vec<PathBuf> = watch_roots.iter().map(PathBuf::from).collect();
+        if configured.is_empty() {
+            get_root_directories()
+        } else {
+            configured
+        }
     } else {
         get_root_directories()
     };
-    let exclude_rules = Arc::new(ExcludeRules::compile(
+    let exclude_rules = Arc::new(compile_exclude_rules(
         &filters.exclude_exact_dirs,
         &filters.exclude_pattern_dirs,
     ));
@@ -223,12 +145,10 @@ pub fn build_index(
 
         if db_batch.len() >= BATCH_SIZE {
             db.insert_batch(&db_batch);
-            if use_incremental_memory_update {
-                let _guard = index_write_lock
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                apply_batch_to_index(index, &db_batch, !rebuild);
-            }
+            let _guard = index_write_lock
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            apply_batch_to_index(index, &db_batch, !rebuild);
             db_batch.clear();
         }
 
@@ -238,12 +158,10 @@ pub fn build_index(
     }
     if !db_batch.is_empty() {
         db.insert_batch(&db_batch);
-        if use_incremental_memory_update {
-            let _guard = index_write_lock
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            apply_batch_to_index(index, &db_batch, !rebuild);
-        }
+        let _guard = index_write_lock
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        apply_batch_to_index(index, &db_batch, !rebuild);
     }
 
     for h in handles {
@@ -252,20 +170,7 @@ pub fn build_index(
 
     println!("Scan + DB write took: {:?}", start.elapsed());
 
-    if use_incremental_memory_update {
-        println!("Path-scoped build: in-memory index updated incrementally; skipped full reload");
-    } else {
-        let t_mem = Instant::now();
-        let _guard = index_write_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let loaded = db.load_index(index);
-        println!(
-            "Write to memory took: {:?} ({} records)",
-            t_mem.elapsed(),
-            loaded
-        );
-    }
+    println!("In-memory index updated incrementally during scan");
 
     println!(
         "Index build completed, {} files total, took {:?}",
@@ -273,4 +178,20 @@ pub fn build_index(
         start.elapsed()
     );
     count
+}
+
+fn purge_index_under_root(index: &Arc<DashMap<String, Vec<PathBuf>>>, root: &Path) {
+    if root == Path::new("/") {
+        index.clear();
+        return;
+    }
+    let root_text = root.to_string_lossy();
+    let prefix = format!("{}/", root_text);
+    index.retain(|_, v| {
+        v.retain(|p| {
+            let text = p.to_string_lossy();
+            p.as_path() != root && !text.starts_with(&prefix)
+        });
+        !v.is_empty()
+    });
 }

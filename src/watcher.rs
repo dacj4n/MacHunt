@@ -1,4 +1,5 @@
 use crate::db::Db;
+use crate::filters::{is_excluded, ExcludeRules};
 use crate::utils::{should_skip_path, Logger};
 use core_foundation_sys::runloop::{
     CFRunLoopGetCurrent, CFRunLoopRef, CFRunLoopRun, CFRunLoopStop,
@@ -98,6 +99,8 @@ struct WatchContext {
     last_event_id: Arc<AtomicU64>,
     index_write_lock: Arc<Mutex<()>>,
     include_dirs: bool,
+    exclude_rules: Arc<ExcludeRules>,
+    dirty_roots: Arc<Mutex<Vec<PathBuf>>>,
 }
 
 #[derive(Default)]
@@ -118,8 +121,23 @@ fn lock_watch_runtime() -> std::sync::MutexGuard<'static, WatchRuntime> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+fn enqueue_dirty_root(ctx: &WatchContext, path: &Path) {
+    let mut guard = ctx
+        .dirty_roots
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if guard.iter().any(|existing| path.starts_with(existing)) {
+        return;
+    }
+    guard.retain(|existing| !existing.starts_with(path));
+    guard.push(path.to_path_buf());
+}
+
 fn upsert_path(ctx: &WatchContext, path: &Path) {
     if should_skip_path(path) {
+        return;
+    }
+    if is_excluded(path, path.is_dir(), &ctx.exclude_rules) {
         return;
     }
     if !ctx.include_dirs && path.is_dir() {
@@ -194,11 +212,19 @@ fn index_directory_tree(ctx: &WatchContext, root: &Path) {
     if should_skip_path(root) {
         return;
     }
+    if is_excluded(root, true, &ctx.exclude_rules) {
+        return;
+    }
+
     for entry in WalkDir::new(root)
         .follow_links(false)
         .min_depth(0)
         .into_iter()
-        .filter_entry(|e| !should_skip_path(e.path()))
+        .filter_entry(|e| {
+            let path = e.path();
+            !should_skip_path(path)
+                && !is_excluded(path, e.file_type().is_dir(), &ctx.exclude_rules)
+        })
         .filter_map(Result::ok)
     {
         if !ctx.include_dirs && entry.file_type().is_dir() {
@@ -241,12 +267,18 @@ unsafe extern "C" fn fsevent_callback(
 
         let path = PathBuf::from(path_str);
 
+        if should_skip_path(path.as_path()) {
+            continue;
+        }
+
         if flags & FLAG_ITEM_IS_FILE == 0 {
             if flags & FLAG_ITEM_REMOVED != 0 {
                 remove_path_tree(ctx, path.as_path());
+                enqueue_dirty_root(ctx, path.as_path());
             } else if flags & (FLAG_ITEM_CREATED | FLAG_ITEM_RENAMED | FLAG_ITEM_MODIFIED) != 0 {
                 if path.is_dir() {
                     index_directory_tree(ctx, path.as_path());
+                    enqueue_dirty_root(ctx, path.as_path());
                 } else if path.exists() {
                     upsert_path(ctx, path.as_path());
                 }
@@ -256,6 +288,9 @@ unsafe extern "C" fn fsevent_callback(
 
         if flags & FLAG_ITEM_REMOVED != 0 {
             remove_path(ctx, path.as_path());
+            if let Some(parent) = path.parent() {
+                enqueue_dirty_root(ctx, parent);
+            }
             continue;
         }
 
@@ -264,6 +299,9 @@ unsafe extern "C" fn fsevent_callback(
                 upsert_path(ctx, path.as_path());
             } else {
                 remove_path(ctx, path.as_path());
+            }
+            if let Some(parent) = path.parent() {
+                enqueue_dirty_root(ctx, parent);
             }
         }
     }
@@ -277,6 +315,9 @@ pub fn start_watch(
     index_write_lock: Arc<Mutex<()>>,
     include_dirs: bool,
     since_event_id: Option<u64>,
+    watch_roots: Vec<String>,
+    exclude_rules: Arc<ExcludeRules>,
+    dirty_roots: Arc<Mutex<Vec<PathBuf>>>,
 ) {
     {
         let mut runtime = lock_watch_runtime();
@@ -290,16 +331,32 @@ pub fn start_watch(
 
     let since = since_event_id.unwrap_or(FSEVENT_SINCE_NOW);
     thread::spawn(move || unsafe {
-        let path_cstr = std::ffi::CString::new("/").unwrap();
-        let cf_path = CFStringCreateWithCString(
-            std::ptr::null(),
-            path_cstr.as_ptr(),
-            KCF_STRING_ENCODING_UTF8,
-        );
+        let mut c_paths = Vec::new();
+        for root in watch_roots {
+            if let Ok(c) = std::ffi::CString::new(root) {
+                c_paths.push(c);
+            }
+        }
+        if c_paths.is_empty() {
+            if let Ok(root) = std::ffi::CString::new("/") {
+                c_paths.push(root);
+            }
+        }
+
+        let mut cf_paths = Vec::<*const c_void>::new();
+        for path_cstr in &c_paths {
+            let cf_path = CFStringCreateWithCString(
+                std::ptr::null(),
+                path_cstr.as_ptr(),
+                KCF_STRING_ENCODING_UTF8,
+            );
+            cf_paths.push(cf_path);
+        }
+
         let paths_array = CFArrayCreate(
             std::ptr::null(),
-            &cf_path as *const _,
-            1,
+            cf_paths.as_ptr(),
+            cf_paths.len() as isize,
             &kCFTypeArrayCallBacks as *const _,
         );
 
@@ -310,6 +367,8 @@ pub fn start_watch(
             last_event_id,
             index_write_lock,
             include_dirs,
+            exclude_rules,
+            dirty_roots,
         });
         let ctx_ptr = Box::into_raw(ctx);
         let mut fsevent_ctx = FSEventStreamContext {

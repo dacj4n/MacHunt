@@ -337,6 +337,35 @@ impl Db {
         );
     }
 
+    pub fn delete_under_root(&self, root: &Path) {
+        let conn = self.conn.lock();
+        if root == Path::new("/") {
+            let _ = conn.execute_batch("DELETE FROM files; DELETE FROM dirs;");
+            return;
+        }
+
+        let root_text = root.to_string_lossy().trim_end_matches('/').to_string();
+        if root_text.is_empty() {
+            return;
+        }
+        let prefix = format!("{}/%", root_text);
+
+        let _ = conn.execute(
+            "
+            DELETE FROM files
+            WHERE dir_id IN (
+                SELECT id FROM dirs WHERE path = ?1 OR path LIKE ?2
+            )
+        ",
+            params![root_text, prefix],
+        );
+
+        let _ = conn.execute(
+            "DELETE FROM dirs WHERE path = ?1 OR path LIKE ?2",
+            params![root_text, prefix],
+        );
+    }
+
     pub fn insert_batch(&self, entries: &[(String, PathBuf)]) {
         if entries.is_empty() {
             return;
@@ -448,12 +477,13 @@ impl Db {
             != 0
     }
 
-    pub fn list_all_paths(&self) -> Vec<(String, String)> {
+    pub fn list_all_paths(&self) -> Vec<(i64, String, String)> {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
                 "
                 SELECT
+                    f.id,
                     f.name_lower,
                     CASE
                         WHEN d.path = '' THEN f.name
@@ -467,13 +497,56 @@ impl Db {
             .unwrap();
         let rows = stmt
             .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
             })
             .unwrap();
         let mut out = Vec::new();
         for row in rows.flatten() {
-            let (name_lower, full_path) = row;
-            out.push((name_lower, full_path));
+            let (id, name_lower, full_path) = row;
+            out.push((id, name_lower, full_path));
+        }
+        out
+    }
+
+    pub fn list_paths_after_id(&self, last_id: u64, limit: usize) -> Vec<(i64, String, String)> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "
+                SELECT
+                    f.id,
+                    f.name_lower,
+                    CASE
+                        WHEN d.path = '' THEN f.name
+                        WHEN d.path = '/' THEN '/' || f.name
+                        ELSE d.path || '/' || f.name
+                    END AS full_path
+                FROM files f
+                JOIN dirs d ON d.id = f.dir_id
+                WHERE f.id > ?1
+                ORDER BY f.id ASC
+                LIMIT ?2
+            ",
+            )
+            .unwrap();
+
+        let rows = stmt
+            .query_map(params![last_id as i64, limit as i64], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .unwrap();
+
+        let mut out = Vec::new();
+        for row in rows.flatten() {
+            out.push(row);
         }
         out
     }
@@ -545,6 +618,25 @@ impl Db {
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('exclude_pattern_dirs', ?1)",
             params![value],
         );
+    }
+
+    pub fn save_watch_roots(&self, roots: &[String]) {
+        let conn = self.conn.lock();
+        let value = serde_json::to_string(roots).unwrap_or_else(|_| "[]".to_string());
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('watch_roots', ?1)",
+            params![value],
+        );
+    }
+
+    pub fn load_watch_roots(&self) -> Vec<String> {
+        let conn = self.conn.lock();
+        let raw = conn
+            .query_row("SELECT value FROM meta WHERE key = 'watch_roots'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap_or_else(|_| "[]".to_string());
+        serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default()
     }
 
     pub fn load_exclude_pattern_dirs(&self) -> Vec<String> {

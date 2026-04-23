@@ -1,6 +1,7 @@
 pub mod builder;
 pub mod db;
 pub mod engine;
+pub mod filters;
 pub mod model;
 pub mod search;
 pub mod utils;
