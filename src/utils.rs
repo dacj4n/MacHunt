@@ -64,6 +64,30 @@ pub fn num_cpus() -> usize {
         .unwrap_or(4)
 }
 
+pub fn normalize_path_for_index(path: &Path) -> PathBuf {
+    let raw = path.to_string_lossy();
+    let normalized = if raw == "/System/Volumes/Data" || raw.starts_with("/System/Volumes/Data/") {
+        Some(raw.trim_start_matches("/System/Volumes/Data"))
+    } else if raw == "/Volumes/System/Volumes/Data"
+        || raw.starts_with("/Volumes/System/Volumes/Data/")
+    {
+        Some(raw.trim_start_matches("/Volumes/System/Volumes/Data"))
+    } else if raw == "/Volumes/Macintosh HD" || raw.starts_with("/Volumes/Macintosh HD/") {
+        Some(raw.trim_start_matches("/Volumes/Macintosh HD"))
+    } else {
+        None
+    };
+
+    if let Some(rest) = normalized {
+        if rest.is_empty() {
+            return PathBuf::from("/");
+        }
+        return PathBuf::from(rest);
+    }
+
+    path.to_path_buf()
+}
+
 pub fn get_root_directories() -> Vec<PathBuf> {
     let root = PathBuf::from("/");
     let mut dirs = Vec::new();
@@ -94,6 +118,9 @@ pub fn should_skip_path(path: &Path) -> bool {
             | "/System/Volumes/Preboot"
             | "/System/Volumes/Recovery"
             | "/System/Volumes/VM"
+            | "/Volumes/System/Volumes/Data"
+            | "/Volumes/Macintosh HD"
     ) || path_str.contains("/.Spotlight-V100")
         || path_str.contains("/.fseventsd")
 }
+
