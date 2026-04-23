@@ -6,14 +6,19 @@
 
 ## 版本
 
-- GUI：`v0.2.5`
-- CLI/Core：`v0.2.5`
+- GUI：`v0.3.0`
+- CLI/Core：`v0.3.0`
 
-## 最新更新（v0.2.5）
+## 最新更新（v0.3.0）
 
-- 新增“重建后条件化自动 `VACUUM`”能力，控制索引库长期膨胀。
-- 设置页新增自动 `VACUUM` 开关（默认开启），并可持久化保存。
-- 限制搜索展示数量为500
+- 修复 macOS 分卷镜像路径导致的重复搜索结果问题（`/Volumes/System`、`/Volumes/Macintosh HD`）。
+- 索引架构升级为“持续增量优先”：
+  - watcher 支持可配置多根监听
+  - build/watch 使用统一排除规则语义
+  - 全量构建改为单通道写入（扫描时同步写 DB 与内存）
+  - 新增 dirty-root 局部重建后台线程
+  - 启动死路径校验改为分片后台巡检
+- 设置页新增 Watch Roots（监听根目录）配置，支持增删与 Finder 选取并持久化。
 
 ## 核心能力
 
@@ -55,6 +60,10 @@
   - 完整目录规则 + 正则/通配符规则
   - 完整目录支持 Finder 选取
   - 规则持久化并在构建/重建时生效
+- 监听根目录设置：
+  - watcher 监听范围可配置，不再固定监听 `/`
+  - 支持在设置页增删根目录
+  - 支持 Finder 选取根目录
 
 ## 技术栈
 
@@ -205,8 +214,9 @@ machunt optimize [--vacuum]
 ## 运行时数据位置
 
 - 索引库：`~/.machunt/data/index.db`
-- GUI 配置：`~/.machunt/gui/settings.json`（快捷键 + 开机自启 + 静默启动 + 重建后自动 VACUUM + 排除目录规则）
+- GUI 配置：`~/.machunt/gui/settings.json`（快捷键 + 开机自启 + 静默启动 + 重建后自动 VACUUM + 排除目录规则 + 监听根目录）
 - 排除目录规则：保存在 `~/.machunt/gui/settings.json`（`excludeExactDirs` / `excludePatternDirs`）
+- 监听根目录：保存在 `~/.machunt/gui/settings.json`（`watchRoots`），并同步到 DB meta（`watch_roots`）
 - 日志：`~/.machunt/logs/`
 
 ## 为什么 DB 会很大

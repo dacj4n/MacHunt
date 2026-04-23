@@ -6,14 +6,19 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 
 ## Version
 
-- GUI: `v0.2.5`
-- CLI/Core: `v0.2.5`
+- GUI: `v0.3.0`
+- CLI/Core: `v0.3.0`
 
-## Latest Updates (v0.2.5)
+## Latest Updates (v0.3.0)
 
-- Added conditional automatic `VACUUM` after rebuild to keep long-term DB size growth under control.
-- Added settings switch for rebuild-time auto `VACUUM` (enabled by default), with GUI persistence.
-- The number of search results displayed is limited to 500.
+- Fixed duplicate search results caused by macOS volume mirror paths (`/Volumes/System` and `/Volumes/Macintosh HD`).
+- Upgraded index architecture to "continuous incremental first":
+  - watcher supports configurable multi-root monitoring
+  - build/watch now share unified exclude rule semantics
+  - full build writes DB + in-memory index in a single pass (removed post-build full reload)
+  - dirty-root partial reindex worker added
+  - startup dead-path cleanup is now chunked background scan
+- Added GUI settings for watch roots (add/remove + Finder picker + persistence).
 
 ## Core Capabilities
 
@@ -55,6 +60,10 @@ A fully local macOS search tool for files and folders, with both CLI and native 
   - Exact directory rules + regex/wildcard rules
   - Finder picker for exact rules
   - Rules are persisted and applied during build/rebuild
+- Watch-root settings:
+  - Configure watcher roots instead of always monitoring `/`
+  - Add/remove roots from GUI settings
+  - Finder picker for root selection
 
 ## Tech Stack
 
@@ -205,8 +214,9 @@ Wildcard rules (`--regex`):
 ## Runtime Data
 
 - DB: `~/.machunt/data/index.db`
-- GUI settings: `~/.machunt/gui/settings.json` (shortcut + launch-at-login + silent-start + auto-vacuum-on-rebuild + excluded-directory rules)
+- GUI settings: `~/.machunt/gui/settings.json` (shortcut + launch-at-login + silent-start + auto-vacuum-on-rebuild + excluded-directory rules + watch roots)
 - Exclude directory rules: stored in `~/.machunt/gui/settings.json` (`excludeExactDirs` / `excludePatternDirs`)
+- Watch roots: stored in `~/.machunt/gui/settings.json` (`watchRoots`) and synced to DB meta (`watch_roots`)
 - Logs: `~/.machunt/logs/`
 
 ## Why DB Can Be Large
