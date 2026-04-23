@@ -41,6 +41,7 @@ struct GuiSettings {
     auto_vacuum_on_rebuild: bool,
     exclude_exact_dirs: Vec<String>,
     exclude_pattern_dirs: Vec<String>,
+    watch_roots: Vec<String>,
 }
 
 impl Default for GuiSettings {
@@ -52,6 +53,7 @@ impl Default for GuiSettings {
             auto_vacuum_on_rebuild: default_auto_vacuum_on_rebuild(),
             exclude_exact_dirs: Vec::new(),
             exclude_pattern_dirs: Vec::new(),
+            watch_roots: Vec::new(),
         }
     }
 }
@@ -116,6 +118,11 @@ fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         .auto_vacuum_on_rebuild
         .lock()
         .map_err(|_| "Failed to access auto-vacuum setting".to_string())?;
+    let watch_roots = state
+        .watch_roots
+        .lock()
+        .map_err(|_| "Failed to access watch roots".to_string())?
+        .clone();
 
     Ok(GuiSettings {
         window_toggle_shortcut,
@@ -124,6 +131,7 @@ fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         auto_vacuum_on_rebuild,
         exclude_exact_dirs,
         exclude_pattern_dirs,
+        watch_roots,
     })
 }
 
@@ -137,6 +145,7 @@ struct AppState {
     auto_vacuum_on_rebuild: Mutex<bool>,
     exclude_exact_dirs: Mutex<Vec<String>>,
     exclude_pattern_dirs: Mutex<Vec<String>>,
+    watch_roots: Mutex<Vec<String>>,
     is_quitting: AtomicBool,
 }
 
@@ -153,12 +162,18 @@ impl AppState {
             settings.exclude_pattern_dirs = legacy_pattern_dirs;
             let _ = save_gui_settings(&settings);
         }
+        let legacy_watch_roots = engine.get_watch_roots();
+        if settings.watch_roots.is_empty() && !legacy_watch_roots.is_empty() {
+            settings.watch_roots = legacy_watch_roots;
+            let _ = save_gui_settings(&settings);
+        }
         let (exclude_exact_dirs, exclude_pattern_dirs) = engine
             .set_exclude_dir_settings(
                 settings.exclude_exact_dirs.clone(),
                 settings.exclude_pattern_dirs.clone(),
             )
             .unwrap_or_else(|_| (Vec::new(), Vec::new()));
+        let watch_roots = engine.set_watch_roots(settings.watch_roots.clone());
         Self {
             engine,
             watch_started: AtomicBool::new(false),
@@ -169,6 +184,7 @@ impl AppState {
             auto_vacuum_on_rebuild: Mutex::new(settings.auto_vacuum_on_rebuild),
             exclude_exact_dirs: Mutex::new(exclude_exact_dirs),
             exclude_pattern_dirs: Mutex::new(exclude_pattern_dirs),
+            watch_roots: Mutex::new(watch_roots),
             is_quitting: AtomicBool::new(false),
         }
     }
@@ -262,6 +278,12 @@ struct AutoVacuumSettingsResponse {
 struct ExcludeDirSettingsResponse {
     exact_dirs: Vec<String>,
     pattern_dirs: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WatchRootsSettingsResponse {
+    roots: Vec<String>,
 }
 
 fn watch_response(running: bool, mode: &str, last_event_id: Option<u64>) -> WatchResponse {
@@ -1353,6 +1375,40 @@ fn set_exclude_dir_settings(
 }
 
 #[tauri::command]
+fn get_watch_roots_settings(
+    state: tauri::State<'_, AppState>,
+) -> Result<WatchRootsSettingsResponse, String> {
+    let roots = state
+        .watch_roots
+        .lock()
+        .map_err(|_| "Failed to access watch roots".to_string())?
+        .clone();
+
+    Ok(WatchRootsSettingsResponse { roots })
+}
+
+#[tauri::command]
+fn set_watch_roots_settings(
+    roots: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<WatchRootsSettingsResponse, String> {
+    let saved_roots = state.engine.set_watch_roots(roots);
+
+    {
+        let mut guard = state
+            .watch_roots
+            .lock()
+            .map_err(|_| "Failed to access watch roots".to_string())?;
+        *guard = saved_roots.clone();
+    }
+
+    let settings = snapshot_gui_settings(&state)?;
+    save_gui_settings(&settings)?;
+
+    Ok(WatchRootsSettingsResponse { roots: saved_roots })
+}
+
+#[tauri::command]
 fn toggle_main_window(app: tauri::AppHandle) -> Result<bool, String> {
     toggle_main_window_internal(&app)
 }
@@ -1557,6 +1613,8 @@ pub fn run() {
             set_auto_vacuum_settings,
             get_exclude_dir_settings,
             set_exclude_dir_settings,
+            get_watch_roots_settings,
+            set_watch_roots_settings,
             toggle_main_window
         ])
         .build(tauri::generate_context!())

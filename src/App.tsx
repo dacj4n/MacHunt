@@ -129,6 +129,12 @@ const I18N = {
     autoVacuumSaveFailed: "保存索引维护设置失败",
     excludeDirsTitle: "排除目录",
     excludeDirsDesc: "这些规则会在构建/重建索引时跳过匹配目录。支持完整目录和正则（同时兼容 * 通配符）。",
+    watchRootsTitle: "监听根目录",
+    watchRootsDesc: "Watcher 只监听这些根路径，减少事件噪音并提升增量索引效率。",
+    watchRootsInputPlaceholder: "例如：/Users",
+    watchRootsSaved: "监听根目录已保存",
+    watchRootsSaveFailed: "保存监听根目录失败",
+    watchRootsEmptyHint: "当前没有监听根目录，将自动回退默认根目录集合。",
     excludeRuleType: "规则类型",
     excludeRuleExact: "完整目录",
     excludeRulePattern: "正则/通配符",
@@ -231,6 +237,12 @@ const I18N = {
     autoVacuumSaveFailed: "Failed to save index maintenance setting",
     excludeDirsTitle: "Excluded Directories",
     excludeDirsDesc: "These rules are applied during build/rebuild to skip matching directories. Supports exact paths and regex (also accepts * wildcards).",
+    watchRootsTitle: "Watch Roots",
+    watchRootsDesc: "Watcher listens only to these root paths to reduce event noise and improve incremental indexing efficiency.",
+    watchRootsInputPlaceholder: "Example: /Users",
+    watchRootsSaved: "Watch roots saved",
+    watchRootsSaveFailed: "Failed to save watch roots",
+    watchRootsEmptyHint: "No watch roots configured. Default roots will be used automatically.",
     excludeRuleType: "Rule Type",
     excludeRuleExact: "Exact Directory",
     excludeRulePattern: "Regex / Wildcard",
@@ -298,6 +310,10 @@ interface AutoVacuumSettingsResponse {
 interface ExcludeDirSettingsResponse {
   exactDirs: string[];
   patternDirs: string[];
+}
+
+interface WatchRootsSettingsResponse {
+  roots: string[];
 }
 
 interface ContextMenuState {
@@ -721,6 +737,10 @@ function App() {
   const [excludePatternDirs, setExcludePatternDirs] = useState<string[]>([]);
   const [excludeDirStatus, setExcludeDirStatus] = useState("");
   const [isExcludeDirSaving, setIsExcludeDirSaving] = useState(false);
+  const [watchRootDraft, setWatchRootDraft] = useState("");
+  const [watchRoots, setWatchRoots] = useState<string[]>([]);
+  const [watchRootStatus, setWatchRootStatus] = useState("");
+  const [isWatchRootSaving, setIsWatchRootSaving] = useState(false);
   const [query, setQuery] = useState("");
   const [pathPrefix, setPathPrefix] = useState("");
   const [pathSuggestions, setPathSuggestions] = useState<string[]>([]);
@@ -1064,6 +1084,30 @@ function App() {
     };
 
     void loadShortcut();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadWatchRootsSettings = async () => {
+      try {
+        const settings = await invoke<WatchRootsSettingsResponse>("get_watch_roots_settings");
+        if (!mounted) {
+          return;
+        }
+        setWatchRoots(settings.roots);
+      } catch (err) {
+        if (!mounted) {
+          return;
+        }
+        setError(String(err));
+      }
+    };
+
+    void loadWatchRootsSettings();
 
     return () => {
       mounted = false;
@@ -1680,6 +1724,58 @@ function App() {
       excludeExactDirs,
       excludePatternDirs.filter((item) => item !== rule)
     );
+  };
+
+  const applyWatchRoots = async (nextRoots: string[]) => {
+    if (isWatchRootSaving) {
+      return;
+    }
+    setIsWatchRootSaving(true);
+    setWatchRootStatus("");
+    setError(null);
+    try {
+      const saved = await invoke<WatchRootsSettingsResponse>("set_watch_roots_settings", {
+        roots: nextRoots
+      });
+      setWatchRoots(saved.roots);
+      setWatchRootStatus(t.watchRootsSaved);
+    } catch (err) {
+      setWatchRootStatus(t.watchRootsSaveFailed);
+      setError(String(err));
+    } finally {
+      setIsWatchRootSaving(false);
+    }
+  };
+
+  const addWatchRoot = async () => {
+    const root = watchRootDraft.trim();
+    if (!root) {
+      return;
+    }
+    await applyWatchRoots([...watchRoots, root]);
+    setWatchRootDraft("");
+  };
+
+  const removeWatchRoot = async (root: string) => {
+    await applyWatchRoots(watchRoots.filter((item) => item !== root));
+  };
+
+  const pickWatchRoot = async () => {
+    if (isPickingPath || isWatchRootSaving) {
+      return;
+    }
+    setError(null);
+    setIsPickingPath(true);
+    try {
+      const selected = await invoke<string | null>("pick_path_in_finder");
+      if (selected && selected.trim().length > 0) {
+        setWatchRootDraft(selected.trim());
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setIsPickingPath(false);
+    }
   };
 
   const pickExcludeRulePath = async () => {
@@ -2420,6 +2516,71 @@ function App() {
                 </label>
               </div>
               {autoVacuumSettingsStatus && <div className="shortcut-status">{autoVacuumSettingsStatus}</div>}
+            </article>
+
+            <article className="settings-card">
+              <h3>{t.watchRootsTitle}</h3>
+              <p className="shortcut-desc">{t.watchRootsDesc}</p>
+              <div className="exclude-rule-editor">
+                <div className="exclude-rule-input-row">
+                  <input
+                    className="shortcut-input"
+                    value={watchRootDraft}
+                    placeholder={t.watchRootsInputPlaceholder}
+                    disabled={isWatchRootSaving}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    onChange={(event) => setWatchRootDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void addWatchRoot();
+                      }
+                    }}
+                  />
+                  <button
+                    className="action-btn"
+                    disabled={isWatchRootSaving || isPickingPath}
+                    onClick={() => void pickWatchRoot()}
+                  >
+                    {t.choosePath}
+                  </button>
+                  <button
+                    className="action-btn"
+                    disabled={isWatchRootSaving || watchRootDraft.trim().length === 0}
+                    onClick={() => void addWatchRoot()}
+                  >
+                    {t.excludeAdd}
+                  </button>
+                </div>
+              </div>
+
+              <div className="exclude-rule-list-wrap">
+                <div className="exclude-rule-list-title">{t.watchRootsTitle}</div>
+                {watchRoots.length === 0 ? (
+                  <div className="shortcut-input-hint">{t.watchRootsEmptyHint}</div>
+                ) : (
+                  <div className="exclude-rule-list">
+                    {watchRoots.map((root) => (
+                      <div key={`watch-root-${root}`} className="exclude-rule-item">
+                        <span className="exclude-rule-tag">root</span>
+                        <span className="exclude-rule-value">{root}</span>
+                        <button
+                          className="action-btn"
+                          disabled={isWatchRootSaving}
+                          onClick={() => void removeWatchRoot(root)}
+                        >
+                          {t.removeRule}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {watchRootStatus && <div className="shortcut-status">{watchRootStatus}</div>}
             </article>
 
             <article className="settings-card">
