@@ -6,10 +6,19 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 
 ## Version
 
-- GUI: `v0.3.0`
-- CLI/Core: `v0.3.0`
+- GUI: `v3.0.1`
+- CLI/Core: `v3.0.1`
 
-## Latest Updates (v0.3.0)
+## Latest Updates (v3.0.1)
+
+- Added native macOS file-object copy from search results:
+  - copy single or multiple results and paste directly in Finder/other locations
+  - supports right-click `Copy Result` / `Copy All Results`
+  - supports keyboard `Cmd/Ctrl + C` on selected results
+  - implemented with native `NSPasteboard` (no AppleScript path)
+- Refined global shortcut window toggle behavior:
+  - if window is visible but not focused/topmost, shortcut now brings it to front first
+  - only hides when the window is already visible and focused
 
 - Fixed duplicate search results caused by macOS volume mirror paths (`/Volumes/System` and `/Volumes/Macintosh HD`).
 - Upgraded index architecture to "continuous incremental first":
@@ -48,9 +57,11 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 - Context menu actions:
   - Open
   - Open With... (Finder / QSpace Pro / Terminal / WezTerm)
+  - Copy result / copy all selected results (native file-object clipboard)
   - Copy name / path
   - Copy all selected names / paths
   - Move to Trash
+- `Cmd/Ctrl + C` to copy selected search results as file objects
 - Theme settings (system/light/dark)
 - Language settings (zh/en)
 - Global shortcut settings for show/hide window
