@@ -352,13 +352,21 @@ fn toggle_main_window_internal<R: tauri::Runtime>(
         .get_webview_window("main")
         .ok_or_else(|| "Main window not found".to_string())?;
 
-    if window.is_visible().map_err(|e| e.to_string())? {
-        hide_main_window_internal(app)?;
-        return Ok(false);
+    let visible = window.is_visible().map_err(|e| e.to_string())?;
+    if !visible {
+        show_main_window_internal(app)?;
+        return Ok(true);
     }
 
-    show_main_window_internal(app)?;
-    Ok(true)
+    let minimized = window.is_minimized().map_err(|e| e.to_string())?;
+    let focused = window.is_focused().map_err(|e| e.to_string())?;
+    if minimized || !focused {
+        show_main_window_internal(app)?;
+        return Ok(true);
+    }
+
+    hide_main_window_internal(app)?;
+    Ok(false)
 }
 
 fn register_window_toggle_shortcut<R: tauri::Runtime>(
