@@ -138,3 +138,31 @@ bool open_quicklook(const char *const *paths, size_t len, size_t index) {
     return opened;
   }
 }
+
+bool copy_files_to_clipboard(const char *const *paths, size_t len) {
+  @autoreleasepool {
+    if (paths == NULL || len == 0) {
+      return false;
+    }
+
+    NSArray<NSURL *> *urls = build_urls(paths, len);
+    if (urls.count == 0) {
+      return false;
+    }
+
+    __block bool copied = false;
+    void (^copyAction)(void) = ^{
+      NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
+      [pasteboard clearContents];
+      copied = [pasteboard writeObjects:urls];
+    };
+
+    if ([NSThread isMainThread]) {
+      copyAction();
+    } else {
+      dispatch_sync(dispatch_get_main_queue(), copyAction);
+    }
+
+    return copied;
+  }
+}

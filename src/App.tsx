@@ -53,6 +53,8 @@ const I18N = {
     menuWezTerm: "在 WezTerm 中打开",
     menuCopyName: "拷贝名称",
     menuCopyPath: "拷贝路径",
+    menuCopyResult: "拷贝结果",
+    menuCopyAllResults: "拷贝所有结果",
     menuCopyAllNames: "拷贝所有文件名",
     menuCopyAllPaths: "拷贝所有文件路径",
     menuTrash: "移到废纸篓",
@@ -161,6 +163,8 @@ const I18N = {
     menuWezTerm: "Open in WezTerm",
     menuCopyName: "Copy Name",
     menuCopyPath: "Copy Path",
+    menuCopyResult: "Copy Result",
+    menuCopyAllResults: "Copy All Results",
     menuCopyAllNames: "Copy All Names",
     menuCopyAllPaths: "Copy All Paths",
     menuTrash: "Move to Trash",
@@ -1921,6 +1925,18 @@ function App() {
     await copyText(selectedItemsInOrder.map((item) => item.path).join("\n"));
   };
 
+  const copySearchResults = async (paths: string[]) => {
+    const selectedPaths = paths.filter((path) => path.trim().length > 0);
+    if (selectedPaths.length === 0) {
+      return;
+    }
+    try {
+      await invoke("copy_search_results", { paths: selectedPaths });
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
   const moveToTrash = async (path: string) => {
     try {
       await invoke("move_to_trash", { path });
@@ -2030,7 +2046,7 @@ function App() {
     const menuWidth = 230;
     const keepsMultiSelection = selectedItemPathSet.has(item.path);
     const menuIsMulti = keepsMultiSelection && hasMultiSelection;
-    const menuHeight = menuIsMulti ? 392 : 332;
+    const menuHeight = menuIsMulti ? 432 : 372;
     const x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
     const y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
     if (!selectedItemPathSet.has(item.path)) {
@@ -2053,6 +2069,19 @@ function App() {
           event.preventDefault();
           moveSelectionByArrow(event.key === "ArrowDown" ? 1 : -1);
         }
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "c") {
+        if (activeView !== "search" || contextMenu || selectedPathsInOrder.length === 0) {
+          return;
+        }
+        if (isEditableTarget(event.target)) {
+          return;
+        }
+        event.preventDefault();
+        blurActiveEditable();
+        void copySearchResults(selectedPathsInOrder);
         return;
       }
 
@@ -2767,6 +2796,16 @@ function App() {
               onClick={() => void runContextAction(() => copyText(contextMenu.item.path))}
             >
               {t.menuCopyPath}
+            </button>
+            <button
+              className="context-menu-btn"
+              onClick={() =>
+                void runContextAction(() =>
+                  copySearchResults(contextMenu.multiSelection ? selectedPathsInOrder : [contextMenu.item.path])
+                )
+              }
+            >
+              {contextMenu.multiSelection ? t.menuCopyAllResults : t.menuCopyResult}
             </button>
             {contextMenu.multiSelection && (
               <>

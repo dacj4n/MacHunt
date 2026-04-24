@@ -193,6 +193,7 @@ impl AppState {
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn open_quicklook(paths: *const *const c_char, len: usize, index: usize) -> bool;
+    fn copy_files_to_clipboard(paths: *const *const c_char, len: usize) -> bool;
 }
 
 #[derive(Debug, Deserialize)]
@@ -950,6 +951,48 @@ fn copy_to_clipboard(text: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn copy_search_results(paths: Vec<String>) -> Result<(), String> {
+    let selected_paths: Vec<String> = paths
+        .into_iter()
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .collect();
+
+    if selected_paths.is_empty() {
+        return Err("No paths selected".to_string());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut c_paths = Vec::new();
+        for path in selected_paths {
+            let target = PathBuf::from(path);
+            if !target.exists() {
+                continue;
+            }
+            let c_path = CString::new(target.to_string_lossy().into_owned())
+                .map_err(|_| "Target path contains NUL byte".to_string())?;
+            c_paths.push(c_path);
+        }
+        if c_paths.is_empty() {
+            return Err("Target path does not exist".to_string());
+        }
+
+        let raw_paths: Vec<*const c_char> = c_paths.iter().map(|p| p.as_ptr()).collect();
+        let copied = unsafe { copy_files_to_clipboard(raw_paths.as_ptr(), raw_paths.len()) };
+        if copied {
+            return Ok(());
+        }
+        return Err("Failed to copy search results to pasteboard".to_string());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        copy_to_clipboard(selected_paths.join("\n"))
+    }
+}
+
+#[tauri::command]
 fn move_to_trash(path: String) -> Result<(), String> {
     let target = PathBuf::from(&path);
     if !target.exists() {
@@ -1610,6 +1653,7 @@ pub fn run() {
             open_in_terminal,
             open_in_wezterm,
             copy_to_clipboard,
+            copy_search_results,
             move_to_trash,
             set_menu_language,
             persist_watch_cursor,
