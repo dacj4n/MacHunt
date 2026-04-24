@@ -6,10 +6,10 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 
 ## Version
 
-- GUI: `v3.0.1`
-- CLI/Core: `v3.0.1`
+- GUI: `v0.3.1`
+- CLI/Core: `v0.3.1`
 
-## Latest Updates (v3.0.1)
+## Latest Updates (v0.3.1)
 
 - Added native macOS file-object copy from search results:
   - copy single or multiple results and paste directly in Finder/other locations
