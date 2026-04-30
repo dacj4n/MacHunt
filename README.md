@@ -6,10 +6,13 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 
 ## Version
 
-- GUI: `v0.3.1`
-- CLI/Core: `v0.3.1`
+- GUI: `v0.3.2`
+- CLI/Core: `v0.3.2`
 
-## Latest Updates (v0.3.1)
+## Latest Updates (v0.3.2)
+
+- Fixed multi-select trash action: when deleting via right-click context menu with multiple items selected, all selected items are now moved to trash instead of only the context-menu target.
+- Improved centering of empty-state placeholder text ("Type a keyword to start searching." / "No matching files found.") in the results area by restructuring the table-shell grid layout.
 
 - Added native macOS file-object copy from search results:
   - copy single or multiple results and paste directly in Finder/other locations
