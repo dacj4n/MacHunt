@@ -2250,111 +2250,113 @@ function App() {
             </section>
 
             <section className="table-shell" ref={tableShellRef}>
-              <div className="table-header" style={{ gridTemplateColumns }}>
-                <span className="header-cell">
-                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("name")}>
-                    <span className="header-sort-label">{t.header_name}</span>
-                    {sortKey === "name" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                  </button>
-                  <span
-                    className={activeResizer === "name-path" ? "column-resizer active" : "column-resizer"}
-                    onMouseDown={startResize("name", "path", "name-path")}
-                  />
-                </span>
-                <span className="header-cell">
-                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("path")}>
-                    <span className="header-sort-label">{t.header_path}</span>
-                    {sortKey === "path" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                  </button>
-                  <span
-                    className={activeResizer === "path-type" ? "column-resizer active" : "column-resizer"}
-                    onMouseDown={startResize("path", "type", "path-type")}
-                  />
-                </span>
-                <span className="header-cell">
-                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("type")}>
-                    <span className="header-sort-label">{t.header_type}</span>
-                    {sortKey === "type" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                  </button>
-                  <span
-                    className={activeResizer === "type-size" ? "column-resizer active" : "column-resizer"}
-                    onMouseDown={startResize("type", "size", "type-size")}
-                  />
-                </span>
-                <span className="header-cell">
-                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("size")}>
-                    <span className="header-sort-label">{t.header_size}</span>
-                    {sortKey === "size" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                  </button>
-                  <span
-                    className={activeResizer === "size-modified" ? "column-resizer active" : "column-resizer"}
-                    onMouseDown={startResize("size", "modified", "size-modified")}
-                  />
-                </span>
-                <span className="header-cell">
-                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("modified")}>
-                    <span className="header-sort-label">{t.header_modified}</span>
-                    {sortKey === "modified" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                  </button>
-                </span>
-              </div>
-
-              <div className="table-body" ref={tableBodyRef} onMouseDown={clearSelectionOnBlankArea}>
-                {items.map((item, index) => {
-                  const token = iconToken(item);
-                  return (
-                    <article
-                      key={`${item.path}-${index}`}
-                      ref={(element) => {
-                        if (element) {
-                          rowRefs.current.set(item.path, element);
-                        } else {
-                          rowRefs.current.delete(item.path);
-                        }
-                      }}
-                      className={selectedItemPathSet.has(item.path) ? "row selected" : "row"}
-                      style={{ gridTemplateColumns }}
-                      onMouseDown={(event) => {
-                        if (event.button === 0) {
-                          blurActiveEditable();
-                        }
-                      }}
-                      onClick={(event) => handleRowClick(event, item, index)}
-                      onDoubleClick={() => void openResult(item.path)}
-                      onContextMenu={(event) => openResultContextMenu(event, item)}
-                    >
-                      <div className="cell name-cell">
-                        <span className={`file-icon ${token}`}>{iconGlyph(token)}</span>
-                        <span
-                          className="name-text"
-                          onMouseEnter={(event) => setCellPreviewTooltip(event, item.name)}
-                          onMouseLeave={(event) => event.currentTarget.removeAttribute("title")}
-                        >
-                          {item.name}
-                        </span>
-                      </div>
-                      <div
-                        className="cell path-cell"
-                        onMouseEnter={(event) => setCellPreviewTooltip(event, item.parent)}
-                        onMouseLeave={(event) => event.currentTarget.removeAttribute("title")}
-                      >
-                        {item.parent}
-                      </div>
-                      <div className="cell type-cell">{typeLabel(item, language)}</div>
-                      <div className="cell">{formatBytes(item.sizeBytes)}</div>
-                      <div className="cell">{formatDate(item.modifiedUnixMs)}</div>
-                    </article>
-                  );
-                })}
-
-                {items.length === 0 && (
-                  <div className="empty-state">
-                    {query.trim().length === 0
-                      ? t.emptyTypeHint
-                      : t.emptyNoMatch}
+              {items.length === 0 ? (
+                <div className="empty-state">
+                  {query.trim().length === 0
+                    ? t.emptyTypeHint
+                    : t.emptyNoMatch}
+                </div>
+              ) : (
+                <>
+                  <div className="table-header" style={{ gridTemplateColumns }}>
+                    <span className="header-cell">
+                      <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("name")}>
+                        <span className="header-sort-label">{t.header_name}</span>
+                        {sortKey === "name" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                      </button>
+                      <span
+                        className={activeResizer === "name-path" ? "column-resizer active" : "column-resizer"}
+                        onMouseDown={startResize("name", "path", "name-path")}
+                      />
+                    </span>
+                    <span className="header-cell">
+                      <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("path")}>
+                        <span className="header-sort-label">{t.header_path}</span>
+                        {sortKey === "path" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                      </button>
+                      <span
+                        className={activeResizer === "path-type" ? "column-resizer active" : "column-resizer"}
+                        onMouseDown={startResize("path", "type", "path-type")}
+                      />
+                    </span>
+                    <span className="header-cell">
+                      <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("type")}>
+                        <span className="header-sort-label">{t.header_type}</span>
+                        {sortKey === "type" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                      </button>
+                      <span
+                        className={activeResizer === "type-size" ? "column-resizer active" : "column-resizer"}
+                        onMouseDown={startResize("type", "size", "type-size")}
+                      />
+                    </span>
+                    <span className="header-cell">
+                      <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("size")}>
+                        <span className="header-sort-label">{t.header_size}</span>
+                        {sortKey === "size" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                      </button>
+                      <span
+                        className={activeResizer === "size-modified" ? "column-resizer active" : "column-resizer"}
+                        onMouseDown={startResize("size", "modified", "size-modified")}
+                      />
+                    </span>
+                    <span className="header-cell">
+                      <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("modified")}>
+                        <span className="header-sort-label">{t.header_modified}</span>
+                        {sortKey === "modified" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                      </button>
+                    </span>
                   </div>
-                )}
-              </div>
+
+                  <div className="table-body" ref={tableBodyRef} onMouseDown={clearSelectionOnBlankArea}>
+                    {items.map((item, index) => {
+                      const token = iconToken(item);
+                      return (
+                        <article
+                          key={`${item.path}-${index}`}
+                          ref={(element) => {
+                            if (element) {
+                              rowRefs.current.set(item.path, element);
+                            } else {
+                              rowRefs.current.delete(item.path);
+                            }
+                          }}
+                          className={selectedItemPathSet.has(item.path) ? "row selected" : "row"}
+                          style={{ gridTemplateColumns }}
+                          onMouseDown={(event) => {
+                            if (event.button === 0) {
+                              blurActiveEditable();
+                            }
+                          }}
+                          onClick={(event) => handleRowClick(event, item, index)}
+                          onDoubleClick={() => void openResult(item.path)}
+                          onContextMenu={(event) => openResultContextMenu(event, item)}
+                        >
+                          <div className="cell name-cell">
+                            <span className={`file-icon ${token}`}>{iconGlyph(token)}</span>
+                            <span
+                              className="name-text"
+                              onMouseEnter={(event) => setCellPreviewTooltip(event, item.name)}
+                              onMouseLeave={(event) => event.currentTarget.removeAttribute("title")}
+                            >
+                              {item.name}
+                            </span>
+                          </div>
+                          <div
+                            className="cell path-cell"
+                            onMouseEnter={(event) => setCellPreviewTooltip(event, item.parent)}
+                            onMouseLeave={(event) => event.currentTarget.removeAttribute("title")}
+                          >
+                            {item.parent}
+                          </div>
+                          <div className="cell type-cell">{typeLabel(item, language)}</div>
+                          <div className="cell">{formatBytes(item.sizeBytes)}</div>
+                          <div className="cell">{formatDate(item.modifiedUnixMs)}</div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </section>
 
             <footer className="status-bar">
