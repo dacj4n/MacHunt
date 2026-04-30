@@ -2825,7 +2825,12 @@ function App() {
             )}
             <button
               className="context-menu-btn danger"
-              onClick={() => void runContextAction(() => moveToTrash(contextMenu.item.path))}
+              onClick={() => void runContextAction(async () => {
+                const paths = contextMenu.multiSelection ? selectedPathsInOrder : [contextMenu.item.path];
+                for (const p of paths) {
+                  await moveToTrash(p);
+                }
+              })}
             >
               {t.menuTrash}
             </button>
