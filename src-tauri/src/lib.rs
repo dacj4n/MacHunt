@@ -18,7 +18,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-const DEFAULT_WINDOW_TOGGLE_SHORTCUT: &str = "CmdOrCtrl+Shift+KeyF";
+const DEFAULT_WINDOW_TOGGLE_SHORTCUT: &str = "CmdOrCtrl+Shift+KeyD";
 const EVENT_OPEN_SETTINGS: &str = "app://open-settings";
 const EVENT_FOCUS_SEARCH: &str = "app://focus-search";
 const MENU_OPEN_SETTINGS_ID: &str = "open_settings";
@@ -29,6 +29,18 @@ const DEFAULT_LOGIN_ITEM_NAME: &str = "MacHunt";
 
 fn default_auto_vacuum_on_rebuild() -> bool {
     true
+}
+
+fn default_exclude_pattern_dirs() -> Vec<String> {
+    vec![
+        "/System/**".to_string(),
+        "/private/var/**".to_string(),
+        "/private/tmp/**".to_string(),
+        "/.Spotlight-V100/**".to_string(),
+        "/.fseventsd/**".to_string(),
+        "/dev/**".to_string(),
+        "/proc/**".to_string(),
+    ]
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -52,7 +64,7 @@ impl Default for GuiSettings {
             silent_start: false,
             auto_vacuum_on_rebuild: default_auto_vacuum_on_rebuild(),
             exclude_exact_dirs: Vec::new(),
-            exclude_pattern_dirs: Vec::new(),
+            exclude_pattern_dirs: default_exclude_pattern_dirs(),
             watch_roots: Vec::new(),
         }
     }

@@ -11,7 +11,7 @@ type ViewMode = "search" | "settings";
 type Language = "zh" | "en";
 type ExcludeRuleType = "exact" | "pattern";
 
-const DEFAULT_WINDOW_TOGGLE_SHORTCUT = "CmdOrCtrl+Shift+KeyF";
+const DEFAULT_WINDOW_TOGGLE_SHORTCUT = "CmdOrCtrl+Shift+KeyD";
 const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
   name: 500,
   path: 420,
