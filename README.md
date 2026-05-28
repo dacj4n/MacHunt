@@ -6,10 +6,16 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 
 ## Version
 
-- GUI: `v0.3.2`
-- CLI/Core: `v0.3.2`
+- GUI: `v0.3.3`
+- CLI/Core: `v0.3.3`
 
-## Latest Updates (v0.3.2)
+## Latest Updates (v0.3.3)
+
+- Default global shortcut changed from `CmdOrCtrl+Shift+KeyF` to `CmdOrCtrl+Shift+KeyD`.
+- Default exclude-pattern directories on fresh install:
+  - `/System/**`, `/private/var/**`, `/private/tmp/**` — macOS system & private directories
+  - `/.Spotlight-V100/**`, `/.fseventsd/**` — Spotlight & FSEvents metadata
+  - `/dev/**`, `/proc/**` — device & process virtual filesystems
 
 - Fixed multi-select trash action: when deleting via right-click context menu with multiple items selected, all selected items are now moved to trash instead of only the context-menu target.
 - Improved centering of empty-state placeholder text ("Type a keyword to start searching." / "No matching files found.") in the results area by restructuring the table-shell grid layout.
