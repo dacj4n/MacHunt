@@ -2240,6 +2240,13 @@ function App() {
                     <span className={isWatchRunning ? "watch-dot stop" : "watch-dot start"} />
                     {isWatchPending ? (isWatchRunning ? t.stopping : t.starting) : isWatchRunning ? t.stopWatch : t.startWatch}
                   </button>
+                  <button
+                    className="action-btn"
+                    onClick={() => setActiveView("settings")}
+                    title={t.settingsTitle}
+                  >
+                    {t.settingsTitle}
+                  </button>
                 </div>
               </div>
             </section>
