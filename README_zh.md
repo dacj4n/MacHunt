@@ -184,7 +184,7 @@ machunt [OPTIONS] [QUERY] [COMMAND]
 - `-r, --regex`：通配符搜索模式
 - `--folder`：仅目录
 - `--file`：仅文件
-- `--logs`：输出日志到 `~/.machunt/logs`
+- `--logs`：输出日志到 `~/Library/Caches/MacHunt/logs`
 - `[QUERY]`：不带子命令时的查询关键词
 
 筛选规则：
@@ -233,11 +233,11 @@ machunt optimize [--vacuum]
 
 ## 运行时数据位置
 
-- 索引库：`~/.machunt/data/index.db`
-- GUI 配置：`~/.machunt/gui/settings.json`（快捷键 + 开机自启 + 静默启动 + 重建后自动 VACUUM + 排除目录规则 + 监听根目录）
-- 排除目录规则：保存在 `~/.machunt/gui/settings.json`（`excludeExactDirs` / `excludePatternDirs`）
-- 监听根目录：保存在 `~/.machunt/gui/settings.json`（`watchRoots`），并同步到 DB meta（`watch_roots`）
-- 日志：`~/.machunt/logs/`
+- 索引库：`~/Library/Caches/MacHunt/index.db`
+- GUI 配置：`~/Library/Application Support/MacHunt/settings.json`（快捷键 + 开机自启 + 静默启动 + 显示程序坞图标 + 重建后自动 VACUUM + 排除目录规则 + 监听根目录）
+- 排除目录规则：保存在 `settings.json`（`excludeExactDirs` / `excludePatternDirs`）
+- 监听根目录：保存在 `settings.json`（`watchRoots`），并同步到 DB meta（`watch_roots`）
+- 日志：`~/Library/Caches/MacHunt/logs/`
 
 ## 为什么 DB 会很大
 

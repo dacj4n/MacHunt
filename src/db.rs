@@ -15,7 +15,10 @@ pub struct Db {
 impl Db {
     pub fn init_default() -> Self {
         let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let data_dir = PathBuf::from(home_dir).join(".machunt").join("data");
+        let data_dir = PathBuf::from(home_dir)
+            .join("Library")
+            .join("Caches")
+            .join("MacHunt");
         let _ = fs::create_dir_all(&data_dir);
         let db_path = data_dir.join("index.db");
 

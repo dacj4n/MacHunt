@@ -75,8 +75,9 @@ impl Default for GuiSettings {
 fn gui_settings_path() -> PathBuf {
     let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home_dir)
-        .join(".machunt")
-        .join("gui")
+        .join("Library")
+        .join("Application Support")
+        .join("MacHunt")
         .join("settings.json")
 }
 

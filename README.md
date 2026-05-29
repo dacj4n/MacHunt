@@ -184,7 +184,7 @@ Top-level options:
 - `-r, --regex`: wildcard pattern mode
 - `--folder`: folders only
 - `--file`: files only
-- `--logs`: write logs to `~/.machunt/logs`
+- `--logs`: write logs to `~/Library/Caches/MacHunt/logs`
 - `[QUERY]`: search query when no subcommand is used
 
 Selection rule:
@@ -233,11 +233,11 @@ Wildcard rules (`--regex`):
 
 ## Runtime Data
 
-- DB: `~/.machunt/data/index.db`
-- GUI settings: `~/.machunt/gui/settings.json` (shortcut + launch-at-login + silent-start + auto-vacuum-on-rebuild + excluded-directory rules + watch roots)
-- Exclude directory rules: stored in `~/.machunt/gui/settings.json` (`excludeExactDirs` / `excludePatternDirs`)
-- Watch roots: stored in `~/.machunt/gui/settings.json` (`watchRoots`) and synced to DB meta (`watch_roots`)
-- Logs: `~/.machunt/logs/`
+- DB: `~/Library/Caches/MacHunt/index.db`
+- GUI settings: `~/Library/Application Support/MacHunt/settings.json` (shortcut + launch-at-login + silent-start + show-dock-icon + auto-vacuum-on-rebuild + excluded-directory rules + watch roots)
+- Exclude directory rules: stored in `settings.json` (`excludeExactDirs` / `excludePatternDirs`)
+- Watch roots: stored in `settings.json` (`watchRoots`) and synced to DB meta (`watch_roots`)
+- Logs: `~/Library/Caches/MacHunt/logs/`
 
 ## Why DB Can Be Large
 

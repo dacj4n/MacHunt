@@ -21,7 +21,11 @@ impl Logger {
         }
 
         let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let logs_dir = PathBuf::from(home_dir).join(".machunt").join("logs");
+        let logs_dir = PathBuf::from(home_dir)
+            .join("Library")
+            .join("Caches")
+            .join("MacHunt")
+            .join("logs");
         let _ = fs::create_dir_all(&logs_dir);
 
         let log_file = logs_dir.join(format!("machunt_{}.log", timestamp_secs()));
