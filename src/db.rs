@@ -277,6 +277,59 @@ impl Db {
         let _ = conn.execute_batch("DELETE FROM files; DELETE FROM dirs;");
     }
 
+    /// Replace the current connection with a fresh temp database
+    /// (at index.db.new). All subsequent inserts go to the temp DB.
+    pub fn begin_rebuild(&self) {
+        let temp_path = self.path.with_extension("db.new");
+        let _ = fs::remove_file(&temp_path);
+        let _ = fs::remove_file(temp_path.with_extension("db-wal"));
+        let _ = fs::remove_file(temp_path.with_extension("db-shm"));
+
+        let mut temp_conn = Connection::open(&temp_path).unwrap();
+        Self::apply_pragmas(&temp_conn);
+        Self::ensure_schema(&mut temp_conn);
+
+        let mut guard = self.conn.lock();
+        // Swap: old connection dropped → old DB fd closed.
+        let _old = std::mem::replace(&mut *guard, temp_conn);
+    }
+
+    /// Atomically promote the temp database to the main one.
+    ///  1. checkpoint the temp DB
+    ///  2. close temp connection
+    ///  3. rename index.db.new → index.db
+    ///  4. reopen the main connection
+    pub fn finish_rebuild(&self) -> Result<(), String> {
+        let temp_path = self.path.with_extension("db.new");
+
+        // Checkpoint + close temp connection.
+        {
+            let mut guard = self.conn.lock();
+            guard
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+                .map_err(|e| e.to_string())?;
+            // Replace with a dummy in-memory connection so the temp fd is closed.
+            let _temp = std::mem::replace(&mut *guard, Connection::open_in_memory().unwrap());
+            // _temp dropped → sqlite3_close on temp DB.
+        }
+
+        // Atomic swap on APFS (same volume).
+        if temp_path.exists() {
+            let _ = fs::remove_file(self.path.with_extension("db-wal"));
+            let _ = fs::remove_file(self.path.with_extension("db-shm"));
+            fs::rename(&temp_path, &self.path).map_err(|e| e.to_string())?;
+        }
+
+        // Reopen main connection.
+        let new_conn = Connection::open(&self.path).map_err(|e| e.to_string())?;
+        Self::apply_pragmas(&new_conn);
+
+        let mut guard = self.conn.lock();
+        *guard = new_conn;
+
+        Ok(())
+    }
+
     pub fn insert(&self, fallback_name: &str, path: &Path) {
         let conn = self.conn.lock();
         let dir_path = Self::parent_key(path);

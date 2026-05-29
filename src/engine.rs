@@ -88,7 +88,7 @@ impl Engine {
     pub fn build_index(
         &self,
         path: Option<String>,
-        rebuild: bool,
+        _rebuild: bool,
         include_dirs: bool,
         auto_vacuum_on_rebuild: bool,
     ) -> usize {
@@ -117,25 +117,35 @@ impl Engine {
             watch_roots: Some(watch_roots),
         };
 
+        // Use a temp DB + atomic swap for full rebuilds, or for
+        // build/rebuild when no specific incremental path is given.
+        // The only incremental (non-temp) path is the dirty-root worker,
+        // which passes auto_vacuum_on_rebuild=false and a specific path.
+        let is_incremental = !auto_vacuum_on_rebuild && path.is_some();
+
+        if !is_incremental {
+            self.db.begin_rebuild();
+        }
+
         let count = builder::build_index(
             &self.db,
             &self.index,
             &self.index_write_lock,
             path,
-            rebuild,
+            !is_incremental,             // treat as fresh DB if not incremental
             &filters,
         );
+
+        if !is_incremental {
+            if let Err(e) = self.db.finish_rebuild() {
+                eprintln!("finish_rebuild failed: {}", e);
+            }
+        } else {
+            self.db.checkpoint_truncate();
+        }
+
         let current_event_id = unsafe { watcher::FSEventsGetCurrentEventId() };
         self.db.save_last_event_id(current_event_id);
-        self.db.checkpoint_truncate();
-        if rebuild && auto_vacuum_on_rebuild {
-            let vacuumed = self
-                .db
-                .maybe_vacuum_after_rebuild(256 * 1024 * 1024, 32_768, 0.20);
-            if vacuumed {
-                println!("Auto VACUUM completed after rebuild");
-            }
-        }
         println!(
             "Saved EventID: {}, next watch will use incremental sync",
             current_event_id
