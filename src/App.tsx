@@ -1267,6 +1267,7 @@ function App() {
           setIsWatchRunning(watch.running);
           if (watch.code === "bootstrap") {
             setIsBuilding(true);
+            setBuildStatus(t.buildStatusBuilding);
           }
         }
       } catch (err) {
