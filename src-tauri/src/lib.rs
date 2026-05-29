@@ -49,6 +49,7 @@ struct GuiSettings {
     window_toggle_shortcut: String,
     launch_at_login: bool,
     silent_start: bool,
+    show_dock_icon: bool,
     #[serde(default = "default_auto_vacuum_on_rebuild")]
     auto_vacuum_on_rebuild: bool,
     exclude_exact_dirs: Vec<String>,
@@ -61,7 +62,8 @@ impl Default for GuiSettings {
         Self {
             window_toggle_shortcut: DEFAULT_WINDOW_TOGGLE_SHORTCUT.to_string(),
             launch_at_login: false,
-            silent_start: false,
+            silent_start: true,
+            show_dock_icon: false,
             auto_vacuum_on_rebuild: default_auto_vacuum_on_rebuild(),
             exclude_exact_dirs: Vec::new(),
             exclude_pattern_dirs: default_exclude_pattern_dirs(),
@@ -116,6 +118,10 @@ fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         .silent_start
         .lock()
         .map_err(|_| "Failed to access silent-start setting".to_string())?;
+    let show_dock_icon = *state
+        .show_dock_icon
+        .lock()
+        .map_err(|_| "Failed to access show-dock-icon setting".to_string())?;
     let exclude_exact_dirs = state
         .exclude_exact_dirs
         .lock()
@@ -140,6 +146,7 @@ fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         window_toggle_shortcut,
         launch_at_login,
         silent_start,
+        show_dock_icon,
         auto_vacuum_on_rebuild,
         exclude_exact_dirs,
         exclude_pattern_dirs,
@@ -154,6 +161,7 @@ struct AppState {
     window_toggle_shortcut: Mutex<String>,
     launch_at_login: Mutex<bool>,
     silent_start: Mutex<bool>,
+    show_dock_icon: Mutex<bool>,
     auto_vacuum_on_rebuild: Mutex<bool>,
     exclude_exact_dirs: Mutex<Vec<String>>,
     exclude_pattern_dirs: Mutex<Vec<String>>,
@@ -193,6 +201,7 @@ impl AppState {
             window_toggle_shortcut: Mutex::new(settings.window_toggle_shortcut),
             launch_at_login: Mutex::new(settings.launch_at_login),
             silent_start: Mutex::new(settings.silent_start),
+            show_dock_icon: Mutex::new(settings.show_dock_icon),
             auto_vacuum_on_rebuild: Mutex::new(settings.auto_vacuum_on_rebuild),
             exclude_exact_dirs: Mutex::new(exclude_exact_dirs),
             exclude_pattern_dirs: Mutex::new(exclude_pattern_dirs),
@@ -206,6 +215,10 @@ impl AppState {
 unsafe extern "C" {
     fn open_quicklook(paths: *const *const c_char, len: usize, index: usize) -> bool;
     fn copy_files_to_clipboard(paths: *const *const c_char, len: usize) -> bool;
+    fn set_dock_flag(v: bool);
+    fn install_policy_guard();
+    fn force_accessory_policy() -> bool;
+    fn activate_ignoring_other_apps() -> bool;
 }
 
 #[derive(Debug, Deserialize)]
@@ -278,6 +291,7 @@ struct WatchResponse {
 struct LaunchSettingsResponse {
     launch_at_login: bool,
     silent_start: bool,
+    show_dock_icon: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -328,11 +342,25 @@ fn normalize_shortcut_input(raw: &str) -> Result<String, String> {
     Ok(shortcut.to_string())
 }
 
-fn show_main_window_internal<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+fn show_main_window_internal<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &AppState,
+) -> Result<(), String> {
+    let show_dock = *state
+        .show_dock_icon
+        .lock()
+        .map_err(|_| "Failed to access show-dock-icon setting".to_string())?;
+
     #[cfg(target_os = "macos")]
     {
-        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
-        let _ = app.set_dock_visibility(true);
+        if show_dock {
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+            let _ = app.set_dock_visibility(true);
+        } else {
+            unsafe {
+                activate_ignoring_other_apps();
+            }
+        }
     }
 
     let window = app
@@ -345,21 +373,34 @@ fn show_main_window_internal<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Re
     Ok(())
 }
 
-fn hide_main_window_internal<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-        let _ = app.set_dock_visibility(false);
-    }
+fn hide_main_window_internal<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &AppState,
+) -> Result<(), String> {
+    let show_dock = *state
+        .show_dock_icon
+        .lock()
+        .map_err(|_| "Failed to access show-dock-icon setting".to_string())?;
 
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "Main window not found".to_string())?;
-    window.hide().map_err(|e| e.to_string())
+    window.hide().map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "macos")]
+    {
+        if show_dock {
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            let _ = app.set_dock_visibility(false);
+        }
+    }
+
+    Ok(())
 }
 
 fn toggle_main_window_internal<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
+    state: &AppState,
 ) -> Result<bool, String> {
     let window = app
         .get_webview_window("main")
@@ -367,18 +408,18 @@ fn toggle_main_window_internal<R: tauri::Runtime>(
 
     let visible = window.is_visible().map_err(|e| e.to_string())?;
     if !visible {
-        show_main_window_internal(app)?;
+        show_main_window_internal(app, state)?;
         return Ok(true);
     }
 
     let minimized = window.is_minimized().map_err(|e| e.to_string())?;
     let focused = window.is_focused().map_err(|e| e.to_string())?;
     if minimized || !focused {
-        show_main_window_internal(app)?;
+        show_main_window_internal(app, state)?;
         return Ok(true);
     }
 
-    hide_main_window_internal(app)?;
+    hide_main_window_internal(app, state)?;
     Ok(false)
 }
 
@@ -391,7 +432,8 @@ fn register_window_toggle_shortcut<R: tauri::Runtime>(
     manager
         .on_shortcut(shortcut, |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
-                let _ = toggle_main_window_internal(app);
+                let state = app.state::<AppState>();
+                let _ = toggle_main_window_internal(app, &state);
             }
         })
         .map_err(|e| e.to_string())
@@ -1309,10 +1351,15 @@ fn get_launch_settings(
         .silent_start
         .lock()
         .map_err(|_| "Failed to access silent-start setting".to_string())?;
+    let show_dock_icon = *state
+        .show_dock_icon
+        .lock()
+        .map_err(|_| "Failed to access show-dock-icon setting".to_string())?;
 
     Ok(LaunchSettingsResponse {
         launch_at_login,
         silent_start,
+        show_dock_icon,
     })
 }
 
@@ -1320,6 +1367,8 @@ fn get_launch_settings(
 fn set_launch_settings(
     launch_at_login: bool,
     silent_start: bool,
+    show_dock_icon: bool,
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<LaunchSettingsResponse, String> {
     apply_launch_settings(launch_at_login)?;
@@ -1338,6 +1387,27 @@ fn set_launch_settings(
             .map_err(|_| "Failed to access silent-start setting".to_string())?;
         *guard = silent_start;
     }
+    {
+        let mut guard = state
+            .show_dock_icon
+            .lock()
+            .map_err(|_| "Failed to access show-dock-icon setting".to_string())?;
+        *guard = show_dock_icon;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        unsafe {
+            set_dock_flag(show_dock_icon);
+        }
+        if show_dock_icon {
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+            let _ = app.set_dock_visibility(true);
+        } else {
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            let _ = app.set_dock_visibility(false);
+        }
+    }
 
     let settings = snapshot_gui_settings(&state)?;
     save_gui_settings(&settings)?;
@@ -1345,6 +1415,7 @@ fn set_launch_settings(
     Ok(LaunchSettingsResponse {
         launch_at_login,
         silent_start,
+        show_dock_icon,
     })
 }
 
@@ -1472,8 +1543,8 @@ fn set_watch_roots_settings(
 }
 
 #[tauri::command]
-fn toggle_main_window(app: tauri::AppHandle) -> Result<bool, String> {
-    toggle_main_window_internal(&app)
+fn toggle_main_window(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    toggle_main_window_internal(&app, &state)
 }
 
 fn settings_menu_text() -> &'static str {
@@ -1496,6 +1567,13 @@ fn set_menu_language(_language: String, app: tauri::AppHandle) -> Result<(), Str
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Force Accessory policy BEFORE Tauri initializes NSApplication.
+    // This prevents Tauri's internal init from ever creating a Dock tile.
+    #[cfg(target_os = "macos")]
+    unsafe {
+        force_accessory_policy();
+    }
+
     let app = tauri::Builder::default()
         .menu(|app| {
             #[cfg(target_os = "macos")]
@@ -1606,11 +1684,41 @@ pub fn run() {
                     return;
                 }
                 api.prevent_close();
-                let _ = window.hide();
+                let app_handle = window.app_handle().clone();
+                let _ = hide_main_window_internal(&app_handle, &state);
             }
         })
         .manage(AppState::new())
         .setup(|app| {
+            // Set activation policy before Tauri shows the window.
+            // Window starts with visible=false in config to prevent
+            // Tauri from creating a Dock tile during init.
+            #[cfg(target_os = "macos")]
+            {
+                let show_dock = app
+                    .state::<AppState>()
+                    .show_dock_icon
+                    .lock()
+                    .map(|v| *v)
+                    .unwrap_or(false);
+                if show_dock {
+                    let _ = app
+                        .handle()
+                        .set_activation_policy(tauri::ActivationPolicy::Regular);
+                    let _ = app.handle().set_dock_visibility(true);
+                } else {
+                    let _ = app
+                        .handle()
+                        .set_activation_policy(tauri::ActivationPolicy::Accessory);
+                }
+                unsafe {
+                    set_dock_flag(show_dock);
+                    // Swizzle setActivationPolicy: to intercept any
+                    // attempt to create a Dock tile when hidden.
+                    install_policy_guard();
+                }
+            }
+
             let initial_shortcut = app
                 .state::<AppState>()
                 .window_toggle_shortcut
@@ -1643,8 +1751,11 @@ pub fn run() {
                 .unwrap_or(false);
             let _ = apply_launch_settings(launch_at_login);
 
-            if silent_start {
-                let _ = hide_main_window_internal(&app.handle().clone());
+            if !silent_start {
+                // Window was created with visible=false; show it now that
+                // the correct activation policy is in place.
+                let state = app.state::<AppState>();
+                let _ = show_main_window_internal(&app.handle().clone(), &state);
             }
 
             Ok(())
@@ -1695,8 +1806,18 @@ pub fn run() {
             has_visible_windows,
             ..
         } => {
-            if !has_visible_windows {
-                let _ = show_main_window_internal(app_handle);
+            let state = app_handle.state::<AppState>();
+            let show_dock = state
+                .show_dock_icon
+                .lock()
+                .map(|v| *v)
+                .unwrap_or(false);
+            if show_dock && !has_visible_windows {
+                let _ = show_main_window_internal(app_handle, &state);
+            } else if !show_dock {
+                // Re-assert Accessory in case macOS activation attempts
+                // to promote us to Regular (e.g. when launched from /Applications).
+                let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
         }
         _ => {}

@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import <QuickLookUI/QuickLookUI.h>
+#import <objc/runtime.h>
 #import <stdbool.h>
 #import <stddef.h>
 
@@ -137,6 +138,42 @@ bool open_quicklook(const char *const *paths, size_t len, size_t index) {
 
     return opened;
   }
+}
+
+static bool g_show_dock = false;
+static BOOL (*g_original_setActivationPolicy)(id, SEL, NSInteger) = NULL;
+
+static BOOL swizzled_setActivationPolicy(id self, SEL _cmd, NSInteger policy) {
+  if (!g_show_dock && policy == NSApplicationActivationPolicyRegular) {
+    return g_original_setActivationPolicy(self, _cmd,
+                                          NSApplicationActivationPolicyAccessory);
+  }
+  return g_original_setActivationPolicy(self, _cmd, policy);
+}
+
+void set_dock_flag(bool v) {
+  g_show_dock = v;
+}
+
+void install_policy_guard(void) {
+  if (g_original_setActivationPolicy != NULL) return;
+  Method m = class_getInstanceMethod([NSApplication class],
+                                     @selector(setActivationPolicy:));
+  g_original_setActivationPolicy =
+      (BOOL(*)(id, SEL, NSInteger))method_getImplementation(m);
+  method_setImplementation(m, (IMP)swizzled_setActivationPolicy);
+}
+
+bool force_accessory_policy(void) {
+  [NSApplication sharedApplication];
+  install_policy_guard();
+  [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+  return true;
+}
+
+bool activate_ignoring_other_apps(void) {
+  [NSApp activateIgnoringOtherApps:YES];
+  return true;
 }
 
 bool copy_files_to_clipboard(const char *const *paths, size_t len) {

@@ -119,6 +119,8 @@ const I18N = {
     startupLaunchAtLoginDesc: "登录 macOS 后自动启动 MacHunt。",
     startupSilentStart: "静默启动",
     startupSilentStartDesc: "开启后，启动应用时默认隐藏窗口，可随时用全局快捷键唤起。",
+    startupShowDockIcon: "显示程序坞图标",
+    startupShowDockIconDesc: "开启后，程序坞会显示 MacHunt 图标，方便通过点击图标切换窗口。",
     startupSaved: "启动设置已保存",
     startupSaving: "正在保存启动设置...",
     startupSaveFailed: "保存启动设置失败",
@@ -229,6 +231,8 @@ const I18N = {
     startupLaunchAtLoginDesc: "Start MacHunt automatically after signing in to macOS.",
     startupSilentStart: "Silent Startup",
     startupSilentStartDesc: "When enabled, app launches hidden; use the global shortcut to reveal it.",
+    startupShowDockIcon: "Show Dock Icon",
+    startupShowDockIconDesc: "When enabled, MacHunt icon appears in the Dock for easy window switching.",
     startupSaved: "Startup settings saved",
     startupSaving: "Saving startup settings...",
     startupSaveFailed: "Failed to save startup settings",
@@ -305,6 +309,7 @@ interface WatchResponse {
 interface LaunchSettingsResponse {
   launchAtLogin: boolean;
   silentStart: boolean;
+  showDockIcon: boolean;
 }
 
 interface AutoVacuumSettingsResponse {
@@ -730,6 +735,7 @@ function App() {
   const [isShortcutSaving, setIsShortcutSaving] = useState(false);
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [silentStart, setSilentStart] = useState(false);
+  const [showDockIcon, setShowDockIcon] = useState(false);
   const [isLaunchSettingsSaving, setIsLaunchSettingsSaving] = useState(false);
   const [launchSettingsStatus, setLaunchSettingsStatus] = useState("");
   const [autoVacuumOnRebuild, setAutoVacuumOnRebuild] = useState(true);
@@ -1152,6 +1158,7 @@ function App() {
         }
         setLaunchAtLogin(settings.launchAtLogin);
         setSilentStart(settings.silentStart);
+        setShowDockIcon(settings.showDockIcon);
       } catch (err) {
         if (!mounted) {
           return;
@@ -1636,7 +1643,7 @@ function App() {
     await applyWindowToggleShortcut(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
   };
 
-  const applyLaunchSettings = async (nextLaunchAtLogin: boolean, nextSilentStart: boolean) => {
+  const applyLaunchSettings = async (nextLaunchAtLogin: boolean, nextSilentStart: boolean, nextShowDockIcon: boolean) => {
     if (isLaunchSettingsSaving) {
       return;
     }
@@ -1646,10 +1653,12 @@ function App() {
     try {
       const saved = await invoke<LaunchSettingsResponse>("set_launch_settings", {
         launchAtLogin: nextLaunchAtLogin,
-        silentStart: nextSilentStart
+        silentStart: nextSilentStart,
+        showDockIcon: nextShowDockIcon
       });
       setLaunchAtLogin(saved.launchAtLogin);
       setSilentStart(saved.silentStart);
+      setShowDockIcon(saved.showDockIcon);
       setLaunchSettingsStatus(t.startupSaved);
     } catch (err) {
       setLaunchSettingsStatus(t.startupSaveFailed);
@@ -2498,7 +2507,7 @@ function App() {
                     aria-label={t.startupLaunchAtLogin}
                     className={launchAtLogin ? "mac-switch is-on" : "mac-switch"}
                     disabled={isLaunchSettingsSaving}
-                    onClick={() => void applyLaunchSettings(!launchAtLogin, silentStart)}
+                    onClick={() => void applyLaunchSettings(!launchAtLogin, silentStart, showDockIcon)}
                   >
                     <span className="mac-switch-knob" />
                   </button>
@@ -2515,7 +2524,24 @@ function App() {
                     aria-label={t.startupSilentStart}
                     className={silentStart ? "mac-switch is-on" : "mac-switch"}
                     disabled={isLaunchSettingsSaving}
-                    onClick={() => void applyLaunchSettings(launchAtLogin, !silentStart)}
+                    onClick={() => void applyLaunchSettings(launchAtLogin, !silentStart, showDockIcon)}
+                  >
+                    <span className="mac-switch-knob" />
+                  </button>
+                </label>
+                <label className="startup-toggle-row">
+                  <div className="startup-toggle-copy">
+                    <div className="startup-toggle-title">{t.startupShowDockIcon}</div>
+                    <div className="startup-toggle-desc">{t.startupShowDockIconDesc}</div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={showDockIcon}
+                    aria-label={t.startupShowDockIcon}
+                    className={showDockIcon ? "mac-switch is-on" : "mac-switch"}
+                    disabled={isLaunchSettingsSaving}
+                    onClick={() => void applyLaunchSettings(launchAtLogin, silentStart, !showDockIcon)}
                   >
                     <span className="mac-switch-knob" />
                   </button>
