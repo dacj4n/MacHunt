@@ -284,6 +284,7 @@ struct BuildEvent {
 struct WatchResponse {
     running: bool,
     mode: String,
+    code: String,
     message: String,
     last_event_id: Option<u64>,
 }
@@ -316,6 +317,11 @@ struct WatchRootsSettingsResponse {
 }
 
 fn watch_response(running: bool, mode: &str, last_event_id: Option<u64>) -> WatchResponse {
+    let code = if running {
+        "running"
+    } else {
+        "stopped"
+    };
     let message = if running {
         match last_event_id {
             Some(id) => format!("Watcher running (EventID {})", id),
@@ -328,6 +334,7 @@ fn watch_response(running: bool, mode: &str, last_event_id: Option<u64>) -> Watc
     WatchResponse {
         running,
         mode: mode.to_string(),
+        code: code.to_string(),
         message,
         last_event_id,
     }
@@ -1216,11 +1223,12 @@ async fn build_index(
 }
 
 #[tauri::command]
-fn start_watch_auto(state: tauri::State<'_, AppState>) -> WatchResponse {
+fn start_watch_auto(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> WatchResponse {
     if state.engine.is_watch_running() {
         return WatchResponse {
             running: true,
             mode: "active".to_string(),
+            code: "already_running".to_string(),
             message: "Watcher is already running".to_string(),
             last_event_id: state.engine.load_last_event_id(),
         };
@@ -1242,13 +1250,37 @@ fn start_watch_auto(state: tauri::State<'_, AppState>) -> WatchResponse {
             .auto_vacuum_on_rebuild
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _ = app.emit(
+            "index://build-status",
+            BuildEvent {
+                phase: "started".to_string(),
+                indexed: None,
+                took_ms: None,
+            },
+        );
         std::thread::spawn(move || {
+            let started = std::time::Instant::now();
             let _ = engine_bg.build_index(None, true, true, auto_vacuum_on_rebuild);
+            let indexed = engine_bg.load_index_from_db();
+            let took_ms = started.elapsed().as_millis() as u64;
+            let _ = app.emit(
+                "index://build-status",
+                BuildEvent {
+                    phase: "finished".to_string(),
+                    indexed: Some(indexed),
+                    took_ms: Some(took_ms),
+                },
+            );
+            println!(
+                "Bootstrap build finished: {} paths indexed in {} ms",
+                indexed, took_ms
+            );
         });
 
         return WatchResponse {
             running: true,
             mode: "bootstrap".to_string(),
+            code: "bootstrap".to_string(),
             message: "Watcher started; initial index build runs in background".to_string(),
             last_event_id: None,
         };
@@ -1260,6 +1292,7 @@ fn start_watch_auto(state: tauri::State<'_, AppState>) -> WatchResponse {
             WatchResponse {
                 running: true,
                 mode: "resume".to_string(),
+                code: "resume".to_string(),
                 message: format!("Watcher resumed from EventID {}", id),
                 last_event_id: Some(id),
             }
@@ -1270,6 +1303,7 @@ fn start_watch_auto(state: tauri::State<'_, AppState>) -> WatchResponse {
             WatchResponse {
                 running: true,
                 mode: "validate".to_string(),
+                code: "validate".to_string(),
                 message: "Watcher started with startup validation".to_string(),
                 last_event_id: None,
             }
@@ -1291,6 +1325,7 @@ fn stop_watch(state: tauri::State<'_, AppState>) -> WatchResponse {
         return WatchResponse {
             running: false,
             mode: "inactive".to_string(),
+            code: "not_running".to_string(),
             message: "Watcher is not running".to_string(),
             last_event_id: state.engine.load_last_event_id(),
         };
@@ -1305,6 +1340,7 @@ fn stop_watch(state: tauri::State<'_, AppState>) -> WatchResponse {
     WatchResponse {
         running: true,
         mode: "stopping".to_string(),
+        code: "stopping".to_string(),
         message: "Watcher is stopping...".to_string(),
         last_event_id: state.engine.load_last_event_id(),
     }

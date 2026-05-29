@@ -62,13 +62,18 @@ const I18N = {
     caseSensitive: "区分大小写",
     build: "构建",
     rebuild: "重建",
-    startWatch: "开始监听",
-    stopWatch: "停止监听",
+    buildStatusBuilding: "正在构建索引...",
+    buildStatusRebuilding: "正在重建索引...",
+    buildStatusFailed: "构建失败",
+    startWatch: "监听",
+    stopWatch: "停止",
     starting: "启动中...",
     stopping: "停止中...",
     tab_all: "全部",
     tab_files: "文件",
     tab_folders: "文件夹",
+    typeFile: "文件",
+    typeFolder: "文件夹",
     tab_documents: "文档",
     tab_images: "图片",
     tab_media: "音视频",
@@ -174,13 +179,18 @@ const I18N = {
     caseSensitive: "Case Sensitive",
     build: "Build",
     rebuild: "Rebuild",
-    startWatch: "Start Watch",
-    stopWatch: "Stop Watch",
+    buildStatusBuilding: "Building index...",
+    buildStatusRebuilding: "Rebuilding index...",
+    buildStatusFailed: "Build failed",
+    startWatch: "Watch",
+    stopWatch: "Stop",
     starting: "Starting...",
     stopping: "Stopping...",
     tab_all: "All",
     tab_files: "Files",
     tab_folders: "Folders",
+    typeFile: "File",
+    typeFolder: "Folder",
     tab_documents: "Documents",
     tab_images: "Images",
     tab_media: "Media",
@@ -302,6 +312,7 @@ interface BuildEvent {
 interface WatchResponse {
   running: boolean;
   mode: string;
+  code: string;
   message: string;
   lastEventId?: number;
 }
@@ -446,16 +457,15 @@ function iconToken(item: SearchResultItem): string {
   return "file";
 }
 
-function typeLabel(item: SearchResultItem, language: Language): string {
+function typeLabel(item: SearchResultItem, tFolder: string, tFile: string): string {
   if (item.isDir) {
-    return language === "zh" ? "文件夹" : "Folder";
+    return tFolder;
   }
-
   const ext = extensionOf(item.name);
   if (ext.length > 0) {
     return ext.toUpperCase();
   }
-  return language === "zh" ? "文件" : "File";
+  return tFile;
 }
 
 function typeSortKey(item: SearchResultItem): string {
@@ -766,8 +776,7 @@ function App() {
   const [indexed, setIndexed] = useState(0);
   const [totalFound, setTotalFound] = useState(0);
   const [tookMs, setTookMs] = useState(0);
-  const [buildStatus, setBuildStatus] = useState("Ready");
-  const [watchStatus, setWatchStatus] = useState("Watcher stopped");
+  const [buildStatus, setBuildStatus] = useState("");
   const [isWatchRunning, setIsWatchRunning] = useState(false);
   const [isWatchPending, setIsWatchPending] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -1234,9 +1243,6 @@ function App() {
           return;
         }
         setIndexed(initial.indexed);
-        if (!initial.hasIndex) {
-          setBuildStatus("Index missing. Click Build to create it.");
-        }
       } catch (err) {
         if (!mounted) {
           return;
@@ -1252,7 +1258,9 @@ function App() {
         const watch = await invoke<WatchResponse>("start_watch_auto");
         if (mounted) {
           setIsWatchRunning(watch.running);
-          setWatchStatus(watch.message);
+          if (watch.code === "bootstrap") {
+            setIsBuilding(true);
+          }
         }
       } catch (err) {
         if (mounted) {
@@ -1262,7 +1270,6 @@ function App() {
           const watch = await invoke<WatchResponse>("watch_status");
           if (mounted) {
             setIsWatchRunning(watch.running);
-            setWatchStatus(watch.message);
           }
         } catch {
           // Keep UI usable even if watcher state fetch fails.
@@ -1484,14 +1491,12 @@ function App() {
       const payload = event.payload;
       if (payload.phase === "started") {
         setIsBuilding(true);
-        setBuildStatus("Index building...");
       } else {
         setIsBuilding(false);
         if (typeof payload.indexed === "number") {
           setIndexed(payload.indexed);
         }
-        const took = typeof payload.tookMs === "number" ? ` in ${payload.tookMs} ms` : "";
-        setBuildStatus(`Index build finished${took}`);
+        setBuildStatus("");
       }
     })
       .then((dispose) => {
@@ -1578,7 +1583,7 @@ function App() {
     }
     setError(null);
     setIsBuilding(true);
-    setBuildStatus(rebuild ? "Rebuilding index..." : "Building index...");
+    setBuildStatus(rebuild ? t.buildStatusRebuilding : t.buildStatusBuilding);
     try {
       const result = await invoke<BuildResponse>("build_index", {
         path: pathPrefix.trim() || null,
@@ -1586,10 +1591,10 @@ function App() {
         includeDirs: true
       });
       setIndexed(result.indexed);
-      setBuildStatus(`Indexed ${result.indexed} paths in ${result.tookMs} ms`);
+      setBuildStatus("");
     } catch (err) {
       setError(String(err));
-      setBuildStatus("Build failed");
+      setBuildStatus(t.buildStatusFailed);
     } finally {
       setIsBuilding(false);
     }
@@ -1605,7 +1610,6 @@ function App() {
       const command = isWatchRunning ? "stop_watch" : "start_watch_auto";
       const status = await invoke<WatchResponse>(command);
       setIsWatchRunning(status.running);
-      setWatchStatus(status.message);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -2364,7 +2368,7 @@ function App() {
                           >
                             {item.parent}
                           </div>
-                          <div className="cell type-cell">{typeLabel(item, language)}</div>
+                          <div className="cell type-cell">{typeLabel(item, t.typeFolder, t.typeFile)}</div>
                           <div className="cell">{formatBytes(item.sizeBytes)}</div>
                           <div className="cell">{formatDate(item.modifiedUnixMs)}</div>
                         </article>
@@ -2379,7 +2383,6 @@ function App() {
               <div className="status-left">
                 <span>{formatIndexedItems(indexed)}</span>
                 <span>{buildStatus}</span>
-                <span>{watchStatus}</span>
               </div>
               <div className="status-right">
                 <span>{formatShownItems(totalFound)}</span>
