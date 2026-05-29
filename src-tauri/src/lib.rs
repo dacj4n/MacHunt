@@ -219,6 +219,7 @@ unsafe extern "C" {
     fn install_policy_guard();
     fn force_accessory_policy() -> bool;
     fn activate_ignoring_other_apps() -> bool;
+    fn deactivate_app() -> bool;
 }
 
 #[derive(Debug, Deserialize)]
@@ -392,6 +393,12 @@ fn hide_main_window_internal<R: tauri::Runtime>(
         if show_dock {
             let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let _ = app.set_dock_visibility(false);
+        } else {
+            // Accessory apps don't participate in normal activation;
+            // explicit deactivation returns focus to the previous app.
+            unsafe {
+                deactivate_app();
+            }
         }
     }
 

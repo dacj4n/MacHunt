@@ -171,8 +171,21 @@ bool force_accessory_policy(void) {
   return true;
 }
 
+static NSRunningApplication *g_previous_app = nil;
+
 bool activate_ignoring_other_apps(void) {
+  // Save the currently active app so we can restore focus later.
+  g_previous_app = [[NSWorkspace sharedWorkspace] frontmostApplication];
   [NSApp activateIgnoringOtherApps:YES];
+  return true;
+}
+
+bool deactivate_app(void) {
+  // Restore focus to whichever app was active before MacHunt took it.
+  if (g_previous_app != nil) {
+    [g_previous_app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+    g_previous_app = nil;
+  }
   return true;
 }
 
