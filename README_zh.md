@@ -6,28 +6,23 @@
 
 ## 版本
 
-- GUI：`v0.3.3`
-- CLI/Core：`v0.3.3`
+- GUI：`v0.4.0`
+- CLI/Core：`v0.4.0`
 
-## 最新更新（v0.3.3）
+## 最新更新（v0.4.0）
 
-- 默认全局快捷键从 `CmdOrCtrl+Shift+KeyF` 改为 `CmdOrCtrl+Shift+KeyD`。
-- 全新安装时预置默认排除目录模式：
-  - `/System/**`、`/private/var/**`、`/private/tmp/**` — 系统与私有目录
-  - `/.Spotlight-V100/**`、`/.fseventsd/**` — Spotlight 与 FSEvents 元数据
-  - `/dev/**`、`/proc/**` — 设备与进程虚拟文件系统
-
-- 修复多选删除bug：当选中多个结果后通过右键菜单执行”移到废纸篓”时，现在会遍历所有选中项逐一删除，而非仅删除右键目标项。
-- 优化搜索前空状态提示文字（”输入关键词开始搜索。” / “没有匹配结果。”）在结果区域中的居中显示，通过重构 table-shell 网格布局使文字在整块结果面板中完美居中。
-
-- 新增搜索结果原生文件对象复制能力：
-  - 支持单个/多个结果复制后直接在 Finder 或其他位置粘贴
-  - 右键菜单支持 `拷贝结果` / `拷贝所有结果`
-  - 选中结果后支持 `Cmd/Ctrl + C`
-  - 复制链路改为原生 `NSPasteboard`（不依赖 AppleScript）
-- 优化全局快捷键窗口切换行为：
-  - 当窗口可见但不在最上层/无焦点时，按快捷键会优先拉到前台
-  - 仅当窗口已可见且已聚焦时，才执行隐藏
+- Dock 图标架构重构：App 默认以 Accessory（后台代理）模式启动，无 Dock 图标。
+  设置中新增”显示程序坞图标”开关。通过 swizzle `setActivationPolicy:` 拦截所有
+  Regular 策略调用，确保关闭开关时 Dock 不会被任何代码意外创建。
+- 数据目录迁移至 macOS 标准路径：
+  - 设置：`~/Library/Application Support/MacHunt/`
+  - 索引/缓存：`~/Library/Caches/MacHunt/`
+- 构建/重构统一为 temp DB + atomic rename：300万文件均 ~7.5 秒完成
+  （此前增量构建需 ~40 秒），不再需要 DELETE/VACUUM 操作。
+- 状态栏完整支持中英文 i18n，删除冗余提示，后台构建期间构建/重构按钮自动禁用。
+- 搜索界面新增设置按钮，隐藏 Dock 后无需菜单栏即可进入设置页。
+- Accessory 模式下隐藏窗口后焦点自动归还上一个 App。
+- 修复窗口关闭按钮（红色 X）的激活策略清理问题。
 
 - 修复 macOS 分卷镜像路径导致的重复搜索结果问题（`/Volumes/System`、`/Volumes/Macintosh HD`）。
 - 索引架构升级为”持续增量优先”：
@@ -37,6 +32,27 @@
   - 新增 dirty-root 局部重建后台线程
   - 启动死路径校验改为分片后台巡检
 - 设置页新增 Watch Roots（监听根目录）配置，支持增删与 Finder 选取并持久化。
+
+## 文件搜索工具对比
+
+| | MacHunt | macOS 聚焦 | Raycast | uTools |
+|---|---|---|---|---|
+| **全文件系统扫描** | 是（300万文件 ~7.5s） | 是（通过 `mdfind`） | 文件搜索插件 | 插件形式 |
+| **搜索延迟** | 10–400ms | 50–200ms+ | 视插件 | 视插件 |
+| **索引格式** | SQLite（开放、可审计） | 私有格式 | 私有格式 | N/A |
+| **CLI** | 是（`machunt`） | 是（`mdfind`） | 否 | 否 |
+| **原生 GUI** | 是（Tauri） | 系统内建 | 是（Electron） | 是（Electron） |
+| **增量更新** | FSEvents | FSEvents | 视情况 | N/A |
+| **排除/监听目录配置** | 是（GUI + JSON） | 有限（系统偏好设置） | 否 | 否 |
+| **程序坞可选** | 是（开关） | N/A | 否 | 否 |
+| **开源** | 是 | 否 | 否 | 部分 |
+
+**MacHunt 的核心优势：**
+
+- **全文件索引速度快** — 300 万文件约 7.5 秒完成全量构建，得益于 temp DB + atomic swap 架构和 FSEvents 增量更新。
+- **搜索准确迅速** — 内存索引直接命中，延迟 10–400ms（取决于系统和磁盘），不受网络或第三方服务影响。
+- **配置透明** — 索引格式为标准 SQLite 数据库，可审计、可查询；排除目录、监听根目录等配置均为 JSON 文件，路径公开可查。
+- **完全开源** — 不依赖私有服务，所有代码可审查、可自行构建。
 
 ## 核心能力
 
@@ -155,20 +171,6 @@ npm run tauri build
 - 会先执行 `src-tauri/tauri.conf.json` 中的 `beforeBuildCommand`（当前为 `npm run build`）
 - 会编译 `src-tauri/` 下的 Rust 代码
 - 最终输出可安装产物（如 `.app` / `.dmg`）
-
-## 图标生成（Tauri）
-
-可通过以下命令，用一张 1024 图生成多尺寸图标资源：
-
-```bash
-npm run tauri icon src-tauri/icons/app-icon-1024.png
-```
-
-说明：
-
-- 建议输入图片为正方形，最佳为 `1024x1024`。
-- 命令会在 `src-tauri/icons/` 下生成各平台需要的图标文件。
-- 之后执行 `npm run tauri build` 时，会自动打包这些图标（依据 `src-tauri/tauri.conf.json` 的 icon 配置）。
 
 ## CLI 参数速查
 

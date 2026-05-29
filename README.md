@@ -6,28 +6,27 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 
 ## Version
 
-- GUI: `v0.3.3`
-- CLI/Core: `v0.3.3`
+- GUI: `v0.4.0`
+- CLI/Core: `v0.4.0`
 
-## Latest Updates (v0.3.3)
+## Latest Updates (v0.4.0)
 
-- Default global shortcut changed from `CmdOrCtrl+Shift+KeyF` to `CmdOrCtrl+Shift+KeyD`.
-- Default exclude-pattern directories on fresh install:
-  - `/System/**`, `/private/var/**`, `/private/tmp/**` — macOS system & private directories
-  - `/.Spotlight-V100/**`, `/.fseventsd/**` — Spotlight & FSEvents metadata
-  - `/dev/**`, `/proc/**` — device & process virtual filesystems
-
-- Fixed multi-select trash action: when deleting via right-click context menu with multiple items selected, all selected items are now moved to trash instead of only the context-menu target.
-- Improved centering of empty-state placeholder text ("Type a keyword to start searching." / "No matching files found.") in the results area by restructuring the table-shell grid layout.
-
-- Added native macOS file-object copy from search results:
-  - copy single or multiple results and paste directly in Finder/other locations
-  - supports right-click `Copy Result` / `Copy All Results`
-  - supports keyboard `Cmd/Ctrl + C` on selected results
-  - implemented with native `NSPasteboard` (no AppleScript path)
-- Refined global shortcut window toggle behavior:
-  - if window is visible but not focused/topmost, shortcut now brings it to front first
-  - only hides when the window is already visible and focused
+- Dock icon redesign: app now starts as a background agent (Accessory) with no Dock tile.
+  Added a "Show Dock Icon" toggle in Settings for users who prefer a persistent Dock icon.
+  Uses method swizzling on `setActivationPolicy:` to prevent any internal code from
+  creating a Dock tile when the option is off.
+- Data directories migrated to macOS-standard locations:
+  - settings: `~/Library/Application Support/MacHunt/`
+  - index/cache: `~/Library/Caches/MacHunt/`
+- Build/rebuild unified with temp DB + atomic rename: both complete in ~7.5s for 3M files
+  (previous incremental build ~40s). No more DELETE FROM overhead, no VACUUM needed.
+- Status bar fully i18n-aware (Chinese/English); removed redundant prompts;
+  build/rebuild buttons protected during background bootstrap.
+- Added Settings button in the search window toolbar — no longer requires the menu bar
+  (important when Dock is hidden, as the menu bar is also absent).
+- Focus restoration: when hiding the window in Accessory mode, focus now returns to the
+  previously active app.
+- Fixed window close button (red X) properly handling activation policy cleanup.
 
 - Fixed duplicate search results caused by macOS volume mirror paths (`/Volumes/System` and `/Volumes/Macintosh HD`).
 - Upgraded index architecture to "continuous incremental first":
@@ -37,6 +36,27 @@ A fully local macOS search tool for files and folders, with both CLI and native 
   - dirty-root partial reindex worker added
   - startup dead-path cleanup is now chunked background scan
 - Added GUI settings for watch roots (add/remove + Finder picker + persistence).
+
+## File Search Comparison
+
+| | MacHunt | macOS Spotlight | Raycast | uTools |
+|---|---|---|---|---|
+| **Full filesystem scan** | Yes (~7.5s / 3M files) | Yes (via `mdfind`) | File search plugin | Plugin-based |
+| **Search latency** | 10–400ms | 50–200ms+ | Varies by plugin | Varies by plugin |
+| **Index format** | SQLite (open, inspectable) | Proprietary | Proprietary | N/A |
+| **CLI** | Yes (`machunt`) | Yes (`mdfind`) | No | No |
+| **Native GUI** | Yes (Tauri) | Built-in | Yes (Electron) | Yes (Electron) |
+| **Incremental updates** | FSEvents | FSEvents | Varies | N/A |
+| **Exclude / watch config** | Yes (GUI + JSON) | Limited (System Prefs) | No | No |
+| **Dock optional** | Yes (toggle) | N/A | No | No |
+| **Open source** | Yes | No | No | Partially |
+
+**Why MacHunt:**
+
+- **Fast full-file indexing** — full rebuild in ~7.5s for 3 million files, using a temp-DB + atomic-swap architecture with FSEvents incremental updates.
+- **Accurate, low-latency search** — in-memory index hits directly; 10–400ms per query depending on system and disk, with no network or third-party dependency.
+- **Transparent configuration** — the index is a standard SQLite database (open and inspectable). All settings (excluded dirs, watch roots, etc.) are plain JSON files at known paths.
+- **Open source** — no proprietary services, fully auditable, build from source.
 
 ## Core Capabilities
 
@@ -155,20 +175,6 @@ npm run tauri build
 - Runs `beforeBuildCommand` in `src-tauri/tauri.conf.json` first (currently `npm run build`)
 - Compiles Rust code under `src-tauri/`
 - Generates installable artifacts such as `.app` / `.dmg`
-
-## App Icon Generation (Tauri)
-
-Use the following command to generate multi-size app icons from a 1024x1024 source image:
-
-```bash
-npm run tauri icon src-tauri/icons/app-icon-1024.png
-```
-
-Notes:
-
-- The source image should be square, preferably `1024x1024`.
-- This command generates platform icon assets under `src-tauri/icons/`.
-- After regeneration, `npm run tauri build` will bundle the updated icons automatically (as referenced by `src-tauri/tauri.conf.json`).
 
 ## CLI Reference
 
