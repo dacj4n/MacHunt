@@ -1591,6 +1591,11 @@ fn toggle_main_window(app: tauri::AppHandle, state: tauri::State<'_, AppState>) 
     toggle_main_window_internal(&app, &state)
 }
 
+#[tauri::command]
+fn get_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 fn settings_menu_text() -> &'static str {
     "Preferences"
 }
@@ -1834,7 +1839,8 @@ pub fn run() {
             set_exclude_dir_settings,
             get_watch_roots_settings,
             set_watch_roots_settings,
-            toggle_main_window
+            toggle_main_window,
+            get_version
         ])
         .build(tauri::generate_context!())
         .expect("error while building Tauri application");

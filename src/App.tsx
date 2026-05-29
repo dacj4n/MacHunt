@@ -93,6 +93,7 @@ const I18N = {
     indexedItems: "已索引 {count} 项",
     shownItems: "显示 {count} 项",
     searching: "搜索中...",
+    versionLabel: "版本",
     settingsTitle: "设置",
     settingsDesc: "主题和语言配置会立即生效并自动保存。",
     backToSearch: "返回搜索",
@@ -210,6 +211,7 @@ const I18N = {
     indexedItems: "{count} items indexed",
     shownItems: "{count} items shown",
     searching: "Searching...",
+    versionLabel: "Version",
     settingsTitle: "Settings",
     settingsDesc: "Theme and language changes apply immediately and are saved.",
     backToSearch: "Back to Search",
@@ -774,6 +776,7 @@ function App() {
 
   const [items, setItems] = useState<SearchResultItem[]>([]);
   const [indexed, setIndexed] = useState(0);
+  const [appVersion, setAppVersion] = useState("");
   const [totalFound, setTotalFound] = useState(0);
   const [tookMs, setTookMs] = useState(0);
   const [buildStatus, setBuildStatus] = useState("");
@@ -1243,6 +1246,10 @@ function App() {
           return;
         }
         setIndexed(initial.indexed);
+        try {
+          const v = await invoke<string>("get_version");
+          if (mounted) setAppVersion(v);
+        } catch { /* ignore */ }
       } catch (err) {
         if (!mounted) {
           return;
@@ -2396,6 +2403,7 @@ function App() {
               <div>
                 <h2>{t.settingsTitle}</h2>
                 <p>{t.settingsDesc}</p>
+                {appVersion && <p className="version-text">{t.versionLabel}: v{appVersion}</p>}
               </div>
               <button className="action-btn primary" onClick={() => setActiveView("search")}>
                 {t.backToSearch}
