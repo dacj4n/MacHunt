@@ -154,6 +154,22 @@ fn remove_tree(ctx: &WatchContext, root: &Path) {
     }
 }
 
+/// On rename events, clean up stale DB entries in the parent directory.
+/// APFS may not send a REMOVED event for the old name, leaving dead paths.
+fn clean_dead_in_dir(ctx: &WatchContext, dir: &Path) {
+    let dir_str = dir.to_string_lossy();
+    let rows = ctx.db.list_files_in_dir(&dir_str);
+    for (name, full_path) in rows {
+        let p = Path::new(&full_path);
+        if !p.exists() {
+            ctx.db.delete_by_dir_and_name(&dir_str, &name);
+            if ctx.logger.enabled() {
+                ctx.logger.log(&format!("[-] stale rename {}", full_path));
+            }
+        }
+    }
+}
+
 fn index_directory(ctx: &WatchContext, root: &Path) {
     if should_skip_path(root) {
         return;
@@ -235,6 +251,17 @@ unsafe extern "C" fn fsevent_callback(
         if flags & FLAG_ITEM_REMOVED != 0 {
             remove_file(ctx, path.as_path());
             continue;
+        }
+
+        let is_create = flags & FLAG_ITEM_CREATED != 0;
+        let is_rename = flags & FLAG_ITEM_RENAMED != 0;
+
+        if is_rename && !is_create {
+            // Pure rename: APFS may not send REMOVED for the old name.
+            // Clean up any stale entries in the parent directory.
+            if let Some(parent) = path.parent() {
+                clean_dead_in_dir(ctx, parent);
+            }
         }
 
         if flags & (FLAG_ITEM_CREATED | FLAG_ITEM_RENAMED | FLAG_ITEM_MODIFIED) != 0 {
