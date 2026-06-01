@@ -70,12 +70,12 @@ pub fn wildcard_to_regex(pattern: &str) -> Result<Regex, regex::Error> {
                     regex_pattern.push_str(".*");
                     i += 2;
                 } else {
-                    regex_pattern.push_str(".*");
+                    regex_pattern.push_str("[^/]*");
                     i += 1;
                 }
             }
             '?' => {
-                regex_pattern.push('.');
+                regex_pattern.push_str("[^/]");
                 i += 1;
             }
             c => {

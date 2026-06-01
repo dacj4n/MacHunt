@@ -139,6 +139,7 @@ const I18N = {
     autoVacuumSaveFailed: "保存索引维护设置失败",
     excludeDirsTitle: "排除目录",
     excludeDirsDesc: "这些规则会在构建/重建索引时跳过匹配目录。支持完整目录和正则（同时兼容 * 通配符）。",
+    excludeWildcardHint: "* 仅匹配单层目录，** 匹配所有层级。例如 /Volumes/* 只跳过一级，/Volumes/** 跳过全部。",
     watchRootsTitle: "监听根目录",
     watchRootsDesc: "Watcher 只监听这些根路径，减少事件噪音并提升增量索引效率。",
     watchRootsInputPlaceholder: "例如：/Users",
@@ -257,6 +258,7 @@ const I18N = {
     autoVacuumSaveFailed: "Failed to save index maintenance setting",
     excludeDirsTitle: "Excluded Directories",
     excludeDirsDesc: "These rules are applied during build/rebuild to skip matching directories. Supports exact paths and regex (also accepts * wildcards).",
+    excludeWildcardHint: "* matches only one directory level, ** matches all levels. e.g. /Volumes/* skips one level, /Volumes/** skips everything under.",
     watchRootsTitle: "Watch Roots",
     watchRootsDesc: "Watcher listens only to these root paths to reduce event noise and improve incremental indexing efficiency.",
     watchRootsInputPlaceholder: "Example: /Users",
@@ -2662,6 +2664,7 @@ function App() {
             <article className="settings-card">
               <h3>{t.excludeDirsTitle}</h3>
               <p className="shortcut-desc">{t.excludeDirsDesc}</p>
+              <p className="exclude-wildcard-hint">{t.excludeWildcardHint}</p>
               <div className="exclude-rule-editor">
                 <label className="exclude-rule-type">
                   <span>{t.excludeRuleType}</span>

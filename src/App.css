@@ -893,6 +893,12 @@ body {
   font-size: 12px;
 }
 
+.exclude-wildcard-hint {
+  margin: -6px 0 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .shortcut-editor {
   display: grid;
   gap: 10px;
