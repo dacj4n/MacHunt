@@ -29,14 +29,6 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 - **SQLite pragma tuning**: `mmap_size` 256→32 MB, `cache_size` 64→8 MB, reducing
   backend memory while maintaining sub-millisecond search latency.
 
-## v0.4.0 Changes
-
-- Dock icon redesign with Accessory mode and method swizzling.
-- Data directories migrated to macOS-standard paths.
-- Build/rebuild unified with temp DB + atomic rename (~7.5s for 3M files).
-- Settings button in toolbar, focus restoration, i18n status bar.
-- Configurable watch roots, unified exclude rules, dirty-root reindex worker.
-
 ## File Search Comparison
 
 | | MacHunt | macOS Spotlight | Raycast | uTools |

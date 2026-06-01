@@ -23,10 +23,6 @@
 - **CFString 内存泄漏**：修复 FSEvents 流创建时的 Core Foundation 引用泄漏。
 - **SQLite 参数调优**：`mmap_size` 256→32 MB，`cache_size` 64→8 MB。
 
-## v0.4.0 更新
-
-- Dock 图标 Accessory 模式、数据目录迁移、构建优化、设置按钮、焦点归还等。
-
 ## 文件搜索工具对比
 
 | | MacHunt | macOS 聚焦 | Raycast | uTools |
@@ -44,7 +40,7 @@
 
 **MacHunt 的核心优势：**
 
-- **搜索迅速** — SQLite FTS5 trigram 索引，常规查询 <5ms，无需内存索引。
+- **搜索迅速** — SQLite FTS5 trigram 索引，常规查询 5<ms，无需内存索引。
 - **资源占用低** — 总计 ~200 MB（后端 ~70 MB + WebView）。App Nap 开启，空闲 CPU 接近零。
 - **CLI 完整** — `machunt search` 支持子串、通配符、模糊搜索和 JSON 输出。
 - **配置透明** — 标准 SQLite 数据库，可审计、可查询。配置均为 JSON 文件。
