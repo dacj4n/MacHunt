@@ -6,52 +6,48 @@
 
 ## 版本
 
-- GUI：`v0.4.0`
-- CLI/Core：`v0.4.0`
+- GUI：`v0.4.1`
+- CLI/Core：`v0.4.1`
 
-## 最新更新（v0.4.0）
+## 最新更新（v0.4.1）
 
-- Dock 图标架构重构：App 默认以 Accessory（后台代理）模式启动，无 Dock 图标。
-  设置中新增”显示程序坞图标”开关。通过 swizzle `setActivationPolicy:` 拦截所有
-  Regular 策略调用，确保关闭开关时 Dock 不会被任何代码意外创建。
-- 数据目录迁移至 macOS 标准路径：
-  - 设置：`~/Library/Application Support/MacHunt/`
-  - 索引/缓存：`~/Library/Caches/MacHunt/`
-- 构建/重构统一为 temp DB + atomic rename：300万文件均 ~7.5 秒完成
-  （此前增量构建需 ~40 秒），不再需要 DELETE/VACUUM 操作。
-- 状态栏完整支持中英文 i18n，删除冗余提示，后台构建期间构建/重构按钮自动禁用。
-- 搜索界面新增设置按钮，隐藏 Dock 后无需菜单栏即可进入设置页。
-- Accessory 模式下隐藏窗口后焦点自动归还上一个 App。
-- 修复窗口关闭按钮（红色 X）的激活策略清理问题。
+- **性能大幅优化**：移除内存 `DashMap` 索引（为每个文件存储完整路径），
+  替换为 SQLite FTS5 trigram 搜索。内存从 ~1.0 GB 降至 ~200 MB，CPU 从 96% 降至 ~30%。
+  移除 dirty-root 轮询线程，改为事件驱动，App Nap 可正常开启，空闲 CPU 接近零。
+- **CLI `search` 子命令**：`machunt search “关键词”` 子串搜索，
+  `-p “*.rs”` 通配符搜索，`--json` JSON 输出，`-P` 路径过滤，`-n` 限制结果数。
+- **模糊搜索**：`machunt search -F “redme”` 可找到 “README”（Levenshtein 编辑距离容错）。
+- **APFS 重命名处理**：修复 APFS 上文件重命名后旧路径残留问题。
+- **通配符规则统一**：单 `*` 统一为不跨目录（`**` 跨目录），排除规则与搜索规则一致。
+  设置页新增通配符提示。
+- **CFString 内存泄漏**：修复 FSEvents 流创建时的 Core Foundation 引用泄漏。
+- **SQLite 参数调优**：`mmap_size` 256→32 MB，`cache_size` 64→8 MB。
 
-- 修复 macOS 分卷镜像路径导致的重复搜索结果问题（`/Volumes/System`、`/Volumes/Macintosh HD`）。
-- 索引架构升级为”持续增量优先”：
-  - watcher 支持可配置多根监听
-  - build/watch 使用统一排除规则语义
-  - 全量构建改为单通道写入（扫描时同步写 DB 与内存）
-  - 新增 dirty-root 局部重建后台线程
-  - 启动死路径校验改为分片后台巡检
-- 设置页新增 Watch Roots（监听根目录）配置，支持增删与 Finder 选取并持久化。
+## v0.4.0 更新
+
+- Dock 图标 Accessory 模式、数据目录迁移、构建优化、设置按钮、焦点归还等。
 
 ## 文件搜索工具对比
 
 | | MacHunt | macOS 聚焦 | Raycast | uTools |
 |---|---|---|---|---|
-| **全文件系统扫描** | 是（300万文件 ~7.5s） | 是（通过 `mdfind`） | 文件搜索插件 | 插件形式 |
-| **搜索延迟** | 10–400ms | 50–200ms+ | 视插件 | 视插件 |
-| **索引格式** | SQLite（开放、可审计） | 私有格式 | 私有格式 | N/A |
-| **CLI** | 是（`machunt`） | 是（`mdfind`） | 否 | 否 |
+| **全文件系统扫描** | 是（300万文件 ~10s） | 是（通过 `mdfind`） | 文件搜索插件 | 插件形式 |
+| **搜索延迟** | <5ms（FTS5 trigram） | 50–200ms+ | 视插件 | 视插件 |
+| **索引格式** | SQLite FTS5（开放、可审计） | 私有格式 | 私有格式 | N/A |
+| **CLI** | 是（`machunt search`） | 是（`mdfind`） | 否 | 否 |
 | **原生 GUI** | 是（Tauri） | 系统内建 | 是（Electron） | 是（Electron） |
+| **模糊搜索** | 是（Levenshtein） | 部分 | 否 | 否 |
 | **增量更新** | FSEvents | FSEvents | 视情况 | N/A |
-| **排除/监听目录配置** | 是（GUI + JSON） | 有限（系统偏好设置） | 否 | 否 |
+| **排除/监听目录配置** | 是（GUI + 通配符） | 有限（系统偏好设置） | 否 | 否 |
 | **程序坞可选** | 是（开关） | N/A | 否 | 否 |
 | **开源** | 是 | 否 | 否 | 部分 |
 
 **MacHunt 的核心优势：**
 
-- **全文件索引速度快** — 300 万文件约 7.5 秒完成全量构建，得益于 temp DB + atomic swap 架构和 FSEvents 增量更新。
-- **搜索准确迅速** — 内存索引直接命中，延迟 10–400ms（取决于系统和磁盘），不受网络或第三方服务影响。
-- **配置透明** — 索引格式为标准 SQLite 数据库，可审计、可查询；排除目录、监听根目录等配置均为 JSON 文件，路径公开可查。
+- **搜索迅速** — SQLite FTS5 trigram 索引，常规查询 <5ms，无需内存索引。
+- **资源占用低** — 总计 ~200 MB（后端 ~70 MB + WebView）。App Nap 开启，空闲 CPU 接近零。
+- **CLI 完整** — `machunt search` 支持子串、通配符、模糊搜索和 JSON 输出。
+- **配置透明** — 标准 SQLite 数据库，可审计、可查询。配置均为 JSON 文件。
 - **完全开源** — 不依赖私有服务，所有代码可审查、可自行构建。
 
 ## 核心能力
@@ -59,9 +55,13 @@
 ### CLI
 
 - 本地索引构建/重建
-- 子串与通配符搜索
-- 文件/文件夹类型筛选
-- 路径前缀过滤
+- `search` 子命令：子串、通配符、模糊搜索 + JSON 输出
+- 子串搜索（`machunt search "关键词"`）
+- 通配符搜索（`machunt search -p "*.rs"`）
+- 模糊/容错搜索（`machunt search -F "redme"` 可找到 "README"）
+- JSON 输出（`machunt search --json "关键词"`）
+- 文件/文件夹类型筛选（`-f` / `-d`）
+- 路径前缀过滤（`-P ~/projects`）
 - FSEvents 增量监听（`watch`）
 - 索引维护（`optimize --vacuum`）
 
@@ -108,8 +108,7 @@
 - GUI 前端：React 18 + TypeScript + Vite
 - GUI 容器：Tauri 2
 - 全局快捷键：`tauri-plugin-global-shortcut`
-- 存储：SQLite（`rusqlite`，WAL）
-- 内存索引：`DashMap<String, Vec<PathBuf>>`
+- 存储：SQLite FTS5（`rusqlite`，WAL，trigram tokenizer）
 - 扫描：WalkDir + Crossbeam
 - 监听：macOS FSEvents（CoreServices）
 
@@ -177,25 +176,26 @@ npm run tauri build
 总体语法：
 
 ```bash
-machunt [OPTIONS] [QUERY] [COMMAND]
+machunt <COMMAND>
 ```
 
-顶层参数：
-
-- `-p, --path <PATH>`：路径前缀过滤（`.` 表示不过滤）
-- `-r, --regex`：通配符搜索模式
-- `--folder`：仅目录
-- `--file`：仅文件
-- `--logs`：输出日志到 `~/Library/Caches/MacHunt/logs`
-- `[QUERY]`：不带子命令时的查询关键词
-
-筛选规则：
-
-- 未传 `--file` 且未传 `--folder`：同时搜索文件和文件夹
-- 仅 `--file`：只搜索文件
-- 仅 `--folder`：只搜索目录
-
 子命令：
+
+### `search`
+
+```bash
+machunt search [OPTIONS] <QUERY>
+```
+
+- `<QUERY>`：搜索关键词
+- `-p, --pattern`：通配符/正则模式（`*.rs`、`test?.txt`）
+- `-F, --fuzzy`：模糊/容错搜索（Levenshtein 编辑距离）
+- `-c, --case-sensitive`：区分大小写
+- `-n, --limit <N>`：最大结果数（默认 100）
+- `-P, --path <PATH>`：路径前缀过滤
+- `-f, --files`：仅文件
+- `-d, --dirs`：仅目录
+- `--json`：JSON 输出
 
 ### `build`
 
@@ -226,11 +226,11 @@ machunt optimize [--vacuum]
 - 默认执行 WAL checkpoint
 - 可选 `--vacuum` 回收 DB 文件空间
 
-通配符规则（`--regex`）：
+通配符规则（`--pattern`）：
 
-- `*`：匹配任意字符（不含 `/`）
-- `**`：匹配任意字符（可含 `/`）
-- `?`：匹配单个字符（不含 `/`）
+- `*`：匹配任意字符不含 `/`（单层目录）
+- `**`：匹配任意字符含 `/`（所有层级）
+- `?`：匹配单个字符不含 `/`
 - `{a,b}`：匹配 `a` 或 `b`
 
 ## 运行时数据位置

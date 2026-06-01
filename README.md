@@ -6,56 +6,58 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 
 ## Version
 
-- GUI: `v0.4.0`
-- CLI/Core: `v0.4.0`
+- GUI: `v0.4.1`
+- CLI/Core: `v0.4.1`
 
-## Latest Updates (v0.4.0)
+## Latest Updates (v0.4.1)
 
-- Dock icon redesign: app now starts as a background agent (Accessory) with no Dock tile.
-  Added a "Show Dock Icon" toggle in Settings for users who prefer a persistent Dock icon.
-  Uses method swizzling on `setActivationPolicy:` to prevent any internal code from
-  creating a Dock tile when the option is off.
-- Data directories migrated to macOS-standard locations:
-  - settings: `~/Library/Application Support/MacHunt/`
-  - index/cache: `~/Library/Caches/MacHunt/`
-- Build/rebuild unified with temp DB + atomic rename: both complete in ~7.5s for 3M files
-  (previous incremental build ~40s). No more DELETE FROM overhead, no VACUUM needed.
-- Status bar fully i18n-aware (Chinese/English); removed redundant prompts;
-  build/rebuild buttons protected during background bootstrap.
-- Added Settings button in the search window toolbar — no longer requires the menu bar
-  (important when Dock is hidden, as the menu bar is also absent).
-- Focus restoration: when hiding the window in Accessory mode, focus now returns to the
-  previously active app.
-- Fixed window close button (red X) properly handling activation policy cleanup.
+- **Major performance overhaul**: Replaced in-memory `DashMap` index (which stored
+  full paths for every file) with SQLite FTS5 trigram search. Memory usage dropped from
+  ~1.0 GB to ~200 MB, CPU from 96% to ~30%. The dirty-root polling worker was
+  replaced with an event-driven design, enabling App Nap and near-zero idle CPU.
+- **CLI `search` subcommand**: `machunt search "keyword"` for substring search,
+  `-p "*.rs"` for wildcard patterns, `--json` for structured output, `-P` for path
+  filtering, `-n` for result limit.
+- **Fuzzy search**: `machunt search "redme" -F` finds "README" with typo tolerance
+  (Levenshtein edit distance). Also available in GUI via regex+pattern mode.
+- **APFS rename handling**: Fixed stale index entries when files are renamed on APFS.
+  The watcher now cleans up the old path when only a RENAMED event is received.
+- **Wildcard consistency**: Single `*` now consistently means "within one directory"
+  in both search patterns and exclude rules (`**` for cross-directory).
+- **CFString memory leak**: Fixed a Core Foundation reference leak in the FSEvents
+  stream setup.
+- **SQLite pragma tuning**: `mmap_size` 256→32 MB, `cache_size` 64→8 MB, reducing
+  backend memory while maintaining sub-millisecond search latency.
 
-- Fixed duplicate search results caused by macOS volume mirror paths (`/Volumes/System` and `/Volumes/Macintosh HD`).
-- Upgraded index architecture to "continuous incremental first":
-  - watcher supports configurable multi-root monitoring
-  - build/watch now share unified exclude rule semantics
-  - full build writes DB + in-memory index in a single pass (removed post-build full reload)
-  - dirty-root partial reindex worker added
-  - startup dead-path cleanup is now chunked background scan
-- Added GUI settings for watch roots (add/remove + Finder picker + persistence).
+## v0.4.0 Changes
+
+- Dock icon redesign with Accessory mode and method swizzling.
+- Data directories migrated to macOS-standard paths.
+- Build/rebuild unified with temp DB + atomic rename (~7.5s for 3M files).
+- Settings button in toolbar, focus restoration, i18n status bar.
+- Configurable watch roots, unified exclude rules, dirty-root reindex worker.
 
 ## File Search Comparison
 
 | | MacHunt | macOS Spotlight | Raycast | uTools |
 |---|---|---|---|---|
-| **Full filesystem scan** | Yes (~7.5s / 3M files) | Yes (via `mdfind`) | File search plugin | Plugin-based |
-| **Search latency** | 10–400ms | 50–200ms+ | Varies by plugin | Varies by plugin |
-| **Index format** | SQLite (open, inspectable) | Proprietary | Proprietary | N/A |
-| **CLI** | Yes (`machunt`) | Yes (`mdfind`) | No | No |
+| **Full filesystem scan** | Yes (~10s / 3M files) | Yes (via `mdfind`) | File search plugin | Plugin-based |
+| **Search latency** | <5ms (FTS5 trigram) | 50–200ms+ | Varies by plugin | Varies by plugin |
+| **Index format** | SQLite FTS5 (open, inspectable) | Proprietary | Proprietary | N/A |
+| **CLI** | Yes (`machunt search`) | Yes (`mdfind`) | No | No |
 | **Native GUI** | Yes (Tauri) | Built-in | Yes (Electron) | Yes (Electron) |
+| **Fuzzy search** | Yes (Levenshtein) | Partial | No | No |
 | **Incremental updates** | FSEvents | FSEvents | Varies | N/A |
-| **Exclude / watch config** | Yes (GUI + JSON) | Limited (System Prefs) | No | No |
+| **Exclude / watch config** | Yes (GUI + wildcard) | Limited (System Prefs) | No | No |
 | **Dock optional** | Yes (toggle) | N/A | No | No |
 | **Open source** | Yes | No | No | Partially |
 
 **Why MacHunt:**
 
-- **Fast full-file indexing** — full rebuild in ~7.5s for 3 million files, using a temp-DB + atomic-swap architecture with FSEvents incremental updates.
-- **Accurate, low-latency search** — in-memory index hits directly; 10–400ms per query depending on system and disk, with no network or third-party dependency.
-- **Transparent configuration** — the index is a standard SQLite database (open and inspectable). All settings (excluded dirs, watch roots, etc.) are plain JSON files at known paths.
+- **Fast search** — SQLite FTS5 trigram index with sub-5ms latency for typical queries. No in-memory index needed.
+- **Low footprint** — ~200 MB total (backend ~70 MB + WebView). App Nap enabled, near-zero idle CPU.
+- **Full CLI** — `machunt search` with substring, wildcard, fuzzy, and JSON output modes.
+- **Transparent configuration** — standard SQLite database, open and inspectable. Plain JSON settings.
 - **Open source** — no proprietary services, fully auditable, build from source.
 
 ## Core Capabilities
@@ -63,9 +65,13 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 ### CLI
 
 - Build / rebuild local index
-- Search by substring or wildcard pattern
-- File-only / folder-only filtering
-- Path-prefix filtering
+- `search` subcommand with substring, wildcard, fuzzy, and JSON output
+- Substring search (`machunt search "keyword"`)
+- Wildcard pattern search (`machunt search -p "*.rs"`)
+- Fuzzy/typo-tolerant search (`machunt search -F "redme"`)
+- JSON output (`machunt search --json "keyword"`)
+- File-only / folder-only filtering (`-f` / `-d`)
+- Path-prefix filtering (`-P ~/projects`)
 - `watch` mode with FSEvents incremental updates
 - `optimize --vacuum` for DB maintenance
 
@@ -112,8 +118,7 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 - GUI frontend: React 18 + TypeScript + Vite
 - GUI container: Tauri 2
 - Global shortcut: `tauri-plugin-global-shortcut`
-- Storage: SQLite (`rusqlite`, WAL mode)
-- In-memory index: `DashMap<String, Vec<PathBuf>>`
+- Storage: SQLite FTS5 (`rusqlite`, WAL mode, trigram tokenizer)
 - Scanner: WalkDir + Crossbeam channels
 - Watcher: macOS FSEvents (CoreServices)
 
@@ -181,25 +186,26 @@ npm run tauri build
 Syntax:
 
 ```bash
-machunt [OPTIONS] [QUERY] [COMMAND]
+machunt <COMMAND>
 ```
 
-Top-level options:
-
-- `-p, --path <PATH>`: path prefix filter (`.` means none)
-- `-r, --regex`: wildcard pattern mode
-- `--folder`: folders only
-- `--file`: files only
-- `--logs`: write logs to `~/Library/Caches/MacHunt/logs`
-- `[QUERY]`: search query when no subcommand is used
-
-Selection rule:
-
-- no `--file` and no `--folder` => include both files and folders
-- only `--file` => files only
-- only `--folder` => folders only
-
 Subcommands:
+
+### `search`
+
+```bash
+machunt search [OPTIONS] <QUERY>
+```
+
+- `<QUERY>`: search keyword
+- `-p, --pattern`: wildcard/regex mode (`*.rs`, `test?.txt`)
+- `-F, --fuzzy`: fuzzy/typo-tolerant search (Levenshtein distance)
+- `-c, --case-sensitive`: case-sensitive search
+- `-n, --limit <N>`: max results (default 100)
+- `-P, --path <PATH>`: path prefix filter
+- `-f, --files`: files only
+- `-d, --dirs`: directories only
+- `--json`: JSON output
 
 ### `build`
 
@@ -217,7 +223,7 @@ machunt build [OPTIONS]
 machunt watch
 ```
 
-- Starts FSEvents watcher
+- Starts FSEvents watcher with incremental updates
 - Replays from last EventID when available
 - Enters interactive search loop
 
@@ -230,10 +236,10 @@ machunt optimize [--vacuum]
 - Always runs WAL checkpoint
 - Optional `--vacuum` to reclaim DB file space
 
-Wildcard rules (`--regex`):
+Wildcard rules (`--pattern`):
 
-- `*` => any chars except `/`
-- `**` => any chars including `/`
+- `*` => any chars except `/` (single directory level)
+- `**` => any chars including `/` (all levels)
 - `?` => one char except `/`
 - `{a,b}` => `a` or `b`
 
