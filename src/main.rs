@@ -8,29 +8,46 @@ use std::time::Instant;
 #[command(about = "macOS Global File Search Tool")]
 struct Cli {
     #[command(subcommand)]
-    command: Option<Commands>,
-
-    #[arg(short, long, default_value = ".")]
-    path: String,
-
-    #[arg(short, long)]
-    regex: bool,
-
-    #[arg(long)]
-    folder: bool,
-
-    #[arg(long)]
-    file: bool,
-
-    #[arg(long)]
-    logs: bool,
-
-    #[arg(default_value = "")]
-    query: String,
+    command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Search files by name (substring or wildcard pattern).
+    Search {
+        /// Search query
+        #[arg(default_value = "")]
+        query: String,
+
+        /// Use wildcard/regex pattern mode (*.rs, test?.txt, {foo,bar})
+        #[arg(short = 'p', long)]
+        pattern: bool,
+
+        /// Case-sensitive search
+        #[arg(short = 'c', long)]
+        case_sensitive: bool,
+
+        /// Limit result count
+        #[arg(short = 'n', long, default_value_t = 100)]
+        limit: usize,
+
+        /// Filter results under this path prefix
+        #[arg(short = 'P', long)]
+        path: Option<String>,
+
+        /// Include only files
+        #[arg(short, long)]
+        files: bool,
+
+        /// Include only directories
+        #[arg(short, long)]
+        dirs: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Build or rebuild the file index.
     Build {
         #[arg(short, long)]
         path: Option<String>,
@@ -41,90 +58,78 @@ enum Commands {
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         include_dirs: bool,
     },
+    /// Watch for file system changes (interactive mode).
     Watch,
+    /// Database maintenance (checkpoint and vacuum).
     Optimize {
         #[arg(long, default_value_t = false)]
         vacuum: bool,
     },
 }
 
-fn search_once(engine: &Engine, cli: &Cli) {
-    if cli.query.is_empty() {
-        eprintln!("Error: missing query");
-        std::process::exit(1);
-    }
-
-    let start = Instant::now();
-    let options = build_search_options(cli, cli.query.clone());
-
-    let results = engine.search(options);
-    let duration = start.elapsed();
-
-    println!(
-        "Search completed, found {} matching files, took {:?}",
-        results.len(),
-        duration
-    );
-    for path in results {
-        println!("{}", path.display());
-    }
-}
-
-fn build_search_options(cli: &Cli, query: String) -> SearchOptions {
-    SearchOptions {
-        query,
-        mode: if cli.regex {
-            SearchMode::Pattern
-        } else {
-            SearchMode::Substring
-        },
-        case_sensitive: false,
-        path_prefix: if cli.path != "." {
-            Some(PathBuf::from(&cli.path))
-        } else {
-            None
-        },
-        include_files: cli.file,
-        include_dirs: cli.folder,
-        limit: None,
-    }
-}
-
-fn real_time_search(engine: Engine, cli: &Cli) {
-    println!("Real-time search mode, enter search term (Ctrl+C to exit):");
-    loop {
-        let mut input = String::new();
-        if std::io::stdin().read_line(&mut input).is_err() {
-            continue;
-        }
-        let input = input.trim();
-        if input.is_empty() {
-            continue;
-        }
-
-        let options = build_search_options(cli, input.to_string());
-        let results = engine.search(options);
-        println!("Found {} results", results.len());
-        for path in results {
-            println!("{}", path.display());
-        }
-    }
-}
-
 fn main() {
     let cli = Cli::parse();
-    let engine = Engine::new(cli.logs);
+    let engine = Engine::new(false);
 
     match cli.command {
-        Some(Commands::Build {
+        Commands::Search {
+            query,
+            pattern,
+            case_sensitive,
+            limit,
+            path,
+            files,
+            dirs,
+            json,
+        } => {
+            let query = query.trim().to_string();
+            if query.is_empty() {
+                eprintln!("Usage: machunt search <query>");
+                std::process::exit(1);
+            }
+
+            let mode = if pattern {
+                SearchMode::Pattern
+            } else {
+                SearchMode::Substring
+            };
+
+            let options = SearchOptions {
+                query,
+                mode,
+                case_sensitive,
+                path_prefix: path.map(PathBuf::from),
+                include_files: !dirs || (files && dirs) || (!files && !dirs),
+                include_dirs: !files || (files && dirs) || (!files && !dirs),
+                limit: Some(limit),
+            };
+
+            let start = Instant::now();
+            let results = engine.search(options);
+            let elapsed = start.elapsed();
+
+            if json {
+                print_json(&results, elapsed);
+            } else {
+                println!(
+                    "Found {} results in {:?}",
+                    results.len(),
+                    elapsed
+                );
+                for path in &results {
+                    println!("{}", path.display());
+                }
+            }
+        }
+        Commands::Build {
             path,
             rebuild,
             include_dirs,
-        }) => {
+        } => {
             engine.build_index(path, rebuild, include_dirs, true);
         }
-        Some(Commands::Watch) => {
-            let has_index = engine.load_index_from_db() > 0;
+        Commands::Watch => {
+            let has_index = engine.has_persisted_index();
             let last_event_id = engine.load_last_event_id();
 
             if !has_index {
@@ -158,9 +163,34 @@ fn main() {
             })
             .unwrap();
 
-            real_time_search(engine, &cli);
+            println!("Real-time search mode, enter search term (Ctrl+C to exit):");
+            loop {
+                let mut input = String::new();
+                if std::io::stdin().read_line(&mut input).is_err() {
+                    continue;
+                }
+                let input = input.trim();
+                if input.is_empty() {
+                    continue;
+                }
+
+                let options = SearchOptions {
+                    query: input.to_string(),
+                    mode: SearchMode::Substring,
+                    case_sensitive: false,
+                    path_prefix: None,
+                    include_files: true,
+                    include_dirs: true,
+                    limit: Some(50),
+                };
+                let results = engine.search(options);
+                println!("Found {} results", results.len());
+                for path in results {
+                    println!("{}", path.display());
+                }
+            }
         }
-        Some(Commands::Optimize { vacuum }) => {
+        Commands::Optimize { vacuum } => {
             engine.checkpoint_wal();
             if vacuum {
                 engine.vacuum();
@@ -169,12 +199,29 @@ fn main() {
                 println!("WAL checkpoint finished (pass --vacuum to reclaim DB file space)");
             }
         }
-        None => {
-            if engine.load_index_from_db() == 0 {
-                eprintln!("Error: Index not found, please run machunt build first");
-                std::process::exit(1);
-            }
-            search_once(&engine, &cli);
-        }
     }
+}
+
+fn print_json(results: &[PathBuf], elapsed: std::time::Duration) {
+    let items: Vec<serde_json::Value> = results
+        .iter()
+        .map(|p| {
+            let metadata = std::fs::metadata(p).ok();
+            serde_json::json!({
+                "name": p.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+                "path": p.to_string_lossy(),
+                "parent": p.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default(),
+                "size": metadata.as_ref().map(|m| m.len()).unwrap_or(0),
+                "is_dir": metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+            })
+        })
+        .collect();
+
+    let output = serde_json::json!({
+        "count": results.len(),
+        "took_ms": elapsed.as_millis(),
+        "items": items,
+    });
+
+    println!("{}", serde_json::to_string_pretty(&output).unwrap());
 }
