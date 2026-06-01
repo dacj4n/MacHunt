@@ -74,6 +74,8 @@ extern "C" {
         encoding: u32,
     ) -> *const c_void;
 
+    fn CFRelease(cf: *const c_void);
+
     static kCFRunLoopDefaultMode: *const c_void;
     static kCFTypeArrayCallBacks: c_void;
 }
@@ -349,6 +351,12 @@ pub fn start_watch(
             0.3, // 300ms coalescing window for better batch efficiency
             STREAM_FLAG_FILE_EVENTS | STREAM_FLAG_WATCH_ROOT,
         );
+
+        // FSEventStreamCreate retains the array; release our references.
+        for cf_path in &cf_paths {
+            CFRelease(*cf_path);
+        }
+        CFRelease(paths_array);
 
         if stream.is_null() {
             let mut runtime = lock_watch_runtime();
