@@ -909,4 +909,39 @@ impl Db {
             );
         }
     }
+
+    /// Broad query for fuzzy search: prefix-anchored LIKE + length filter.
+    /// Levenshtein in engine.rs does the actual fuzzy scoring.
+    pub fn search_fuzzy_candidates(
+        &self,
+        query_lower: &str,
+        limit: usize,
+    ) -> Vec<(String, String)> {
+        let conn = self.conn.lock();
+        let q_len = query_lower.chars().count();
+        if q_len == 0 || limit == 0 {
+            return Vec::new();
+        }
+        // Use first 2 chars as prefix anchor to narrow candidates,
+        // plus length ±3 to avoid scanning irrelevant names.
+        let prefix: String = query_lower.chars().take(2).collect();
+        let len_min = q_len.saturating_sub(3).max(1) as i64;
+        let len_max = (q_len + 3) as i64;
+        let mut stmt = conn
+            .prepare(
+                "SELECT d.path, f.name FROM files f
+                 JOIN dirs d ON d.id = f.dir_id
+                 WHERE f.name_lower LIKE ?1
+                   AND LENGTH(f.name_lower) BETWEEN ?2 AND ?3
+                 LIMIT ?4",
+            )
+            .unwrap();
+        stmt.query_map(
+            params![format!("{}%", prefix), len_min, len_max, limit as i64],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect()
+    }
 }

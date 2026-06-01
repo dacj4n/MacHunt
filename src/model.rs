@@ -5,6 +5,7 @@ use std::path::PathBuf;
 pub enum SearchMode {
     Substring,
     Pattern,
+    Fuzzy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

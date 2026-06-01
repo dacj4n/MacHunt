@@ -233,7 +233,66 @@ impl Engine {
         match options.mode {
             SearchMode::Substring => self.search_substring(&options, limit),
             SearchMode::Pattern => self.search_pattern(&options, limit),
+            SearchMode::Fuzzy => self.search_fuzzy(&options, limit),
         }
+    }
+
+    fn search_fuzzy(&self, options: &SearchOptions, limit: usize) -> Vec<PathBuf> {
+        let query_lower = options.query.to_lowercase();
+        if query_lower.is_empty() {
+            return Vec::new();
+        }
+
+        // Use broad LIKE to get candidates, then filter by edit distance.
+        let candidates = self
+            .db
+            .search_fuzzy_candidates(&query_lower, 3000);
+        let q_len = query_lower.chars().count();
+        let mut scored: Vec<(PathBuf, usize)> = Vec::new();
+
+        for (dir_path, file_name) in candidates {
+            let name_lower = if options.case_sensitive {
+                file_name.clone()
+            } else {
+                file_name.to_lowercase()
+            };
+
+            // Fast length pre-filter: skip names too far from query length.
+            let n_len = name_lower.chars().count();
+            if n_len.abs_diff(q_len) > 3 {
+                continue;
+            }
+
+            let dist = levenshtein(&name_lower, &query_lower);
+            // Allow up to (query_len / 3) + 1 edits; minimum tolerance of 1 for short queries.
+            let max_dist = (query_lower.len() / 3).max(1);
+            if dist > max_dist {
+                continue;
+            }
+
+            let full_path = if dir_path == "/" {
+                PathBuf::from(format!("/{}", file_name))
+            } else {
+                PathBuf::from(format!("{}/{}", dir_path, file_name))
+            };
+            if !prefix_allowed(&full_path, &options.path_prefix) {
+                continue;
+            }
+            if !include_allowed(&full_path, options.include_files, options.include_dirs) {
+                continue;
+            }
+            scored.push((full_path, dist));
+            if scored.len() >= limit * 3 {
+                break;
+            }
+        }
+
+        // Sort by edit distance (best match first), then by path length.
+        scored.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| {
+            a.0.as_os_str().len().cmp(&b.0.as_os_str().len())
+        }));
+        scored.truncate(limit);
+        scored.into_iter().map(|(p, _)| p).collect()
     }
 
     fn search_substring(&self, options: &SearchOptions, limit: usize) -> Vec<PathBuf> {
@@ -446,4 +505,27 @@ fn include_allowed(path: &Path, include_files: bool, include_dirs: bool) -> bool
         return path.is_dir();
     }
     false
+}
+
+/// Levenshtein (edit) distance between two strings.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a_len = a.chars().count();
+    let b_len = b.chars().count();
+    if a_len == 0 { return b_len; }
+    if b_len == 0 { return a_len; }
+
+    let mut prev: Vec<usize> = (0..=b_len).collect();
+    let mut curr = vec![0usize; b_len + 1];
+
+    for (i, ca) in a.chars().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.chars().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = (prev[j + 1] + 1)        // deletion
+                .min(curr[j] + 1)                    // insertion
+                .min(prev[j] + cost);                // substitution
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b_len]
 }

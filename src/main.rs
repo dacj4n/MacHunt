@@ -43,6 +43,10 @@ enum Commands {
         #[arg(short, long)]
         dirs: bool,
 
+        /// Fuzzy search (typo-tolerant, edit distance <= 1~2)
+        #[arg(short = 'F', long)]
+        fuzzy: bool,
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -75,6 +79,7 @@ fn main() {
         Commands::Search {
             query,
             pattern,
+            fuzzy,
             case_sensitive,
             limit,
             path,
@@ -88,7 +93,9 @@ fn main() {
                 std::process::exit(1);
             }
 
-            let mode = if pattern {
+            let mode = if fuzzy {
+                SearchMode::Fuzzy
+            } else if pattern {
                 SearchMode::Pattern
             } else {
                 SearchMode::Substring
