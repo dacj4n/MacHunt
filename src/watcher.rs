@@ -4,7 +4,6 @@ use crate::utils::{should_skip_path, Logger};
 use core_foundation_sys::runloop::{
     CFRunLoopGetCurrent, CFRunLoopRef, CFRunLoopRun, CFRunLoopStop,
 };
-use dashmap::DashMap;
 use std::ffi::{c_void, CStr};
 use std::os::raw::{c_char, c_double, c_ulong};
 use std::path::Path;
@@ -93,14 +92,11 @@ const STREAM_FLAG_FILE_EVENTS: u32 = 0x0000_0010;
 const STREAM_FLAG_WATCH_ROOT: u32 = 0x0000_0004;
 
 struct WatchContext {
-    index: Arc<DashMap<String, Vec<PathBuf>>>,
     db: Db,
     logger: Logger,
     last_event_id: Arc<AtomicU64>,
-    index_write_lock: Arc<Mutex<()>>,
     include_dirs: bool,
     exclude_rules: Arc<ExcludeRules>,
-    dirty_roots: Arc<Mutex<Vec<PathBuf>>>,
 }
 
 #[derive(Default)]
@@ -121,19 +117,7 @@ fn lock_watch_runtime() -> std::sync::MutexGuard<'static, WatchRuntime> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn enqueue_dirty_root(ctx: &WatchContext, path: &Path) {
-    let mut guard = ctx
-        .dirty_roots
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if guard.iter().any(|existing| path.starts_with(existing)) {
-        return;
-    }
-    guard.retain(|existing| !existing.starts_with(path));
-    guard.push(path.to_path_buf());
-}
-
-fn upsert_path(ctx: &WatchContext, path: &Path) {
+fn upsert_file(ctx: &WatchContext, path: &Path) {
     if should_skip_path(path) {
         return;
     }
@@ -143,72 +127,34 @@ fn upsert_path(ctx: &WatchContext, path: &Path) {
     if !ctx.include_dirs && path.is_dir() {
         return;
     }
-    let _guard = ctx
-        .index_write_lock
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let file_name_lower = match path.file_name().and_then(|n| n.to_str()) {
         Some(name) => name.to_lowercase(),
         None => return,
     };
-    let path_buf = path.to_path_buf();
-    let mut entry = ctx.index.entry(file_name_lower.clone()).or_default();
-    if !entry.contains(&path_buf) {
-        entry.push(path_buf.clone());
-        ctx.db.insert(&file_name_lower, path);
-        if ctx.logger.enabled() {
-            ctx.logger.log(&format!("[+] {}", path.display()));
-        }
+    // Direct DB insert — UNIQUE constraint handles dedup.
+    if let Some(rowid) = ctx.db.insert(&file_name_lower, path) {
+        ctx.db.insert_fts(rowid, &file_name_lower);
+    }
+    if ctx.logger.enabled() {
+        ctx.logger.log(&format!("[+] {}", path.display()));
     }
 }
 
-fn remove_path(ctx: &WatchContext, path: &Path) {
-    let _guard = ctx
-        .index_write_lock
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let file_name_lower = match path.file_name().and_then(|n| n.to_str()) {
-        Some(name) => name.to_lowercase(),
-        None => return,
-    };
-    if let Some(mut v) = ctx.index.get_mut(&file_name_lower) {
-        v.retain(|p| p != path);
-        if v.is_empty() {
-            drop(v);
-            ctx.index.remove(&file_name_lower);
-        }
-    }
+fn remove_file(ctx: &WatchContext, path: &Path) {
     ctx.db.delete(path);
     if ctx.logger.enabled() {
         ctx.logger.log(&format!("[-] {}", path.display()));
     }
 }
 
-fn remove_path_tree(ctx: &WatchContext, root: &Path) {
-    let _guard = ctx
-        .index_write_lock
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let root_str = root.to_string_lossy();
-    let prefix = format!("{}/", root_str);
-    ctx.index.retain(|_, v| {
-        v.retain(|p| {
-            let path_str = p.to_string_lossy();
-            if p.as_path() == root || path_str.starts_with(&prefix) {
-                ctx.db.delete(p.as_path());
-                if ctx.logger.enabled() {
-                    ctx.logger.log(&format!("[-] {}", p.display()));
-                }
-                false
-            } else {
-                true
-            }
-        });
-        !v.is_empty()
-    });
+fn remove_tree(ctx: &WatchContext, root: &Path) {
+    ctx.db.delete_under_root(root);
+    if ctx.logger.enabled() {
+        ctx.logger.log(&format!("[-] tree {}", root.display()));
+    }
 }
 
-fn index_directory_tree(ctx: &WatchContext, root: &Path) {
+fn index_directory(ctx: &WatchContext, root: &Path) {
     if should_skip_path(root) {
         return;
     }
@@ -230,7 +176,7 @@ fn index_directory_tree(ctx: &WatchContext, root: &Path) {
         if !ctx.include_dirs && entry.file_type().is_dir() {
             continue;
         }
-        upsert_path(ctx, entry.path());
+        upsert_file(ctx, entry.path());
     }
 }
 
@@ -271,53 +217,44 @@ unsafe extern "C" fn fsevent_callback(
             continue;
         }
 
+        // Directory events
         if flags & FLAG_ITEM_IS_FILE == 0 {
             if flags & FLAG_ITEM_REMOVED != 0 {
-                remove_path_tree(ctx, path.as_path());
-                enqueue_dirty_root(ctx, path.as_path());
+                remove_tree(ctx, path.as_path());
             } else if flags & (FLAG_ITEM_CREATED | FLAG_ITEM_RENAMED | FLAG_ITEM_MODIFIED) != 0 {
                 if path.is_dir() {
-                    index_directory_tree(ctx, path.as_path());
-                    enqueue_dirty_root(ctx, path.as_path());
+                    index_directory(ctx, path.as_path());
                 } else if path.exists() {
-                    upsert_path(ctx, path.as_path());
+                    upsert_file(ctx, path.as_path());
                 }
             }
             continue;
         }
 
+        // File events
         if flags & FLAG_ITEM_REMOVED != 0 {
-            remove_path(ctx, path.as_path());
-            if let Some(parent) = path.parent() {
-                enqueue_dirty_root(ctx, parent);
-            }
+            remove_file(ctx, path.as_path());
             continue;
         }
 
         if flags & (FLAG_ITEM_CREATED | FLAG_ITEM_RENAMED | FLAG_ITEM_MODIFIED) != 0 {
             if path.is_file() {
-                upsert_path(ctx, path.as_path());
+                upsert_file(ctx, path.as_path());
             } else {
-                remove_path(ctx, path.as_path());
-            }
-            if let Some(parent) = path.parent() {
-                enqueue_dirty_root(ctx, parent);
+                remove_file(ctx, path.as_path());
             }
         }
     }
 }
 
 pub fn start_watch(
-    index: Arc<DashMap<String, Vec<PathBuf>>>,
     db: Db,
     logger: Logger,
     last_event_id: Arc<AtomicU64>,
-    index_write_lock: Arc<Mutex<()>>,
     include_dirs: bool,
     since_event_id: Option<u64>,
     watch_roots: Vec<String>,
     exclude_rules: Arc<ExcludeRules>,
-    dirty_roots: Arc<Mutex<Vec<PathBuf>>>,
 ) {
     {
         let mut runtime = lock_watch_runtime();
@@ -361,14 +298,11 @@ pub fn start_watch(
         );
 
         let ctx = Box::new(WatchContext {
-            index,
             db,
             logger,
             last_event_id,
-            index_write_lock,
             include_dirs,
             exclude_rules,
-            dirty_roots,
         });
         let ctx_ptr = Box::into_raw(ctx);
         let mut fsevent_ctx = FSEventStreamContext {
@@ -385,7 +319,7 @@ pub fn start_watch(
             &mut fsevent_ctx,
             paths_array,
             since,
-            0.05,
+            0.3, // 300ms coalescing window for better batch efficiency
             STREAM_FLAG_FILE_EVENTS | STREAM_FLAG_WATCH_ROOT,
         );
 

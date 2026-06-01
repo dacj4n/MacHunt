@@ -3,45 +3,33 @@ use crate::db::Db;
 use crate::filters::{
     compile_exclude_rules, sanitize_owned_rules, sanitize_roots, validate_pattern_rules,
 };
-use crate::model::SearchOptions;
+use crate::model::{SearchMode, SearchOptions};
 use crate::search;
-use crate::utils::{get_root_directories, num_cpus, Logger};
+use crate::utils::{get_root_directories, Logger};
 use crate::watcher;
-use dashmap::DashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
-
-const STARTUP_CLEANUP_MAX_DELETE_PER_ROUND: usize = 2000;
-const STARTUP_CLEANUP_SCAN_BATCH: usize = 8000;
+use std::time::Instant;
 
 #[derive(Clone)]
 pub struct Engine {
-    index: Arc<DashMap<String, Vec<PathBuf>>>,
     db: Db,
     logger: Logger,
     last_event_id: Arc<AtomicU64>,
-    index_write_lock: Arc<Mutex<()>>,
     include_dirs: Arc<AtomicBool>,
     exclude_exact_dirs: Arc<Mutex<Vec<String>>>,
     exclude_pattern_dirs: Arc<Mutex<Vec<String>>>,
     watch_roots: Arc<Mutex<Vec<String>>>,
-    dirty_roots: Arc<Mutex<Vec<PathBuf>>>,
-    dirty_worker_running: Arc<AtomicBool>,
     cleanup_running: Arc<AtomicBool>,
-    cleanup_cursor_id: Arc<AtomicU64>,
 }
 
 impl Engine {
     pub fn new(logs_enabled: bool) -> Self {
         let db = Db::init_default();
-        // Pre-allocate for large indexes to reduce startup rehash/resize churn.
-        let index = Arc::new(DashMap::with_capacity(1_048_576));
         let logger = Logger::new(logs_enabled);
         let last_event_id = Arc::new(AtomicU64::new(0));
-        let index_write_lock = Arc::new(Mutex::new(()));
         let include_dirs = Arc::new(AtomicBool::new(db.load_include_dirs().unwrap_or(true)));
         let exclude_exact_dirs = Arc::new(Mutex::new(db.load_exclude_exact_dirs()));
         let exclude_pattern_dirs = Arc::new(Mutex::new(db.load_exclude_pattern_dirs()));
@@ -53,19 +41,14 @@ impl Engine {
         }
 
         Self {
-            index,
             db,
             logger,
             last_event_id,
-            index_write_lock,
             include_dirs,
             exclude_exact_dirs,
             exclude_pattern_dirs,
             watch_roots: Arc::new(Mutex::new(watch_roots)),
-            dirty_roots: Arc::new(Mutex::new(Vec::new())),
-            dirty_worker_running: Arc::new(AtomicBool::new(false)),
             cleanup_running: Arc::new(AtomicBool::new(false)),
-            cleanup_cursor_id: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -73,16 +56,7 @@ impl Engine {
         if !self.db.path().exists() {
             return 0;
         }
-
-        let start = Instant::now();
-        println!("Loading index from database...");
-        let _guard = self
-            .index_write_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let count = self.db.load_index(&self.index);
-        println!("Loaded {} records, took {:?}", count, start.elapsed());
-        count
+        self.db.count_files()
     }
 
     pub fn build_index(
@@ -117,29 +91,19 @@ impl Engine {
             watch_roots: Some(watch_roots),
         };
 
-        // Use a temp DB + atomic swap for full rebuilds, or for
-        // build/rebuild when no specific incremental path is given.
-        // The only incremental (non-temp) path is the dirty-root worker,
-        // which passes auto_vacuum_on_rebuild=false and a specific path.
         let is_incremental = !auto_vacuum_on_rebuild && path.is_some();
 
         if !is_incremental {
             self.db.begin_rebuild();
         }
 
-        let count = builder::build_index(
-            &self.db,
-            &self.index,
-            &self.index_write_lock,
-            path,
-            !is_incremental,             // treat as fresh DB if not incremental
-            &filters,
-        );
+        let count = builder::build_index(&self.db, path, !is_incremental, &filters);
 
         if !is_incremental {
             if let Err(e) = self.db.finish_rebuild() {
                 eprintln!("finish_rebuild failed: {}", e);
             }
+            self.db.rebuild_fts();
         } else {
             self.db.checkpoint_truncate();
         }
@@ -245,18 +209,14 @@ impl Engine {
         let exclude_rules = compile_exclude_rules(&exclude_exact_dirs, &exclude_pattern_dirs);
 
         watcher::start_watch(
-            self.index.clone(),
             self.db.clone(),
             self.logger.clone(),
             self.last_event_id.clone(),
-            self.index_write_lock.clone(),
             self.include_dirs.load(Ordering::Relaxed),
             since_event_id,
             watch_roots,
             Arc::new(exclude_rules),
-            self.dirty_roots.clone(),
         );
-        self.start_dirty_root_worker();
     }
 
     pub fn stop_watch(&self) -> bool {
@@ -268,7 +228,94 @@ impl Engine {
     }
 
     pub fn search(&self, options: SearchOptions) -> Vec<PathBuf> {
-        search::search(&self.index, options)
+        let limit = options.limit.unwrap_or(500);
+
+        match options.mode {
+            SearchMode::Substring => self.search_substring(&options, limit),
+            SearchMode::Pattern => self.search_pattern(&options, limit),
+        }
+    }
+
+    fn search_substring(&self, options: &SearchOptions, limit: usize) -> Vec<PathBuf> {
+        let query = if options.case_sensitive {
+            options.query.clone()
+        } else {
+            options.query.to_lowercase()
+        };
+        let results = self.db.search_fts(&query, options.case_sensitive, limit);
+        self.build_results(results, options)
+    }
+
+    fn search_pattern(&self, options: &SearchOptions, limit: usize) -> Vec<PathBuf> {
+        let regex = match search::convert_wildcard_to_regex(&options.query, options.case_sensitive) {
+            Ok(re) => re,
+            Err(_) => return Vec::new(),
+        };
+
+        // Extract a literal fragment for DB pre-filtering.
+        let fragment = extract_literal(&options.query);
+        let pattern = if fragment.len() >= 2 {
+            if options.case_sensitive {
+                format!("%{}%", fragment)
+            } else {
+                format!("%{}%", fragment.to_lowercase())
+            }
+        } else {
+            "%".to_string()
+        };
+
+        // Use LIKE with the literal fragment to get candidates, then filter by regex.
+        let results = self.db.search_like(&pattern, options.case_sensitive, limit.max(2000));
+        let mut out = Vec::new();
+        for (dir_path, file_name) in results {
+            let target = if options.case_sensitive {
+                file_name.clone()
+            } else {
+                file_name.to_lowercase()
+            };
+            if !regex.is_match(&target) {
+                continue;
+            }
+            let full_path = if dir_path == "/" {
+                PathBuf::from(format!("/{}", file_name))
+            } else {
+                PathBuf::from(format!("{}/{}", dir_path, file_name))
+            };
+            if !prefix_allowed(&full_path, &options.path_prefix) {
+                continue;
+            }
+            if !include_allowed(&full_path, options.include_files, options.include_dirs) {
+                continue;
+            }
+            out.push(full_path);
+            if out.len() >= limit {
+                break;
+            }
+        }
+        out
+    }
+
+    fn build_results(
+        &self,
+        results: Vec<(String, String)>,
+        options: &SearchOptions,
+    ) -> Vec<PathBuf> {
+        let mut out = Vec::with_capacity(results.len());
+        for (dir_path, file_name) in results {
+            let full_path = if dir_path == "/" {
+                PathBuf::from(format!("/{}", file_name))
+            } else {
+                PathBuf::from(format!("{}/{}", dir_path, file_name))
+            };
+            if !prefix_allowed(&full_path, &options.path_prefix) {
+                continue;
+            }
+            if !include_allowed(&full_path, options.include_files, options.include_dirs) {
+                continue;
+            }
+            out.push(full_path);
+        }
+        out
     }
 
     pub fn load_last_event_id(&self) -> Option<u64> {
@@ -305,172 +352,38 @@ impl Engine {
         }
 
         let db = self.db.clone();
-        let index = self.index.clone();
         let logger = self.logger.clone();
-        let index_write_lock = self.index_write_lock.clone();
         let running = self.cleanup_running.clone();
-        let cursor = self.cleanup_cursor_id.clone();
 
         thread::spawn(move || {
             let start = Instant::now();
-            let mut removed_total = 0usize;
-            let mut scanned_total = 0usize;
-            let mut rounds = 0usize;
+            let rows = db.list_all_paths();
+            let mut removed = 0usize;
 
-            loop {
-                rounds += 1;
-                let mut removed_this_round = 0usize;
+            let dead: Vec<PathBuf> = rows
+                .into_iter()
+                .filter_map(|(_, path_str)| {
+                    let p = PathBuf::from(path_str);
+                    if !p.exists() { Some(p) } else { None }
+                })
+                .collect();
 
-                while removed_this_round < STARTUP_CLEANUP_MAX_DELETE_PER_ROUND {
-                    let last_id = cursor.load(Ordering::Relaxed);
-                    let rows = db.list_paths_after_id(last_id, STARTUP_CLEANUP_SCAN_BATCH);
-                    if rows.is_empty() {
-                        cursor.store(0, Ordering::Relaxed);
-                        if removed_total > 0 {
-                            println!(
-                                "[Startup Validation] Cleaned up {} dead paths (scanned {}, rounds {}), took {:?}",
-                                removed_total,
-                                scanned_total,
-                                rounds,
-                                start.elapsed()
-                            );
-                        }
-                        running.store(false, Ordering::SeqCst);
-                        return;
-                    }
-
-                    let mut dead = Vec::<PathBuf>::new();
-                    let mut max_id_seen = last_id;
-                    let chunk_size = (rows.len() / num_cpus()).max(1);
-                    let dead_shared = Arc::new(std::sync::Mutex::new(Vec::<PathBuf>::new()));
-
-                    let handles: Vec<_> = rows
-                        .chunks(chunk_size)
-                        .map(|chunk| {
-                            let chunk = chunk.to_vec();
-                            let dead_shared = dead_shared.clone();
-                            thread::spawn(move || {
-                                let local_dead: Vec<PathBuf> = chunk
-                                    .into_iter()
-                                    .filter_map(|(_, _, path_str)| {
-                                        let p = PathBuf::from(path_str);
-                                        if !p.exists() {
-                                            Some(p)
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect();
-                                dead_shared.lock().unwrap().extend(local_dead);
-                            })
-                        })
-                        .collect();
-
-                    for (id, _, _) in &rows {
-                        max_id_seen = max_id_seen.max(*id as u64);
-                    }
-
-                    for h in handles {
-                        let _ = h.join();
-                    }
-
-                    if let Ok(guard) = dead_shared.lock() {
-                        dead.extend(guard.iter().cloned());
-                    }
-
-                    scanned_total += rows.len();
-                    cursor.store(max_id_seen, Ordering::Relaxed);
-
-                    if dead.is_empty() {
-                        continue;
-                    }
-
-                    if removed_this_round + dead.len() > STARTUP_CLEANUP_MAX_DELETE_PER_ROUND {
-                        dead.truncate(STARTUP_CLEANUP_MAX_DELETE_PER_ROUND - removed_this_round);
-                    }
-
-                    {
-                        let _guard = index_write_lock
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        for path in &dead {
-                            let name = path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("")
-                                .to_lowercase();
-                            if let Some(mut v) = index.get_mut(&name) {
-                                v.retain(|p| p != path);
-                                if v.is_empty() {
-                                    drop(v);
-                                    index.remove(&name);
-                                }
-                            }
-                            db.delete(path);
-                            if logger.enabled() {
-                                logger.log(&format!("[-] {}", path.display()));
-                            }
-                        }
-                    }
-
-                    removed_this_round += dead.len();
-                    removed_total += dead.len();
+            for path in &dead {
+                db.delete(path.as_path());
+                if logger.enabled() {
+                    logger.log(&format!("[-] {}", path.display()));
                 }
-
-                // Cap startup pressure; continue cleanup in background slices.
-                thread::sleep(Duration::from_millis(250));
+                removed += 1;
             }
-        });
-    }
 
-    fn start_dirty_root_worker(&self) {
-        if self
-            .dirty_worker_running
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return;
-        }
-
-        let this = self.clone();
-        thread::spawn(move || {
-            loop {
-                thread::sleep(Duration::from_millis(600));
-
-                if !this.is_watch_running() {
-                    this.dirty_worker_running.store(false, Ordering::SeqCst);
-                    return;
-                }
-
-                let pending = {
-                    let mut guard = this
-                        .dirty_roots
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
-                    if guard.is_empty() {
-                        Vec::new()
-                    } else {
-                        std::mem::take(&mut *guard)
-                    }
-                };
-
-                if pending.is_empty() {
-                    continue;
-                }
-
-                for root in collapse_dirty_roots(pending) {
-                    if !root.exists() {
-                        continue;
-                    }
-                    let root_text = root.to_string_lossy().to_string();
-                    let _ = this.build_index(
-                        Some(root_text),
-                        false,
-                        this.include_dirs.load(Ordering::Relaxed),
-                        false,
-                    );
-                }
+            if removed > 0 {
+                println!(
+                    "[Startup Validation] Cleaned up {} dead paths, took {:?}",
+                    removed,
+                    start.elapsed()
+                );
             }
+            running.store(false, Ordering::SeqCst);
         });
     }
 }
@@ -494,15 +407,43 @@ fn normalize_watch_roots(roots: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-fn collapse_dirty_roots(mut roots: Vec<PathBuf>) -> Vec<PathBuf> {
-    roots.sort_by_key(|p| p.components().count());
-    let mut out = Vec::<PathBuf>::new();
-    for root in roots {
-        if out.iter().any(|existing| root.starts_with(existing)) {
-            continue;
-        }
-        out.retain(|existing| !existing.starts_with(&root));
-        out.push(root);
+fn prefix_allowed(path: &Path, prefix: &Option<PathBuf>) -> bool {
+    match prefix {
+        Some(p) => path.starts_with(p),
+        None => true,
     }
-    out
+}
+
+/// Extract the longest literal (non-wildcard) fragment from a pattern for DB pre-filtering.
+fn extract_literal(pattern: &str) -> String {
+    let mut best = String::new();
+    let mut current = String::new();
+    for ch in pattern.chars() {
+        match ch {
+            '*' | '?' | '{' | '}' | ',' | '[' | ']' | '\\' => {
+                if current.len() > best.len() {
+                    best = current.clone();
+                }
+                current.clear();
+            }
+            c => current.push(c),
+        }
+    }
+    if current.len() > best.len() {
+        best = current;
+    }
+    best
+}
+
+fn include_allowed(path: &Path, include_files: bool, include_dirs: bool) -> bool {
+    if include_files && include_dirs {
+        return true;
+    }
+    if include_files {
+        return path.is_file();
+    }
+    if include_dirs {
+        return path.is_dir();
+    }
+    false
 }

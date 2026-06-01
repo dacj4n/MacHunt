@@ -1299,12 +1299,14 @@ fn start_watch_auto(app: tauri::AppHandle, state: tauri::State<'_, AppState>) ->
         }
         None => {
             state.engine.start_watch(None);
-            state.engine.cleanup_dead_paths_background();
+            // Startup cleanup skipped to avoid CPU thrashing on launch.
+            // Dead paths are lazily pruned by the watcher on deletion events
+            // and can be manually cleaned via `machunt optimize`.
             WatchResponse {
                 running: true,
-                mode: "validate".to_string(),
-                code: "validate".to_string(),
-                message: "Watcher started with startup validation".to_string(),
+                mode: "active".to_string(),
+                code: "active".to_string(),
+                message: "Watcher started (startup cleanup skipped for fast launch)".to_string(),
                 last_event_id: None,
             }
         }

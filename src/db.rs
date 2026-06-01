@@ -1,4 +1,3 @@
-use dashmap::DashMap;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
@@ -37,9 +36,9 @@ impl Db {
             "
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
-            PRAGMA cache_size=-65536;
+            PRAGMA cache_size=-8192;
             PRAGMA temp_store=MEMORY;
-            PRAGMA mmap_size=268435456;
+            PRAGMA mmap_size=33554432;
             PRAGMA foreign_keys=ON;
         ",
         )
@@ -70,6 +69,7 @@ impl Db {
 
         // v1 leftover index; no longer used.
         let _ = conn.execute("DROP INDEX IF EXISTS idx_name", []);
+        Self::ensure_fts5(conn);
     }
 
     fn table_exists(conn: &Connection, table_name: &str) -> bool {
@@ -274,7 +274,9 @@ impl Db {
 
     pub fn clear_files(&self) {
         let conn = self.conn.lock();
-        let _ = conn.execute_batch("DELETE FROM files; DELETE FROM dirs;");
+        let _ = conn.execute_batch(
+            "DELETE FROM files_fts; DELETE FROM files; DELETE FROM dirs;",
+        );
     }
 
     /// Replace the current connection with a fresh temp database
@@ -330,7 +332,7 @@ impl Db {
         Ok(())
     }
 
-    pub fn insert(&self, fallback_name: &str, path: &Path) {
+    pub fn insert(&self, fallback_name: &str, path: &Path) -> Option<i64> {
         let conn = self.conn.lock();
         let dir_path = Self::parent_key(path);
         let stored_name = Self::derive_name(path, fallback_name);
@@ -340,7 +342,7 @@ impl Db {
             fallback_name.to_string()
         };
         if stored_name.is_empty() {
-            return;
+            return None;
         }
 
         let _ = conn.execute(
@@ -361,7 +363,10 @@ impl Db {
                 "INSERT OR IGNORE INTO files (name, name_lower, dir_id) VALUES (?1, ?2, ?3)",
                 params![stored_name, stored_name_lower, dir_id],
             );
+            // Return the rowid for FTS sync.
+            return Some(conn.last_insert_rowid());
         }
+        None
     }
 
     pub fn delete(&self, path: &Path) {
@@ -372,23 +377,36 @@ impl Db {
             None => return,
         };
 
+        // Get the file id for FTS cleanup.
+        let file_id: Option<i64> = conn
+            .query_row(
+                "SELECT f.id FROM files f
+                 JOIN dirs d ON d.id = f.dir_id
+                 WHERE f.name = ?1 AND d.path = ?2",
+                params![file_name, dir_path.as_str()],
+                |row| row.get(0),
+            )
+            .ok();
+
         let _ = conn.execute(
-            "
-            DELETE FROM files
-            WHERE name = ?1
-              AND dir_id = (SELECT id FROM dirs WHERE path = ?2)
-        ",
+            "DELETE FROM files
+             WHERE name = ?1
+               AND dir_id = (SELECT id FROM dirs WHERE path = ?2)",
             params![file_name, dir_path.as_str()],
         );
 
+        // Remove from FTS index.
+        if let Some(id) = file_id {
+            let _ = conn.execute(
+                "INSERT INTO files_fts(files_fts, rowid, name_lower) VALUES('delete', ?1, '')",
+                params![id],
+            );
+        }
+
         let _ = conn.execute(
-            "
-            DELETE FROM dirs
-            WHERE path = ?1
-              AND NOT EXISTS (
-                  SELECT 1 FROM files WHERE files.dir_id = dirs.id LIMIT 1
-              )
-        ",
+            "DELETE FROM dirs
+             WHERE path = ?1
+               AND NOT EXISTS (SELECT 1 FROM files WHERE files.dir_id = dirs.id LIMIT 1)",
             params![dir_path.as_str()],
         );
     }
@@ -396,7 +414,9 @@ impl Db {
     pub fn delete_under_root(&self, root: &Path) {
         let conn = self.conn.lock();
         if root == Path::new("/") {
-            let _ = conn.execute_batch("DELETE FROM files; DELETE FROM dirs;");
+            let _ = conn.execute_batch(
+                "DELETE FROM files_fts; DELETE FROM files; DELETE FROM dirs;",
+            );
             return;
         }
 
@@ -406,13 +426,20 @@ impl Db {
         }
         let prefix = format!("{}/%", root_text);
 
+        // Delete FTS entries for affected files.
         let _ = conn.execute(
-            "
-            DELETE FROM files
-            WHERE dir_id IN (
+            "INSERT INTO files_fts(files_fts, rowid, name_lower)
+             SELECT 'delete', f.id, ''
+             FROM files f
+             JOIN dirs d ON d.id = f.dir_id
+             WHERE d.path = ?1 OR d.path LIKE ?2",
+            params![root_text, prefix],
+        );
+
+        let _ = conn.execute(
+            "DELETE FROM files WHERE dir_id IN (
                 SELECT id FROM dirs WHERE path = ?1 OR path LIKE ?2
-            )
-        ",
+            )",
             params![root_text, prefix],
         );
 
@@ -479,49 +506,10 @@ impl Db {
         let _ = conn.execute_batch("PRAGMA synchronous=NORMAL;");
     }
 
-    pub fn load_index(&self, index: &Arc<DashMap<String, Vec<PathBuf>>>) -> usize {
-        if !self.path.exists() {
-            return 0;
-        }
-
-        index.clear();
-
+    pub fn count_files(&self) -> usize {
         let conn = self.conn.lock();
-        let mut stmt = conn
-            .prepare(
-                "
-                SELECT
-                    f.name_lower,
-                    CASE
-                        WHEN d.path = '' THEN f.name
-                        WHEN d.path = '/' THEN '/' || f.name
-                        ELSE d.path || '/' || f.name
-                    END AS full_path
-                FROM files f
-                JOIN dirs d ON d.id = f.dir_id
-            ",
-            )
-            .unwrap();
-        let mut rows = stmt.query([]).unwrap();
-        let mut count = 0usize;
-        while let Some(row) = rows.next().unwrap() {
-            let name_lower = match row.get_ref(0).ok().and_then(|v| v.as_str().ok()) {
-                Some(v) => v,
-                None => continue,
-            };
-            let full_path = match row.get_ref(1).ok().and_then(|v| v.as_str().ok()) {
-                Some(v) => v,
-                None => continue,
-            };
-            let path_buf = PathBuf::from(full_path);
-            if let Some(mut bucket) = index.get_mut(name_lower) {
-                bucket.push(path_buf);
-            } else {
-                index.insert(name_lower.to_owned(), vec![path_buf]);
-            }
-            count += 1;
-        }
-        count
+        conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, i64>(0))
+            .unwrap_or(0) as usize
     }
 
     pub fn has_any_files(&self) -> bool {
@@ -533,78 +521,49 @@ impl Db {
             != 0
     }
 
-    pub fn list_all_paths(&self) -> Vec<(i64, String, String)> {
+    pub fn list_all_paths(&self) -> Vec<(i64, String)> {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
-                "
-                SELECT
-                    f.id,
-                    f.name_lower,
+                "SELECT f.id,
                     CASE
                         WHEN d.path = '' THEN f.name
                         WHEN d.path = '/' THEN '/' || f.name
                         ELSE d.path || '/' || f.name
                     END AS full_path
-                FROM files f
-                JOIN dirs d ON d.id = f.dir_id
-            ",
+                 FROM files f
+                 JOIN dirs d ON d.id = f.dir_id",
             )
             .unwrap();
         let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })
+            .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
             .unwrap();
-        let mut out = Vec::new();
-        for row in rows.flatten() {
-            let (id, name_lower, full_path) = row;
-            out.push((id, name_lower, full_path));
-        }
-        out
+        rows.filter_map(|r| r.ok()).collect()
     }
 
-    pub fn list_paths_after_id(&self, last_id: u64, limit: usize) -> Vec<(i64, String, String)> {
+    pub fn list_paths_after_id(&self, last_id: u64, limit: usize) -> Vec<(i64, String)> {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
-                "
-                SELECT
-                    f.id,
-                    f.name_lower,
+                "SELECT f.id,
                     CASE
                         WHEN d.path = '' THEN f.name
                         WHEN d.path = '/' THEN '/' || f.name
                         ELSE d.path || '/' || f.name
                     END AS full_path
-                FROM files f
-                JOIN dirs d ON d.id = f.dir_id
-                WHERE f.id > ?1
-                ORDER BY f.id ASC
-                LIMIT ?2
-            ",
+                 FROM files f
+                 JOIN dirs d ON d.id = f.dir_id
+                 WHERE f.id > ?1
+                 ORDER BY f.id ASC
+                 LIMIT ?2",
             )
             .unwrap();
-
         let rows = stmt
             .query_map(params![last_id as i64, limit as i64], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
             })
             .unwrap();
-
-        let mut out = Vec::new();
-        for row in rows.flatten() {
-            out.push(row);
-        }
-        out
+        rows.filter_map(|r| r.ok()).collect()
     }
 
     pub fn save_last_event_id(&self, event_id: u64) {
@@ -756,5 +715,146 @@ impl Db {
     pub fn vacuum(&self) {
         let conn = self.conn.lock();
         let _ = conn.execute_batch("VACUUM;");
+    }
+
+    // ── FTS5 trigram search ──
+
+    /// Create the FTS5 trigram virtual table (idempotent).
+    fn ensure_fts5(conn: &Connection) {
+        let _ = conn.execute_batch(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
+                name_lower,
+                content='',
+                tokenize='trigram'
+            );",
+        );
+    }
+
+    /// Insert a single entry into the FTS index. rowid must match files.id.
+    pub fn insert_fts(&self, rowid: i64, name_lower: &str) {
+        let conn = self.conn.lock();
+        let _ = conn.execute(
+            "INSERT INTO files_fts(rowid, name_lower) VALUES (?1, ?2)",
+            params![rowid, name_lower],
+        );
+    }
+
+    /// Delete a single entry from the FTS index by rowid.
+    pub fn delete_fts(&self, rowid: i64) {
+        let conn = self.conn.lock();
+        let _ = conn.execute(
+            "INSERT INTO files_fts(files_fts, rowid, name_lower) VALUES('delete', ?1, '')",
+            params![rowid],
+        );
+    }
+
+    /// Rebuild FTS index from the files table (used after full rebuild).
+    pub fn rebuild_fts(&self) {
+        let conn = self.conn.lock();
+        let _ = conn.execute_batch("DELETE FROM files_fts;");
+        let _ = conn.execute_batch(
+            "INSERT INTO files_fts(rowid, name_lower) SELECT id, name_lower FROM files;",
+        );
+    }
+
+    /// Search via FTS5 trigram. Returns (dir_path, file_name) pairs.
+    /// Falls back to LIKE for queries shorter than 3 characters.
+    pub fn search_fts(
+        &self,
+        query: &str,
+        case_sensitive: bool,
+        limit: usize,
+    ) -> Vec<(String, String)> {
+        let conn = self.conn.lock();
+        let q = query.trim();
+        if q.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+
+        // For short queries (< 3 chars) or non-ASCII (CJK, etc.),
+        // FTS5 trigram is unreliable; fall back to LIKE.
+        if q.len() < 3 || !q.is_ascii() {
+            let pattern = if case_sensitive {
+                format!("%{}%", q)
+            } else {
+                format!("%{}%", q.to_lowercase())
+            };
+            let sql = if case_sensitive {
+                "SELECT d.path, f.name FROM files f
+                 JOIN dirs d ON d.id = f.dir_id
+                 WHERE f.name LIKE ?1
+                 LIMIT ?2"
+            } else {
+                "SELECT d.path, f.name FROM files f
+                 JOIN dirs d ON d.id = f.dir_id
+                 WHERE f.name_lower LIKE ?1
+                 LIMIT ?2"
+            };
+            let mut stmt = conn.prepare(sql).unwrap();
+            let rows = stmt
+                .query_map(params![pattern, limit as i64], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                    ))
+                })
+                .unwrap();
+            return rows.filter_map(|r| r.ok()).collect();
+        }
+
+        // FTS5 trigram search.
+        let sql = if case_sensitive {
+            "SELECT d.path, f.name FROM files_fts
+             JOIN files f ON f.id = files_fts.rowid
+             JOIN dirs d ON d.id = f.dir_id
+             WHERE files_fts MATCH ?1 AND f.name = f.name_lower
+             LIMIT ?2"
+        } else {
+            "SELECT d.path, f.name FROM files_fts
+             JOIN files f ON f.id = files_fts.rowid
+             JOIN dirs d ON d.id = f.dir_id
+             WHERE files_fts MATCH ?1
+             LIMIT ?2"
+        };
+
+        let mut stmt = match conn.prepare(sql) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt
+            .query_map(params![q, limit as i64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .unwrap();
+        rows.filter_map(|r| r.ok()).collect()
+    }
+
+    /// LIKE-based search — returns (dir_path, file_name, file_id).
+    /// Used as fallback for non-ASCII queries and regex/pattern filtering.
+    pub fn search_like(
+        &self,
+        pattern: &str,
+        case_sensitive: bool,
+        limit: usize,
+    ) -> Vec<(String, String)> {
+        let conn = self.conn.lock();
+        let sql = if case_sensitive {
+            "SELECT d.path, f.name FROM files f
+             JOIN dirs d ON d.id = f.dir_id
+             WHERE f.name LIKE ?1
+             LIMIT ?2"
+        } else {
+            "SELECT d.path, f.name FROM files f
+             JOIN dirs d ON d.id = f.dir_id
+             WHERE f.name_lower LIKE ?1
+             LIMIT ?2"
+        };
+        let mut stmt = conn.prepare(sql).unwrap();
+        stmt.query_map(params![pattern, limit as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect()
     }
 }

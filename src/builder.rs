@@ -2,9 +2,8 @@ use crate::db::Db;
 use crate::filters::{compile_exclude_rules, is_excluded, ExcludeRules};
 use crate::utils::{get_root_directories, normalize_path_for_index, should_skip_path};
 use crossbeam::channel::Sender;
-use dashmap::DashMap;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 use walkdir::WalkDir;
@@ -46,8 +45,8 @@ fn scan_root(
             continue;
         }
         if let Some(name) = entry.file_name().to_str() {
-            let normalized_path = normalize_path_for_index(entry.path());
-            batch.push((name.to_lowercase(), normalized_path));
+            let normalized = normalize_path_for_index(entry.path());
+            batch.push((name.to_lowercase(), normalized));
             if batch.len() >= BATCH_SIZE {
                 let _ = tx.send(std::mem::replace(
                     &mut batch,
@@ -62,23 +61,8 @@ fn scan_root(
     }
 }
 
-fn apply_batch_to_index(
-    index: &Arc<DashMap<String, Vec<PathBuf>>>,
-    entries: &[(String, PathBuf)],
-    dedupe: bool,
-) {
-    for (name, path) in entries {
-        let mut bucket = index.entry(name.clone()).or_default();
-        if !dedupe || !bucket.iter().any(|existing| existing == path) {
-            bucket.push(path.clone());
-        }
-    }
-}
-
 pub fn build_index(
     db: &Db,
-    index: &Arc<DashMap<String, Vec<PathBuf>>>,
-    index_write_lock: &Arc<Mutex<()>>,
     path: Option<String>,
     rebuild: bool,
     filters: &BuildFilterSettings,
@@ -88,20 +72,12 @@ pub fn build_index(
             let root = PathBuf::from(p);
             if root.exists() {
                 db.delete_under_root(root.as_path());
-                let _guard = index_write_lock
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                purge_index_under_root(index, root.as_path());
             }
         }
     }
 
     if rebuild {
-        let _guard = index_write_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         db.clear_files();
-        index.clear();
     }
 
     let start = Instant::now();
@@ -145,10 +121,6 @@ pub fn build_index(
 
         if db_batch.len() >= BATCH_SIZE {
             db.insert_batch(&db_batch);
-            let _guard = index_write_lock
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            apply_batch_to_index(index, &db_batch, !rebuild);
             db_batch.clear();
         }
 
@@ -158,40 +130,12 @@ pub fn build_index(
     }
     if !db_batch.is_empty() {
         db.insert_batch(&db_batch);
-        let _guard = index_write_lock
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        apply_batch_to_index(index, &db_batch, !rebuild);
     }
 
     for h in handles {
         let _ = h.join();
     }
 
-    println!("Scan + DB write took: {:?}", start.elapsed());
-
-    println!("In-memory index updated incrementally during scan");
-
-    println!(
-        "Index build completed, {} files total, took {:?}",
-        count,
-        start.elapsed()
-    );
+    println!("Build completed, {} files total, took {:?}", count, start.elapsed());
     count
-}
-
-fn purge_index_under_root(index: &Arc<DashMap<String, Vec<PathBuf>>>, root: &Path) {
-    if root == Path::new("/") {
-        index.clear();
-        return;
-    }
-    let root_text = root.to_string_lossy();
-    let prefix = format!("{}/", root_text);
-    index.retain(|_, v| {
-        v.retain(|p| {
-            let text = p.to_string_lossy();
-            p.as_path() != root && !text.starts_with(&prefix)
-        });
-        !v.is_empty()
-    });
 }
