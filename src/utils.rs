@@ -126,5 +126,6 @@ pub fn should_skip_path(path: &Path) -> bool {
             | "/Volumes/Macintosh HD"
     ) || path_str.contains("/.Spotlight-V100")
         || path_str.contains("/.fseventsd")
+        || path_str.contains("/Library/Caches/MacHunt")
 }
 
