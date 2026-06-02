@@ -816,11 +816,11 @@ impl Db {
         let (path_clause, path_param) = Self::path_prefix_clause(path_prefix);
         let lim = limit as i64;
 
-        // For short queries (< 3 chars) or queries with non-alphanumeric
-        // characters (dots, hyphens, spaces, CJK, etc.), FTS5 trigram is
-        // unreliable because its tokenizer splits on those characters;
-        // fall back to LIKE/GLOB.
-        if q.len() < 3 || !q.chars().all(|c| c.is_alphanumeric()) {
+        // Fall back to LIKE/GLOB when FTS5 trigram is unreliable:
+        // - Fewer than 3 characters (chars, not bytes — 2 CJK chars = 0 trigrams)
+        // - Non-ASCII (CJK, etc. — trigram tokenizer may not handle well)
+        // - ASCII with special characters (dots, hyphens — tokenizer splits on these)
+        if q.chars().count() < 3 || !q.is_ascii() || !q.chars().all(|c| c.is_alphanumeric()) {
             if case_sensitive {
                 let sql = format!(
                     "SELECT d.path, f.name FROM files f
