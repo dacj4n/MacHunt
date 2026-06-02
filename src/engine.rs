@@ -252,7 +252,7 @@ impl Engine {
         let query_lower = query.to_lowercase();
         let candidates = self
             .db
-            .search_fuzzy_candidates(&query_lower, options.path_prefix.as_deref().and_then(|p| p.to_str()), 3000);
+            .search_fuzzy_candidates(&query_lower, options.path_prefix.as_deref().and_then(|p| p.to_str()), 2000);
         let q_len = query.chars().count();
         let mut scored: Vec<(PathBuf, usize)> = Vec::new();
 
@@ -309,7 +309,7 @@ impl Engine {
         };
         // Fetch many more rows than the display limit, because build_results
         // filters out non-existent paths and non-matching types (file vs dir).
-        let fetch_limit = (limit * 20).max(10_000);
+        let fetch_limit = limit * 2;
         let results = self
             .db
             .search_fts(&query, options.case_sensitive, options.path_prefix.as_deref().and_then(|p| p.to_str()), fetch_limit);
@@ -337,7 +337,7 @@ impl Engine {
         // Use LIKE with the literal fragment to get candidates, then filter by regex.
         let results = self
             .db
-            .search_like(&pattern, options.case_sensitive, options.path_prefix.as_deref().and_then(|p| p.to_str()), limit.max(2000));
+            .search_like(&pattern, options.case_sensitive, options.path_prefix.as_deref().and_then(|p| p.to_str()), limit * 2);
         let mut out = Vec::new();
         for (dir_path, file_name) in results {
             let target = if options.case_sensitive {
