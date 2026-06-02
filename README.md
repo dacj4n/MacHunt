@@ -4,31 +4,6 @@ A fully local macOS search tool for files and folders, with both CLI and native 
 
 [中文文档](README_zh.md)
 
-## Version
-
-- GUI: `v0.4.1`
-- CLI/Core: `v0.4.1`
-
-## Latest Updates (v0.4.1)
-
-- **Major performance overhaul**: Replaced in-memory `DashMap` index (which stored
-  full paths for every file) with SQLite FTS5 trigram search. Memory usage dropped from
-  ~1.0 GB to ~200 MB, CPU from 96% to ~30%. The dirty-root polling worker was
-  replaced with an event-driven design, enabling App Nap and near-zero idle CPU.
-- **CLI `search` subcommand**: `machunt search "keyword"` for substring search,
-  `-p "*.rs"` for wildcard patterns, `--json` for structured output, `-P` for path
-  filtering, `-n` for result limit.
-- **Fuzzy search**: `machunt search "redme" -F` finds "README" with typo tolerance
-  (Levenshtein edit distance). Also available in GUI via regex+pattern mode.
-- **APFS rename handling**: Fixed stale index entries when files are renamed on APFS.
-  The watcher now cleans up the old path when only a RENAMED event is received.
-- **Wildcard consistency**: Single `*` now consistently means "within one directory"
-  in both search patterns and exclude rules (`**` for cross-directory).
-- **CFString memory leak**: Fixed a Core Foundation reference leak in the FSEvents
-  stream setup.
-- **SQLite pragma tuning**: `mmap_size` 256→32 MB, `cache_size` 64→8 MB, reducing
-  backend memory while maintaining sub-millisecond search latency.
-
 ## File Search Comparison
 
 | | MacHunt | macOS Spotlight | Raycast | uTools |

@@ -238,34 +238,40 @@ impl Engine {
     }
 
     fn search_fuzzy(&self, options: &SearchOptions, limit: usize) -> Vec<PathBuf> {
-        let query_lower = options.query.to_lowercase();
-        if query_lower.is_empty() {
+        let query = if options.case_sensitive {
+            options.query.clone()
+        } else {
+            options.query.to_lowercase()
+        };
+        if query.is_empty() {
             return Vec::new();
         }
 
         // Use broad LIKE to get candidates, then filter by edit distance.
+        // Candidate pre-filter always uses lowered prefix because f.name_lower is lowered.
+        let query_lower = query.to_lowercase();
         let candidates = self
             .db
             .search_fuzzy_candidates(&query_lower, 3000);
-        let q_len = query_lower.chars().count();
+        let q_len = query.chars().count();
         let mut scored: Vec<(PathBuf, usize)> = Vec::new();
 
         for (dir_path, file_name) in candidates {
-            let name_lower = if options.case_sensitive {
+            let name_cmp = if options.case_sensitive {
                 file_name.clone()
             } else {
                 file_name.to_lowercase()
             };
 
             // Fast length pre-filter: skip names too far from query length.
-            let n_len = name_lower.chars().count();
+            let n_len = name_cmp.chars().count();
             if n_len.abs_diff(q_len) > 3 {
                 continue;
             }
 
-            let dist = levenshtein(&name_lower, &query_lower);
+            let dist = levenshtein(&name_cmp, &query);
             // Allow up to (query_len / 3) + 1 edits; minimum tolerance of 1 for short queries.
-            let max_dist = (query_lower.len() / 3).max(1);
+            let max_dist = (query.len() / 3).max(1);
             if dist > max_dist {
                 continue;
             }

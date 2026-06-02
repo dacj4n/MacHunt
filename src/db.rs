@@ -772,24 +772,24 @@ impl Db {
         }
 
         // For short queries (< 3 chars) or non-ASCII (CJK, etc.),
-        // FTS5 trigram is unreliable; fall back to LIKE.
+        // FTS5 trigram is unreliable; fall back to LIKE/GLOB.
         if q.len() < 3 || !q.is_ascii() {
-            let pattern = if case_sensitive {
-                format!("%{}%", q)
-            } else {
-                format!("%{}%", q.to_lowercase())
-            };
-            let sql = if case_sensitive {
-                "SELECT d.path, f.name FROM files f
+            let sql;
+            let pattern;
+            if case_sensitive {
+                // GLOB is case-sensitive; LIKE is not (for ASCII).
+                sql = "SELECT d.path, f.name FROM files f
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE f.name LIKE ?1
-                 LIMIT ?2"
+                 WHERE f.name GLOB ?1
+                 LIMIT ?2";
+                pattern = format!("*{}*", q);
             } else {
-                "SELECT d.path, f.name FROM files f
+                sql = "SELECT d.path, f.name FROM files f
                  JOIN dirs d ON d.id = f.dir_id
                  WHERE f.name_lower LIKE ?1
-                 LIMIT ?2"
-            };
+                 LIMIT ?2";
+                pattern = format!("%{}%", q.to_lowercase());
+            }
             let mut stmt = conn.prepare(sql).unwrap();
             let rows = stmt
                 .query_map(params![pattern, limit as i64], |row| {
@@ -803,33 +803,47 @@ impl Db {
         }
 
         // FTS5 trigram search.
-        let sql = if case_sensitive {
-            "SELECT d.path, f.name FROM files_fts
-             JOIN files f ON f.id = files_fts.rowid
-             JOIN dirs d ON d.id = f.dir_id
-             WHERE files_fts MATCH ?1 AND f.name = f.name_lower
-             LIMIT ?2"
+        if case_sensitive {
+            // FTS5 index holds lowered data; MATCH against lowered query for speed.
+            // GLOB post-filter against f.name ensures case-accurate results
+            // (SQLite LIKE is case-insensitive for ASCII).
+            let sql = "SELECT d.path, f.name FROM files_fts
+                 JOIN files f ON f.id = files_fts.rowid
+                 JOIN dirs d ON d.id = f.dir_id
+                 WHERE files_fts MATCH ?1 AND f.name GLOB ?2
+                 LIMIT ?3";
+            let lowered = q.to_lowercase();
+            let pattern = format!("*{}*", q);
+            let mut stmt = match conn.prepare(sql) {
+                Ok(s) => s,
+                Err(_) => return Vec::new(),
+            };
+            let rows = stmt
+                .query_map(params![lowered, pattern, limit as i64], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .unwrap();
+            rows.filter_map(|r| r.ok()).collect()
         } else {
-            "SELECT d.path, f.name FROM files_fts
-             JOIN files f ON f.id = files_fts.rowid
-             JOIN dirs d ON d.id = f.dir_id
-             WHERE files_fts MATCH ?1
-             LIMIT ?2"
-        };
-
-        let mut stmt = match conn.prepare(sql) {
-            Ok(s) => s,
-            Err(_) => return Vec::new(),
-        };
-        let rows = stmt
-            .query_map(params![q, limit as i64], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .unwrap();
-        rows.filter_map(|r| r.ok()).collect()
+            let sql = "SELECT d.path, f.name FROM files_fts
+                 JOIN files f ON f.id = files_fts.rowid
+                 JOIN dirs d ON d.id = f.dir_id
+                 WHERE files_fts MATCH ?1
+                 LIMIT ?2";
+            let mut stmt = match conn.prepare(sql) {
+                Ok(s) => s,
+                Err(_) => return Vec::new(),
+            };
+            let rows = stmt
+                .query_map(params![q, limit as i64], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .unwrap();
+            rows.filter_map(|r| r.ok()).collect()
+        }
     }
 
-    /// LIKE-based search — returns (dir_path, file_name, file_id).
+    /// LIKE/GLOB-based candidate search — returns (dir_path, file_name).
     /// Used as fallback for non-ASCII queries and regex/pattern filtering.
     pub fn search_like(
         &self,
@@ -838,19 +852,24 @@ impl Db {
         limit: usize,
     ) -> Vec<(String, String)> {
         let conn = self.conn.lock();
-        let sql = if case_sensitive {
-            "SELECT d.path, f.name FROM files f
+        let sql;
+        let query_param;
+        if case_sensitive {
+            // GLOB is case-sensitive; convert LIKE wildcards to GLOB wildcards.
+            sql = "SELECT d.path, f.name FROM files f
              JOIN dirs d ON d.id = f.dir_id
-             WHERE f.name LIKE ?1
-             LIMIT ?2"
+             WHERE f.name GLOB ?1
+             LIMIT ?2";
+            query_param = pattern.replace('%', "*").replace('_', "?");
         } else {
-            "SELECT d.path, f.name FROM files f
+            sql = "SELECT d.path, f.name FROM files f
              JOIN dirs d ON d.id = f.dir_id
              WHERE f.name_lower LIKE ?1
-             LIMIT ?2"
+             LIMIT ?2";
+            query_param = pattern.to_string();
         };
         let mut stmt = conn.prepare(sql).unwrap();
-        stmt.query_map(params![pattern, limit as i64], |row| {
+        stmt.query_map(params![query_param, limit as i64], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
         .unwrap()

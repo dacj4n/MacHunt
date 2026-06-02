@@ -4,25 +4,6 @@
 
 [English](README.md)
 
-## 版本
-
-- GUI：`v0.4.1`
-- CLI/Core：`v0.4.1`
-
-## 最新更新（v0.4.1）
-
-- **性能大幅优化**：移除内存 `DashMap` 索引（为每个文件存储完整路径），
-  替换为 SQLite FTS5 trigram 搜索。内存从 ~1.0 GB 降至 ~200 MB，CPU 从 96% 降至 ~30%。
-  移除 dirty-root 轮询线程，改为事件驱动，App Nap 可正常开启，空闲 CPU 接近零。
-- **CLI `search` 子命令**：`machunt search “关键词”` 子串搜索，
-  `-p “*.rs”` 通配符搜索，`--json` JSON 输出，`-P` 路径过滤，`-n` 限制结果数。
-- **模糊搜索**：`machunt search -F “redme”` 可找到 “README”（Levenshtein 编辑距离容错）。
-- **APFS 重命名处理**：修复 APFS 上文件重命名后旧路径残留问题。
-- **通配符规则统一**：单 `*` 统一为不跨目录（`**` 跨目录），排除规则与搜索规则一致。
-  设置页新增通配符提示。
-- **CFString 内存泄漏**：修复 FSEvents 流创建时的 Core Foundation 引用泄漏。
-- **SQLite 参数调优**：`mmap_size` 256→32 MB，`cache_size` 64→8 MB。
-
 ## 文件搜索工具对比
 
 | | MacHunt | macOS 聚焦 | Raycast | uTools |
