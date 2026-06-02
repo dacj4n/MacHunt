@@ -793,6 +793,7 @@ function App() {
   const [selectedItemPaths, setSelectedItemPaths] = useState<string[]>([]);
   const [selectionAnchorPath, setSelectionAnchorPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
   const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>(
     () => loadStoredColumnWidths() ?? DEFAULT_COLUMN_WIDTHS
   );
@@ -852,6 +853,14 @@ function App() {
   const tabLabel = (tab: TabId): string => t[`tab_${tab}` as const];
   const formatIndexedItems = (count: number): string => fmt(t.indexedItems, { count: count.toLocaleString() });
   const formatShownItems = (count: number): string => fmt(t.shownItems, { count: count.toLocaleString() });
+  const ROW_HEIGHT = 46;
+  const VISIBLE_BUFFER = 10;
+  const visibleStart = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VISIBLE_BUFFER);
+  const visibleEnd = Math.min(items.length, visibleStart + Math.ceil(window.innerHeight / ROW_HEIGHT) + VISIBLE_BUFFER * 2);
+  const visibleItems = items.slice(visibleStart, visibleEnd);
+  const topSpacerHeight = visibleStart * ROW_HEIGHT;
+  const bottomSpacerHeight = (items.length - visibleEnd) * ROW_HEIGHT;
+
   const clearOpenWithCloseTimer = () => {
     if (openWithCloseTimerRef.current !== null) {
       window.clearTimeout(openWithCloseTimerRef.current);
@@ -1547,6 +1556,7 @@ function App() {
         setItems([]);
         setTotalFound(0);
         setTookMs(0);
+        setScrollTop(0);
         return;
       }
 
@@ -1564,11 +1574,14 @@ function App() {
         setItems(sorted);
         setTotalFound(sorted.length);
         setTookMs(response.tookMs);
+        setScrollTop(0);
+        if (tableBodyRef.current) tableBodyRef.current.scrollTop = 0;
       } catch (err) {
         if (!cancelled) {
           setError(String(err));
           setItems([]);
           setTotalFound(0);
+          setScrollTop(0);
         }
       } finally {
         if (!cancelled) {
@@ -2337,8 +2350,11 @@ function App() {
                     </span>
                   </div>
 
-                  <div className="table-body" ref={tableBodyRef} onMouseDown={clearSelectionOnBlankArea}>
-                    {items.map((item, index) => {
+                  <div className="table-body" ref={tableBodyRef} onMouseDown={clearSelectionOnBlankArea}
+                    onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}>
+                    <div style={{ height: topSpacerHeight }} />
+                    {visibleItems.map((item, vi) => {
+                      const index = visibleStart + vi;
                       const token = iconToken(item);
                       return (
                         <article
@@ -2384,6 +2400,7 @@ function App() {
                         </article>
                       );
                     })}
+                    <div style={{ height: bottomSpacerHeight }} />
                   </div>
                 </>
               )}

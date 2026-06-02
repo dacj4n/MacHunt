@@ -565,8 +565,7 @@ body {
   align-items: center;
   border-bottom: 1px solid #e6ebf2;
   padding: 0 16px;
-  min-height: 46px;
-  transition: background-color 120ms ease;
+  height: 46px;
   -webkit-user-select: none;
   user-select: none;
 }
