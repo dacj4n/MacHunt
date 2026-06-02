@@ -1,117 +1,65 @@
 # MacHunt
 
-一个纯本地运行的 macOS 文件/文件夹搜索工具，提供 CLI 与原生 GUI（Tauri + React）两种入口，不依赖 HTTP 后端服务。
+一个纯本地运行的 macOS 文件/文件夹搜索工具，提供 CLI 与原生 GUI（Tauri + React）两种入口。不依赖 HTTP 后端，不上传任何数据。
 
 [English](README.md)
 
-## 文件搜索工具对比
+## 简介
 
-| | MacHunt | macOS 聚焦 | Raycast | uTools |
-|---|---|---|---|---|
-| **全文件系统扫描** | 是（300万文件 ~10s） | 是（通过 `mdfind`） | 文件搜索插件 | 插件形式 |
-| **搜索延迟** | <5ms（FTS5 trigram） | 50–200ms+ | 视插件 | 视插件 |
-| **索引格式** | SQLite FTS5（开放、可审计） | 私有格式 | 私有格式 | N/A |
-| **CLI** | 是（`machunt search`） | 是（`mdfind`） | 否 | 否 |
-| **原生 GUI** | 是（Tauri） | 系统内建 | 是（Electron） | 是（Electron） |
-| **模糊搜索** | 是（Levenshtein） | 部分 | 否 | 否 |
-| **增量更新** | FSEvents | FSEvents | 视情况 | N/A |
-| **排除/监听目录配置** | 是（GUI + 通配符） | 有限（系统偏好设置） | 否 | 否 |
-| **程序坞可选** | 是（开关） | N/A | 否 | 否 |
-| **开源** | 是 | 否 | 否 | 部分 |
+MacHunt 将你的整个文件系统扫描到本地 SQLite FTS5 索引中。CLI 搜索耗时 <5ms。通过 macOS FSEvents 实现增量实时更新。可以理解为开源的 Spotlight，带强大的 CLI，数据永不离开本机。
 
-**MacHunt 的核心优势：**
+## 截图
 
-- **搜索迅速** — SQLite FTS5 trigram 索引，常规查询 5<ms，无需内存索引。
-- **资源占用低** — 总计 ~200 MB（后端 ~70 MB + WebView）。App Nap 开启，空闲 CPU 接近零。
-- **CLI 完整** — `machunt search` 支持子串、通配符、模糊搜索和 JSON 输出。
-- **配置透明** — 标准 SQLite 数据库，可审计、可查询。配置均为 JSON 文件。
-- **完全开源** — 不依赖私有服务，所有代码可审查、可自行构建。
+<table>
+<thead>
+<tr>
+<th width="50%" align="center">搜索</th>
+<th width="50%" align="center">设置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/search.png"><img src="./screenshots/search.png" alt="搜索" width="100%" style="max-width: 100%;"></a></td>
+<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/settings.png"><img src="./screenshots/settings.png" alt="设置" width="100%" style="max-width: 100%;"></a></td>
+</tr>
+<tr>
+<td align="center"><strong>全盘搜索、分类标签</strong></td>
+<td align="center"><strong>设置</strong></td>
+</tr>
+</tbody>
+</table>
 
-## 核心能力
+<table>
+<thead>
+<tr>
+<th width="50%" align="center">Quick Look 预览</th>
+<th width="50%" align="center">路径过滤与右键菜单</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/quicklook.png"><img src="./screenshots/quicklook.png" alt="Quick Look" width="100%" style="max-width: 100%;"></a></td>
+<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/context-menu.png"><img src="./screenshots/context-menu.png" alt="右键菜单" width="100%" style="max-width: 100%;"></a></td>
+</tr>
+<tr>
+<td align="center"><strong>空格触发原生 Quick Look，支持多选</strong></td>
+<td align="center"><strong>Finder 选取、右键操作</strong></td>
+</tr>
+</tbody>
+</table>
 
-### CLI
+## 安装
 
-- 本地索引构建/重建
-- `search` 子命令：子串、通配符、模糊搜索 + JSON 输出
-- 子串搜索（`machunt search "关键词"`）
-- 通配符搜索（`machunt search -p "*.rs"`）
-- 模糊/容错搜索（`machunt search -F "redme"` 可找到 "README"）
-- JSON 输出（`machunt search --json "关键词"`）
-- 文件/文件夹类型筛选（`-f` / `-d`）
-- 路径前缀过滤（`-P ~/projects`）
-- FSEvents 增量监听（`watch`）
-- 索引维护（`optimize --vacuum`）
+从 [GitHub Releases](https://github.com/dacj4n/MacHunt/releases) 下载最新 `.dmg`，挂载后拖入 `/Applications`。
 
-### GUI
-
-- 本地即时搜索（无服务端）
-- 正则开关 + 大小写匹配开关
-- 路径过滤：手动输入 + 下拉建议 + Finder 选取
-- 启动自动开启监听
-- 构建 / 重建
-- 分类筛选（全部、文件、文件夹、文档、图片、音视频、代码、压缩包）
-- 表头排序（名称/路径/类型/大小/修改时间）
-- 列宽拖拽 + 宽度记忆
-- 单选/多选（`Shift` 连选、`Cmd` 多选）
-- 键盘上下移动选中（`↑` / `↓`）
-- 空格触发 Quick Look（支持多选）
-- 双击打开文件或目录
-- 右键菜单：
-  - 打开
-  - 打开于...（Finder / QSpace Pro / Terminal / WezTerm）
-  - 拷贝结果 / 拷贝所有结果（原生文件对象剪贴板）
-  - 拷贝名称 / 路径
-  - 拷贝所有名称 / 所有路径
-  - 移到废纸篓
-- `Cmd/Ctrl + C` 复制当前选中搜索结果（文件对象）
-- 主题设置（浅色 / 深色 / 跟随系统）
-- 语言设置（中文 / English）
-- 快捷键设置（全局唤起/隐藏窗口）
-- 启动设置（开机自启 + 静默启动）
-- 索引维护设置（重建后自动 `VACUUM` 开关）
-- 排除目录设置：
-  - 完整目录规则 + 正则/通配符规则
-  - 完整目录支持 Finder 选取
-  - 规则持久化并在构建/重建时生效
-- 监听根目录设置：
-  - watcher 监听范围可配置，不再固定监听 `/`
-  - 支持在设置页增删根目录
-  - 支持 Finder 选取根目录
-
-## 技术栈
-
-- 核心：Rust
-- CLI：Clap
-- GUI 前端：React 18 + TypeScript + Vite
-- GUI 容器：Tauri 2
-- 全局快捷键：`tauri-plugin-global-shortcut`
-- 存储：SQLite FTS5（`rusqlite`，WAL，trigram tokenizer）
-- 扫描：WalkDir + Crossbeam
-- 监听：macOS FSEvents（CoreServices）
-
-## 架构总览
-
-- `src/`：CLI 与 GUI 共用的核心引擎
-- `src-tauri/`：Tauri 命令层 + 窗口生命周期 + 菜单
-- `src/App.tsx`：GUI 交互层
-
-## 构建与运行
-
-### 环境要求
-
-- macOS 10.15+
-- Rust 1.70+
-- Node.js 18+
-- npm 9+
-
-### 安装
+或从源码构建：
 
 ```bash
 git clone https://github.com/dacj4n/MacHunt.git
 cd MacHunt
 ```
 
-### CLI
+### 仅 CLI
 
 ```bash
 cargo build --release
@@ -132,31 +80,43 @@ npm run build
 npm run tauri build
 ```
 
-## 构建命令区别
+## 环境要求
 
-### `npm run build`
+- macOS 10.15+
+- Rust 1.70+
+- Node.js 18+（仅 GUI）
+- npm 9+（仅 GUI）
 
-- 只构建前端资源（TypeScript + Vite）
-- 产物是 `dist/` 静态文件
-- 不会编译 `src-tauri` 的 Rust 代码
-- 不会生成 `.app` / `.dmg`
-
-### `npm run tauri build`
-
-- 构建完整桌面应用安装包
-- 会先执行 `src-tauri/tauri.conf.json` 中的 `beforeBuildCommand`（当前为 `npm run build`）
-- 会编译 `src-tauri/` 下的 Rust 代码
-- 最终输出可安装产物（如 `.app` / `.dmg`）
-
-## CLI 参数速查
-
-总体语法：
+## 快速上手
 
 ```bash
-machunt <COMMAND>
+# 首先构建索引（全盘扫描，300万文件约 10 秒）
+machunt build
+
+# 子串搜索（不区分大小写）
+machunt search "预算"
+
+# 通配符模式
+machunt search -p "*.rs"
+
+# 模糊/容错搜索
+machunt search -F "redme"   # 可找到 README
+
+# 区分大小写
+machunt search -c "Makefile"
+
+# JSON 输出，方便脚本处理
+machunt search --json "发票" | jq .
+
+# 启动实时监听 + 交互搜索
+machunt watch
 ```
 
-子命令：
+## CLI 命令参考
+
+```
+machunt <COMMAND>
+```
 
 ### `search`
 
@@ -164,15 +124,22 @@ machunt <COMMAND>
 machunt search [OPTIONS] <QUERY>
 ```
 
-- `<QUERY>`：搜索关键词
-- `-p, --pattern`：通配符/正则模式（`*.rs`、`test?.txt`）
-- `-F, --fuzzy`：模糊/容错搜索（Levenshtein 编辑距离）
-- `-c, --case-sensitive`：区分大小写
-- `-n, --limit <N>`：最大结果数（默认 100）
-- `-P, --path <PATH>`：路径前缀过滤
-- `-f, --files`：仅文件
-- `-d, --dirs`：仅目录
-- `--json`：JSON 输出
+| 选项 | 说明 |
+|------|------|
+| `-p, --pattern` | 通配符/正则模式（如 `*.rs`、`test?.txt`） |
+| `-F, --fuzzy` | 模糊/容错搜索（Levenshtein 编辑距离） |
+| `-c, --case-sensitive` | 区分大小写 |
+| `-n, --limit <N>` | 最大结果数（默认 100） |
+| `-P, --path <PATH>` | 路径前缀过滤 |
+| `-f, --files` | 仅文件 |
+| `-d, --dirs` | 仅目录 |
+| `--json` | JSON 输出 |
+
+通配符规则：
+- `*` — 匹配任意字符不含 `/`（单层目录）
+- `**` — 匹配任意字符含 `/`（所有层级）
+- `?` — 匹配单个字符不含 `/`
+- `{a,b}` — 匹配 `a` 或 `b`
 
 ### `build`
 
@@ -180,9 +147,11 @@ machunt search [OPTIONS] <QUERY>
 machunt build [OPTIONS]
 ```
 
-- `-p, --path <PATH>`：只构建指定范围
-- `--rebuild`：先清空再重建
-- `--include-dirs <true|false>`：是否索引目录（默认 `true`）
+| 选项 | 说明 |
+|------|------|
+| `-p, --path <PATH>` | 仅构建指定范围 |
+| `--rebuild` | 先清空再重建 |
+| `--include-dirs <true\|false>` | 是否索引目录（默认 `true`） |
 
 ### `watch`
 
@@ -190,9 +159,7 @@ machunt build [OPTIONS]
 machunt watch
 ```
 
-- 启动 FSEvents 监听
-- 有 EventID 时从上次位置续跑
-- 进入终端交互搜索
+启动 FSEvents 监听，有历史 EventID 时从上次位置续跑，进入终端交互搜索循环。
 
 ### `optimize`
 
@@ -200,33 +167,159 @@ machunt watch
 machunt optimize [--vacuum]
 ```
 
-- 默认执行 WAL checkpoint
-- 可选 `--vacuum` 回收 DB 文件空间
+默认执行 WAL checkpoint，可选 `--vacuum` 回收数据库文件空间。
 
-通配符规则（`--pattern`）：
+## 工作原理
 
-- `*`：匹配任意字符不含 `/`（单层目录）
-- `**`：匹配任意字符含 `/`（所有层级）
-- `?`：匹配单个字符不含 `/`
-- `{a,b}`：匹配 `a` 或 `b`
+```
+┌──────────┐     ┌───────────────┐     ┌──────────┐
+│  WalkDir  │ ──→ │  SQLite FTS5  │ ←── │ FSEvents │
+│  (构建)   │     │  (trigram)    │     │  (监听)  │
+└──────────┘     └───────┬───────┘     └──────────┘
+                         │
+                    ┌────▼────┐
+                    │  搜索    │
+                    │  <5ms    │
+                    └─────────┘
+```
 
-## 运行时数据位置
+- **构建**：`WalkDir` 遍历文件系统，将 `(name_lower, path)` 写入 SQLite FTS5（trigram 分词器）。通过 crossbeam 通道并行处理。
+- **搜索**：FTS5 trigram MATCH，CLI 耗时 <5ms。区分大小写时，FTS5 候选结果再经 GLOB 后过滤（SQLite 的 LIKE 对 ASCII 不区分大小写）。短查询（<3 字符）回退到 LIKE。模糊搜索基于 Levenshtein 编辑距离。
+- **监听**：通过 CoreServices FFI 直调 FSEvents，监听文件的创建、修改、删除、重命名事件，增量更新索引，重启后从持久化的 EventID 续跑。
 
-- 索引库：`~/Library/Caches/MacHunt/index.db`
-- GUI 配置：`~/Library/Application Support/MacHunt/settings.json`（快捷键 + 开机自启 + 静默启动 + 显示程序坞图标 + 重建后自动 VACUUM + 排除目录规则 + 监听根目录）
-- 排除目录规则：保存在 `settings.json`（`excludeExactDirs` / `excludePatternDirs`）
-- 监听根目录：保存在 `settings.json`（`watchRoots`），并同步到 DB meta（`watch_roots`）
-- 日志：`~/Library/Caches/MacHunt/logs/`
+## GUI
 
-## 为什么 DB 会很大
+原生 macOS GUI，基于 Tauri 2 + React。与 CLI 共用同一 Rust 核心引擎——没有 HTTP 服务器，没有额外的 IPC 开销。
 
-常见原因：
+### 主窗口
 
-- 文件数量巨大（百万级很常见）
-- 默认索引目录，记录数进一步增加
+- 实时全盘搜索
+- 正则开关 + 区分大小写开关
+- 路径过滤（手动输入 + 下拉建议 + Finder 选取）
+- 分类标签：全部 / 文件 / 文件夹 / 文档 / 图片 / 音视频 / 代码 / 压缩包
+- 表头排序：名称、路径、类型、大小、修改时间
+- 列宽拖拽，宽度记忆持久化
+- 单选/多选（`Shift` 连选、`Cmd` 多选）
+- 键盘导航（`↑` `↓`）
+- 空格触发 Quick Look（支持多选）
+- 双击打开
+
+### 右键菜单
+
+打开、打开于...（Finder / QSpace Pro / Terminal / WezTerm）、拷贝名称/路径、拷贝为文件对象、拷贝所有结果、移到废纸篓。
+
+### 设置页面
+
+- **主题**：浅色 / 深色 / 跟随系统
+- **语言**：中文 / English
+- **快捷键**：全局唤起/隐藏窗口（默认 `Cmd+Shift+D`）
+- **启动**：开机自启、静默启动、显示/隐藏 Dock 图标
+- **索引维护**：重建后自动 `VACUUM` 开关
+- **排除目录**：完整目录规则 + 正则/通配符规则
+- **监听根目录**：指定 FSEvents 监听范围
+
+## 功能概览
+
+| 分类 | 能力 |
+|------|------|
+| 搜索模式 | 子串、通配符/正则、模糊（Levenshtein） |
+| 大小写 | CLI 和 GUI 均可切换 |
+| 路径过滤 | 前缀、下拉建议、Finder 选取 |
+| 实时更新 | FSEvents 监听，EventID 持久化 |
+| 文件分类 | 8 个分类标签（扩展名自动归类） |
+| 预览 | 原生 Quick Look（空格，支持多文件） |
+| 导出 | 拷贝为文件对象、CLI JSON 输出 |
+| 主题 | 浅色 / 深色 / 跟随系统 |
+| 国际化 | 中文 / English |
+| 启动 | 开机自启、静默模式、Dock 开关 |
+| 隐私 | 100% 本地，无网络连接 |
+
+## 对比
+
+| | MacHunt | Spotlight | Raycast | uTools |
+|---|---|---|---|---|
+| **全盘扫描** | 是（300万文件 ~10s） | 是（`mdfind`） | 插件形式 | 插件形式 |
+| **搜索延迟** | <5ms（CLI，FTS5 trigram） | 50–200ms+ | 视插件 | 视插件 |
+| **索引格式** | SQLite FTS5（开放） | 私有 | 私有 | N/A |
+| **CLI** | 是 | 是（`mdfind`） | 否 | 否 |
+| **模糊搜索** | 是（Levenshtein） | 部分 | 否 | 否 |
+| **增量更新** | FSEvents | FSEvents | 视情况 | N/A |
+| **开源** | 是 | 否 | 否 | 部分 |
+
+## 开发
+
+### 技术栈
+
+- **核心**：Rust
+- **CLI**：Clap
+- **GUI 前端**：React 18 + TypeScript + Vite
+- **GUI 容器**：Tauri 2
+- **全局快捷键**：`tauri-plugin-global-shortcut`
+- **存储**：SQLite FTS5（`rusqlite`，WAL，trigram tokenizer）
+- **扫描**：WalkDir + Crossbeam channels
+- **监听**：macOS FSEvents（CoreServices FFI）
+
+### 构建命令
+
+| 命令 | 说明 |
+|------|------|
+| `npm run build` | 仅构建前端（TS + Vite → `dist/`） |
+| `npm run tauri build` | 完整构建：前端 + Rust → `.app` / `.dmg` |
+| `npm run tauri dev` | 开发模式（热重载） |
+| `cargo build --release` | 仅 CLI 二进制 |
+
+### `npm run build` 与 `npm run tauri build` 的区别
+
+- `npm run build` 只构建前端资源，**不**编译 Rust，**不**生成 `.app` / `.dmg`。
+- `npm run tauri build` 先执行 `beforeBuildCommand`（即 `npm run build`），再编译 Rust 后端，最终输出可安装产物。
+
+## 项目结构
+
+```
+mac_find/
+├── src/                    # 核心引擎（CLI 与 GUI 共用）
+│   ├── main.rs             # CLI 入口（clap）
+│   ├── lib.rs              # 库入口，导出 Engine
+│   ├── engine.rs           # 引擎：构建/搜索/监听调度
+│   ├── db.rs                # SQLite FTS5：建表、插入、搜索、模糊
+│   ├── builder.rs          # WalkDir 文件系统扫描器
+│   ├── watcher.rs          # FSEvents FFI 监听器
+│   ├── search.rs           # 通配符转正则
+│   ├── filters.rs          # 排除规则（精确 + 正则/通配符）
+│   └── utils.rs            # 路径规范化、跳过逻辑、日志
+├── src-tauri/              # Tauri GUI 后端
+│   ├── src/lib.rs          # Tauri 命令、窗口生命周期、设置
+│   ├── tauri.conf.json     # Tauri 配置
+│   ├── Info.plist          # macOS Bundle 元数据
+│   ├── build.rs            # 构建脚本（编译 ObjC 桥接代码）
+│   └── macos/
+│       └── quicklook_bridge.m  # ObjC 桥接：Quick Look、剪贴板、Dock
+├── src/                    # React 前端
+│   ├── App.tsx             # 主应用组件
+│   ├── App.css             # 样式
+│   └── main.tsx            # 入口
+├── scripts/
+│   ├── set_version.sh      # 统一更新各配置文件的版本号
+│   └── package_release.sh  # 打包 .app/.dmg
+├── doc/                    # 架构文档与版本历史
+├── Cargo.toml              # CLI crate 配置
+└── package.json            # 前端依赖
+```
+
+## 运行时数据
+
+| 路径 | 内容 |
+|------|------|
+| `~/Library/Caches/MacHunt/index.db` | FTS5 搜索索引 |
+| `~/Library/Application Support/MacHunt/settings.json` | GUI 配置 |
+| `~/Library/Caches/MacHunt/logs/` | 调试日志 |
+
+## 为什么索引文件会很大
+
+- macOS 上百万级文件很常见
+- 默认索引目录条目
 - 路径字符串较长，文本存储成本高
-- `dirs + files` 结构虽然降低冗余，但总量大时体积依然可观
-- 写入期 `index.db-wal` 会临时变大
+- 写入期间 `index.db-wal` 会临时增大
 
 维护建议：
 

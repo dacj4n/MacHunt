@@ -757,12 +757,54 @@ impl Db {
         );
     }
 
+    fn map_row(row: &rusqlite::Row) -> rusqlite::Result<(String, String)> {
+        Ok((row.get(0)?, row.get(1)?))
+    }
+
+    /// Execute a name/path query and collect results into a Vec,
+    /// with or without a path-prefix parameter.
+    fn exec_name_query<P1>(
+        conn: &rusqlite::Connection,
+        sql: &str,
+        name_param: P1,
+        path_param: &Option<String>,
+        limit: i64,
+    ) -> Vec<(String, String)>
+    where
+        P1: rusqlite::types::ToSql,
+    {
+        let mut stmt = conn.prepare(sql).unwrap();
+        if let Some(ref pp) = path_param {
+            stmt.query_map(params![name_param, pp, limit], Self::map_row as fn(&rusqlite::Row) -> _)
+        } else {
+            stmt.query_map(params![name_param, limit], Self::map_row as fn(&rusqlite::Row) -> _)
+        }
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect()
+    }
+
+    /// Returns (sql_clause, param_value) for path-prefix filtering, or empty if none.
+    fn path_prefix_clause(prefix: Option<&str>) -> (String, Option<String>) {
+        match prefix {
+            Some(p) if !p.is_empty() => {
+                let escaped = p.replace('%', "\\%").replace('_', "\\_");
+                (
+                    " AND d.path LIKE ? ESCAPE '\\'".to_string(),
+                    Some(format!("{}%", escaped)),
+                )
+            }
+            _ => (String::new(), None),
+        }
+    }
+
     /// Search via FTS5 trigram. Returns (dir_path, file_name) pairs.
-    /// Falls back to LIKE for queries shorter than 3 characters.
+    /// Falls back to LIKE/GLOB for short / non-alphanumeric queries.
     pub fn search_fts(
         &self,
         query: &str,
         case_sensitive: bool,
+        path_prefix: Option<&str>,
         limit: usize,
     ) -> Vec<(String, String)> {
         let conn = self.conn.lock();
@@ -771,75 +813,82 @@ impl Db {
             return Vec::new();
         }
 
-        // For short queries (< 3 chars) or non-ASCII (CJK, etc.),
-        // FTS5 trigram is unreliable; fall back to LIKE/GLOB.
-        if q.len() < 3 || !q.is_ascii() {
-            let sql;
-            let pattern;
+        let (path_clause, path_param) = Self::path_prefix_clause(path_prefix);
+        let lim = limit as i64;
+
+        // For short queries (< 3 chars) or queries with non-alphanumeric
+        // characters (dots, hyphens, spaces, CJK, etc.), FTS5 trigram is
+        // unreliable because its tokenizer splits on those characters;
+        // fall back to LIKE/GLOB.
+        if q.len() < 3 || !q.chars().all(|c| c.is_alphanumeric()) {
             if case_sensitive {
-                // GLOB is case-sensitive; LIKE is not (for ASCII).
-                sql = "SELECT d.path, f.name FROM files f
-                 JOIN dirs d ON d.id = f.dir_id
-                 WHERE f.name GLOB ?1
-                 LIMIT ?2";
-                pattern = format!("*{}*", q);
+                let sql = format!(
+                    "SELECT d.path, f.name FROM files f
+                     JOIN dirs d ON d.id = f.dir_id
+                     WHERE f.name GLOB ?{} LIMIT ?",
+                    path_clause
+                );
+                return Self::exec_name_query(
+                    &conn, &sql,
+                    format!("*{}*", q), &path_param, lim,
+                );
             } else {
-                sql = "SELECT d.path, f.name FROM files f
-                 JOIN dirs d ON d.id = f.dir_id
-                 WHERE f.name_lower LIKE ?1
-                 LIMIT ?2";
-                pattern = format!("%{}%", q.to_lowercase());
+                let sql = format!(
+                    "SELECT d.path, f.name FROM files f
+                     JOIN dirs d ON d.id = f.dir_id
+                     WHERE f.name_lower LIKE ?{} LIMIT ?",
+                    path_clause
+                );
+                return Self::exec_name_query(
+                    &conn, &sql,
+                    format!("%{}%", q.to_lowercase()), &path_param, lim,
+                );
             }
-            let mut stmt = conn.prepare(sql).unwrap();
-            let rows = stmt
-                .query_map(params![pattern, limit as i64], |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                    ))
-                })
-                .unwrap();
-            return rows.filter_map(|r| r.ok()).collect();
         }
 
         // FTS5 trigram search.
         if case_sensitive {
-            // FTS5 index holds lowered data; MATCH against lowered query for speed.
-            // GLOB post-filter against f.name ensures case-accurate results
-            // (SQLite LIKE is case-insensitive for ASCII).
-            let sql = "SELECT d.path, f.name FROM files_fts
+            let sql = format!(
+                "SELECT d.path, f.name FROM files_fts
                  JOIN files f ON f.id = files_fts.rowid
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE files_fts MATCH ?1 AND f.name GLOB ?2
-                 LIMIT ?3";
+                 WHERE files_fts MATCH ? AND f.name GLOB ?{} LIMIT ?",
+                path_clause
+            );
             let lowered = q.to_lowercase();
             let pattern = format!("*{}*", q);
-            let mut stmt = match conn.prepare(sql) {
+            let mut stmt = match conn.prepare(&sql) {
                 Ok(s) => s,
                 Err(_) => return Vec::new(),
             };
-            let rows = stmt
-                .query_map(params![lowered, pattern, limit as i64], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .unwrap();
-            rows.filter_map(|r| r.ok()).collect()
+            if let Some(ref pp) = path_param {
+                stmt.query_map(params![lowered, pattern, pp, lim], Self::map_row as fn(&rusqlite::Row) -> _)
+            } else {
+                stmt.query_map(params![lowered, pattern, lim], Self::map_row as fn(&rusqlite::Row) -> _)
+            }
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect()
         } else {
-            let sql = "SELECT d.path, f.name FROM files_fts
+            let sql = format!(
+                "SELECT d.path, f.name FROM files_fts
                  JOIN files f ON f.id = files_fts.rowid
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE files_fts MATCH ?1
-                 LIMIT ?2";
-            let mut stmt = match conn.prepare(sql) {
+                 WHERE files_fts MATCH ?{} LIMIT ?",
+                path_clause
+            );
+            let mut stmt = match conn.prepare(&sql) {
                 Ok(s) => s,
                 Err(_) => return Vec::new(),
             };
-            let rows = stmt
-                .query_map(params![q, limit as i64], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .unwrap();
-            rows.filter_map(|r| r.ok()).collect()
+            if let Some(ref pp) = path_param {
+                stmt.query_map(params![q, pp, lim], Self::map_row as fn(&rusqlite::Row) -> _)
+            } else {
+                stmt.query_map(params![q, lim], Self::map_row as fn(&rusqlite::Row) -> _)
+            }
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect()
         }
     }
 
@@ -849,32 +898,35 @@ impl Db {
         &self,
         pattern: &str,
         case_sensitive: bool,
+        path_prefix: Option<&str>,
         limit: usize,
     ) -> Vec<(String, String)> {
         let conn = self.conn.lock();
-        let sql;
-        let query_param;
+        let (path_clause, path_param) = Self::path_prefix_clause(path_prefix);
+        let lim = limit as i64;
         if case_sensitive {
-            // GLOB is case-sensitive; convert LIKE wildcards to GLOB wildcards.
-            sql = "SELECT d.path, f.name FROM files f
-             JOIN dirs d ON d.id = f.dir_id
-             WHERE f.name GLOB ?1
-             LIMIT ?2";
-            query_param = pattern.replace('%', "*").replace('_', "?");
+            let sql = format!(
+                "SELECT d.path, f.name FROM files f
+                 JOIN dirs d ON d.id = f.dir_id
+                 WHERE f.name GLOB ?{} LIMIT ?",
+                path_clause
+            );
+            Self::exec_name_query(
+                &conn, &sql,
+                pattern.replace('%', "*").replace('_', "?"), &path_param, lim,
+            )
         } else {
-            sql = "SELECT d.path, f.name FROM files f
-             JOIN dirs d ON d.id = f.dir_id
-             WHERE f.name_lower LIKE ?1
-             LIMIT ?2";
-            query_param = pattern.to_string();
-        };
-        let mut stmt = conn.prepare(sql).unwrap();
-        stmt.query_map(params![query_param, limit as i64], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .unwrap()
-        .filter_map(|r| r.ok())
-        .collect()
+            let sql = format!(
+                "SELECT d.path, f.name FROM files f
+                 JOIN dirs d ON d.id = f.dir_id
+                 WHERE f.name_lower LIKE ?{} LIMIT ?",
+                path_clause
+            );
+            Self::exec_name_query(
+                &conn, &sql,
+                pattern.to_string(), &path_param, lim,
+            )
+        }
     }
 
     /// List all files in a directory (by dir path). Used for rename cleanup.
@@ -934,6 +986,7 @@ impl Db {
     pub fn search_fuzzy_candidates(
         &self,
         query_lower: &str,
+        path_prefix: Option<&str>,
         limit: usize,
     ) -> Vec<(String, String)> {
         let conn = self.conn.lock();
@@ -941,24 +994,30 @@ impl Db {
         if q_len == 0 || limit == 0 {
             return Vec::new();
         }
-        // Use first 2 chars as prefix anchor to narrow candidates,
-        // plus length ±3 to avoid scanning irrelevant names.
+        let (path_clause, path_param) = Self::path_prefix_clause(path_prefix);
         let prefix: String = query_lower.chars().take(2).collect();
         let len_min = q_len.saturating_sub(3).max(1) as i64;
         let len_max = (q_len + 3) as i64;
-        let mut stmt = conn
-            .prepare(
-                "SELECT d.path, f.name FROM files f
-                 JOIN dirs d ON d.id = f.dir_id
-                 WHERE f.name_lower LIKE ?1
-                   AND LENGTH(f.name_lower) BETWEEN ?2 AND ?3
-                 LIMIT ?4",
+        let lim = limit as i64;
+        let sql = format!(
+            "SELECT d.path, f.name FROM files f
+             JOIN dirs d ON d.id = f.dir_id
+             WHERE f.name_lower LIKE ?
+               AND LENGTH(f.name_lower) BETWEEN ? AND ?{} LIMIT ?",
+            path_clause
+        );
+        let mut stmt = conn.prepare(&sql).unwrap();
+        if let Some(ref pp) = path_param {
+            stmt.query_map(
+                params![format!("{}%", prefix), len_min, len_max, pp, lim],
+                Self::map_row as fn(&rusqlite::Row) -> _,
             )
-            .unwrap();
-        stmt.query_map(
-            params![format!("{}%", prefix), len_min, len_max, limit as i64],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        )
+        } else {
+            stmt.query_map(
+                params![format!("{}%", prefix), len_min, len_max, lim],
+                Self::map_row as fn(&rusqlite::Row) -> _,
+            )
+        }
         .unwrap()
         .filter_map(|r| r.ok())
         .collect()

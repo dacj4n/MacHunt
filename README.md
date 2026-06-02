@@ -1,117 +1,65 @@
 # MacHunt
 
-A fully local macOS search tool for files and folders, with both CLI and native GUI (Tauri + React). No HTTP backend service is required.
+A fully local macOS file/folder search tool with both CLI and native GUI (Tauri + React). No HTTP backend, no cloud services.
 
 [中文文档](README_zh.md)
 
-## File Search Comparison
+## Introduction
 
-| | MacHunt | macOS Spotlight | Raycast | uTools |
-|---|---|---|---|---|
-| **Full filesystem scan** | Yes (~10s / 3M files) | Yes (via `mdfind`) | File search plugin | Plugin-based |
-| **Search latency** | <5ms (FTS5 trigram) | 50–200ms+ | Varies by plugin | Varies by plugin |
-| **Index format** | SQLite FTS5 (open, inspectable) | Proprietary | Proprietary | N/A |
-| **CLI** | Yes (`machunt search`) | Yes (`mdfind`) | No | No |
-| **Native GUI** | Yes (Tauri) | Built-in | Yes (Electron) | Yes (Electron) |
-| **Fuzzy search** | Yes (Levenshtein) | Partial | No | No |
-| **Incremental updates** | FSEvents | FSEvents | Varies | N/A |
-| **Exclude / watch config** | Yes (GUI + wildcard) | Limited (System Prefs) | No | No |
-| **Dock optional** | Yes (toggle) | N/A | No | No |
-| **Open source** | Yes | No | No | Partially |
+MacHunt scans your entire filesystem into a local SQLite FTS5 index. CLI searches complete in <5ms. It uses macOS FSEvents for incremental live updates. Think Spotlight, but fully open source, with a powerful CLI, and your data never leaves your machine.
 
-**Why MacHunt:**
+## Screenshots
 
-- **Fast search** — SQLite FTS5 trigram index with sub-5ms latency for typical queries. No in-memory index needed.
-- **Low footprint** — ~200 MB total (backend ~70 MB + WebView). App Nap enabled, near-zero idle CPU.
-- **Full CLI** — `machunt search` with substring, wildcard, fuzzy, and JSON output modes.
-- **Transparent configuration** — standard SQLite database, open and inspectable. Plain JSON settings.
-- **Open source** — no proprietary services, fully auditable, build from source.
+<table>
+<thead>
+<tr>
+<th width="50%" align="center">Search</th>
+<th width="50%" align="center">Settings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/search.png"><img src="./screenshots/search.png" alt="Search" width="100%" style="max-width: 100%;"></a></td>
+<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/settings.png"><img src="./screenshots/settings.png" alt="Settings" width="100%" style="max-width: 100%;"></a></td>
+</tr>
+<tr>
+<td align="center"><strong>Full-disk search, category tabs</strong></td>
+<td align="center"><strong>Settings</strong></td>
+</tr>
+</tbody>
+</table>
 
-## Core Capabilities
+<table>
+<thead>
+<tr>
+<th width="50%" align="center">Quick Look Preview</th>
+<th width="50%" align="center">Path Filter & Context Menu</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/quicklook.png"><img src="./screenshots/quicklook.png" alt="Quick Look" width="100%" style="max-width: 100%;"></a></td>
+<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/context-menu.png"><img src="./screenshots/context-menu.png" alt="Context Menu" width="100%" style="max-width: 100%;"></a></td>
+</tr>
+<tr>
+<td align="center"><strong>Space-triggered native Quick Look, multi-selection supported</strong></td>
+<td align="center"><strong>Finder picker, right-click actions</strong></td>
+</tr>
+</tbody>
+</table>
 
-### CLI
+## Install
 
-- Build / rebuild local index
-- `search` subcommand with substring, wildcard, fuzzy, and JSON output
-- Substring search (`machunt search "keyword"`)
-- Wildcard pattern search (`machunt search -p "*.rs"`)
-- Fuzzy/typo-tolerant search (`machunt search -F "redme"`)
-- JSON output (`machunt search --json "keyword"`)
-- File-only / folder-only filtering (`-f` / `-d`)
-- Path-prefix filtering (`-P ~/projects`)
-- `watch` mode with FSEvents incremental updates
-- `optimize --vacuum` for DB maintenance
+Download the latest `.dmg` from [GitHub Releases](https://github.com/dacj4n/MacHunt/releases), mount it, and drag `MacHunt.app` to `/Applications`.
 
-### GUI
-
-- Instant local search (no server)
-- Regex toggle + case-sensitive toggle
-- Path filter: manual input + suggestion dropdown + Finder picker
-- Auto watcher start on app launch
-- Build / rebuild controls
-- Multi-tab category filter (all/files/folders/documents/images/media/code/archives)
-- Click-to-sort on table headers (name/path/type/size/modified)
-- Draggable column splitters with persisted widths
-- Single/multi selection (`Shift` range, `Cmd` additive)
-- Keyboard row navigation (`ArrowUp/ArrowDown`)
-- Space-triggered Quick Look preview (multi-selection supported)
-- Double-click to open files/folders
-- Context menu actions:
-  - Open
-  - Open With... (Finder / QSpace Pro / Terminal / WezTerm)
-  - Copy result / copy all selected results (native file-object clipboard)
-  - Copy name / path
-  - Copy all selected names / paths
-  - Move to Trash
-- `Cmd/Ctrl + C` to copy selected search results as file objects
-- Theme settings (system/light/dark)
-- Language settings (zh/en)
-- Global shortcut settings for show/hide window
-- Startup settings: launch at login + silent startup (applies to auto-launch only)
-- Index maintenance settings: enable/disable auto `VACUUM` after rebuild
-- Excluded-directory settings:
-  - Exact directory rules + regex/wildcard rules
-  - Finder picker for exact rules
-  - Rules are persisted and applied during build/rebuild
-- Watch-root settings:
-  - Configure watcher roots instead of always monitoring `/`
-  - Add/remove roots from GUI settings
-  - Finder picker for root selection
-
-## Tech Stack
-
-- Core: Rust
-- CLI: Clap
-- GUI frontend: React 18 + TypeScript + Vite
-- GUI container: Tauri 2
-- Global shortcut: `tauri-plugin-global-shortcut`
-- Storage: SQLite FTS5 (`rusqlite`, WAL mode, trigram tokenizer)
-- Scanner: WalkDir + Crossbeam channels
-- Watcher: macOS FSEvents (CoreServices)
-
-## Architecture Overview
-
-- `src/`: shared core engine used by both CLI and GUI
-- `src-tauri/`: Tauri backend commands and window/menu lifecycle
-- `src/App.tsx`: GUI application logic and interactions
-
-## Build and Run
-
-### Requirements
-
-- macOS 10.15+
-- Rust 1.70+
-- Node.js 18+
-- npm 9+
-
-### Install
+Or build from source:
 
 ```bash
 git clone https://github.com/dacj4n/MacHunt.git
 cd MacHunt
 ```
 
-### CLI
+### CLI only
 
 ```bash
 cargo build --release
@@ -132,31 +80,43 @@ npm run build
 npm run tauri build
 ```
 
-## Build Command Difference
+## Requirements
 
-### `npm run build`
+- macOS 10.15+
+- Rust 1.70+
+- Node.js 18+ (GUI only)
+- npm 9+ (GUI only)
 
-- Only builds frontend assets (TypeScript + Vite)
-- Outputs static files to `dist/`
-- Does **not** compile Rust backend
-- Does **not** produce `.app` / `.dmg`
+## Quick Start
 
-### `npm run tauri build`
+```bash
+# First, build the index (scans your entire disk — takes ~10s for 3M files)
+machunt build
 
-- Builds the full desktop app package
-- Runs `beforeBuildCommand` in `src-tauri/tauri.conf.json` first (currently `npm run build`)
-- Compiles Rust code under `src-tauri/`
-- Generates installable artifacts such as `.app` / `.dmg`
+# Substring search (case-insensitive)
+machunt search "budget"
+
+# Wildcard pattern
+machunt search -p "*.rs"
+
+# Fuzzy/typo-tolerant
+machunt search -F "redme"
+
+# Case-sensitive
+machunt search -c "Makefile"
+
+# JSON output for scripting
+machunt search --json "invoice" | jq .
+
+# Start live watcher + interactive search
+machunt watch
+```
 
 ## CLI Reference
 
-Syntax:
-
-```bash
+```
 machunt <COMMAND>
 ```
-
-Subcommands:
 
 ### `search`
 
@@ -164,15 +124,22 @@ Subcommands:
 machunt search [OPTIONS] <QUERY>
 ```
 
-- `<QUERY>`: search keyword
-- `-p, --pattern`: wildcard/regex mode (`*.rs`, `test?.txt`)
-- `-F, --fuzzy`: fuzzy/typo-tolerant search (Levenshtein distance)
-- `-c, --case-sensitive`: case-sensitive search
-- `-n, --limit <N>`: max results (default 100)
-- `-P, --path <PATH>`: path prefix filter
-- `-f, --files`: files only
-- `-d, --dirs`: directories only
-- `--json`: JSON output
+| Option | Description |
+|--------|-------------|
+| `-p, --pattern` | Wildcard/regex mode (e.g. `*.rs`, `test?.txt`) |
+| `-F, --fuzzy` | Fuzzy/typo-tolerant search (Levenshtein edit distance) |
+| `-c, --case-sensitive` | Case-sensitive matching |
+| `-n, --limit <N>` | Max results (default 100) |
+| `-P, --path <PATH>` | Path prefix filter |
+| `-f, --files` | Files only |
+| `-d, --dirs` | Directories only |
+| `--json` | JSON output |
+
+Wildcard rules:
+- `*` — matches anything except `/` (single directory level)
+- `**` — matches anything including `/` (all levels)
+- `?` — matches single character except `/`
+- `{a,b}` — matches `a` or `b`
 
 ### `build`
 
@@ -180,9 +147,11 @@ machunt search [OPTIONS] <QUERY>
 machunt build [OPTIONS]
 ```
 
-- `-p, --path <PATH>`: build only this scope
-- `--rebuild`: clear old index first
-- `--include-dirs <true|false>`: include directories (default `true`)
+| Option | Description |
+|--------|-------------|
+| `-p, --path <PATH>` | Build only this scope |
+| `--rebuild` | Clear old index first |
+| `--include-dirs <true\|false>` | Include directories (default `true`) |
 
 ### `watch`
 
@@ -190,9 +159,7 @@ machunt build [OPTIONS]
 machunt watch
 ```
 
-- Starts FSEvents watcher with incremental updates
-- Replays from last EventID when available
-- Enters interactive search loop
+Starts FSEvents watcher with incremental updates. Resumes from last EventID when available. Drops into an interactive search loop.
 
 ### `optimize`
 
@@ -200,33 +167,159 @@ machunt watch
 machunt optimize [--vacuum]
 ```
 
-- Always runs WAL checkpoint
-- Optional `--vacuum` to reclaim DB file space
+Runs WAL checkpoint (always). Optional `--vacuum` reclaims DB file space.
 
-Wildcard rules (`--pattern`):
+## How It Works
 
-- `*` => any chars except `/` (single directory level)
-- `**` => any chars including `/` (all levels)
-- `?` => one char except `/`
-- `{a,b}` => `a` or `b`
+```
+┌──────────┐     ┌───────────────┐     ┌──────────┐
+│  WalkDir  │ ──→ │  SQLite FTS5  │ ←── │ FSEvents │
+│  (build)  │     │  (trigram)    │     │  (watch) │
+└──────────┘     └───────┬───────┘     └──────────┘
+                         │
+                    ┌────▼────┐
+                    │  Search  │
+                    │ <5ms     │
+                    └─────────┘
+```
+
+- **Build**: `WalkDir` traverses the filesystem, inserting `(name_lower, path)` into SQLite FTS5 with the trigram tokenizer. Handled in parallel via crossbeam channels.
+- **Search**: FTS5 trigram MATCH completes in <5ms (CLI). Case-sensitive queries use a GLOB post-filter (SQLite LIKE is ASCII-case-insensitive by default). Short queries (<3 chars) fall back to LIKE. Fuzzy mode uses Levenshtein distance over LIKE candidates.
+- **Watch**: Raw FSEvents FFI (CoreServices) streams file creation, modification, deletion, and rename events. Inserts/updates/deletes from the DB incrementally. Resumes from the last persisted EventID across restarts.
+
+## GUI
+
+The native macOS GUI is built with Tauri 2 and React. It communicates with the same Rust core engine used by the CLI — no HTTP server, no IPC overhead beyond Tauri's native bridge.
+
+### Main Window
+
+- Full-disk search with real-time results
+- Regex toggle + case-sensitive toggle
+- Path filter with suggestion dropdown and Finder picker
+- Category tabs: All / Files / Folders / Documents / Images / Media / Code / Archives
+- Sortable columns: name, path, type, size, modified
+- Draggable column splitters with persisted widths
+- Single/multi selection (`Shift` range, `Cmd` additive)
+- Keyboard navigation (`↑` `↓`)
+- Space-triggered Quick Look (multi-selection supported)
+- Double-click to open
+
+### Right-Click Menu
+
+Open, Open With... (Finder / QSpace Pro / Terminal / WezTerm), copy name/path, copy as file objects, copy all results, move to Trash.
+
+### Settings Page
+
+- **Theme**: system / light / dark
+- **Language**: 中文 / English
+- **Shortcut**: global hotkey to show/hide window (default `Cmd+Shift+D`)
+- **Startup**: launch at login, silent start, show/hide Dock icon
+- **Index Maintenance**: auto `VACUUM` after rebuild on/off
+- **Excluded Directories**: exact paths and regex/wildcard patterns
+- **Watch Roots**: configure specific subtrees for FSEvents monitoring
+
+## Features
+
+| Category | Capability |
+|----------|------------|
+| Search modes | Substring, wildcard/regex, fuzzy (Levenshtein) |
+| Case sensitivity | Toggleable in both CLI and GUI |
+| Path filter | Prefix, suggestion dropdown, Finder picker |
+| Live updates | FSEvents watcher, persists EventID across restarts |
+| File types | 8 category tabs via extension classification |
+| Preview | Native Quick Look (space bar, multi-file) |
+| Export | Copy as file objects, JSON output (CLI) |
+| Theming | Light / dark / system |
+| i18n | 中文 / English |
+| Startup | Launch at login, silent mode, Dock toggle |
+| Privacy | 100% local, no network calls |
+
+## Comparison
+
+| | MacHunt | Spotlight | Raycast | uTools |
+|---|---|---|---|---|
+| **Full disk scan** | Yes (~10s / 3M files) | Yes (`mdfind`) | Plugin-based | Plugin-based |
+| **Search latency** | <5ms (CLI, FTS5 trigram) | 50–200ms+ | Varies | Varies |
+| **Index format** | SQLite FTS5 (open) | Proprietary | Proprietary | N/A |
+| **CLI** | Yes | Yes (`mdfind`) | No | No |
+| **Fuzzy search** | Yes (Levenshtein) | Partial | No | No |
+| **Incremental update** | FSEvents | FSEvents | Varies | N/A |
+| **Open source** | Yes | No | No | Partially |
+
+## Development
+
+### Tech Stack
+
+- **Core**: Rust
+- **CLI**: Clap
+- **GUI frontend**: React 18 + TypeScript + Vite
+- **GUI container**: Tauri 2
+- **Global shortcut**: `tauri-plugin-global-shortcut`
+- **Storage**: SQLite FTS5 (`rusqlite`, WAL mode, trigram tokenizer)
+- **Scanner**: WalkDir + Crossbeam channels
+- **Watcher**: macOS FSEvents (CoreServices FFI)
+
+### Build Commands
+
+| Command | What it does |
+|---------|--------------|
+| `npm run build` | Build frontend only (TS + Vite → `dist/`) |
+| `npm run tauri build` | Full build: frontend + Rust → `.app` / `.dmg` |
+| `npm run tauri dev` | Dev mode with hot reload |
+| `cargo build --release` | CLI binary only |
+
+### `npm run build` vs `npm run tauri build`
+
+- `npm run build` only builds frontend assets. It does **not** compile Rust, does **not** produce a `.app` or `.dmg`.
+- `npm run tauri build` runs `beforeBuildCommand` (which is `npm run build`), then compiles the Rust backend, and produces installable artifacts.
+
+## Project Structure
+
+```
+mac_find/
+├── src/                    # Core engine (shared by CLI and GUI)
+│   ├── main.rs             # CLI entry point (clap)
+│   ├── lib.rs              # Library root, re-exports Engine
+│   ├── engine.rs           # Engine: build/search/watch orchestration
+│   ├── db.rs                # SQLite FTS5: schema, insert, search, fuzzy
+│   ├── builder.rs          # WalkDir filesystem scanner
+│   ├── watcher.rs          # FSEvents FFI watcher
+│   ├── search.rs           # Wildcard-to-regex conversion
+│   ├── filters.rs          # Exclude rules (exact + regex/wildcard)
+│   └── utils.rs            # Path normalization, skip logic, logger
+├── src-tauri/              # Tauri GUI backend
+│   ├── src/lib.rs          # Tauri commands, window lifecycle, settings
+│   ├── tauri.conf.json     # Tauri configuration
+│   ├── Info.plist          # macOS bundle metadata
+│   ├── build.rs            # Build script (compiles ObjC bridge)
+│   └── macos/
+│       └── quicklook_bridge.m  # ObjC bridge: Quick Look, clipboard, Dock
+├── src/                    # React frontend
+│   ├── App.tsx             # Main app component
+│   ├── App.css             # Styles
+│   └── main.tsx            # Entry point
+├── scripts/
+│   ├── set_version.sh      # Bump version across all config files
+│   └── package_release.sh  # Package .app/.dmg for distribution
+├── doc/                    # Architecture docs & version history
+├── Cargo.toml              # CLI crate manifest
+└── package.json            # Frontend dependencies
+```
 
 ## Runtime Data
 
-- DB: `~/Library/Caches/MacHunt/index.db`
-- GUI settings: `~/Library/Application Support/MacHunt/settings.json` (shortcut + launch-at-login + silent-start + show-dock-icon + auto-vacuum-on-rebuild + excluded-directory rules + watch roots)
-- Exclude directory rules: stored in `settings.json` (`excludeExactDirs` / `excludePatternDirs`)
-- Watch roots: stored in `settings.json` (`watchRoots`) and synced to DB meta (`watch_roots`)
-- Logs: `~/Library/Caches/MacHunt/logs/`
+| Path | Content |
+|------|---------|
+| `~/Library/Caches/MacHunt/index.db` | FTS5 search index |
+| `~/Library/Application Support/MacHunt/settings.json` | GUI settings |
+| `~/Library/Caches/MacHunt/logs/` | Debug logs |
 
-## Why DB Can Be Large
+## Why the Index Can Be Large
 
-Common reasons:
-
-- Large file count (often millions)
-- Directory indexing enabled by default
-- Long path strings dominate storage
-- `dirs + files` relational structure still stores large cardinality
-- WAL files (`index.db-wal`) can temporarily become large during writes
+- Millions of files are common on macOS
+- Directory entries are indexed by default
+- Long paths dominate storage
+- `index.db-wal` can grow temporarily during writes
 
 Maintenance:
 
