@@ -821,6 +821,8 @@ impl Db {
         // - Non-ASCII (CJK, etc. — trigram tokenizer may not handle well)
         // - ASCII with special characters (dots, hyphens — tokenizer splits on these)
         if q.chars().count() < 3 || !q.is_ascii() || !q.chars().all(|c| c.is_alphanumeric()) {
+            // If query is just "*", match everything (SQL "%").
+            let is_match_all = q == "*";
             if case_sensitive {
                 let sql = format!(
                     "SELECT d.path, f.name FROM files f
@@ -828,10 +830,8 @@ impl Db {
                      WHERE f.name GLOB ?{} LIMIT ?",
                     path_clause
                 );
-                return Self::exec_name_query(
-                    &conn, &sql,
-                    format!("*{}*", q), &path_param, lim,
-                );
+                let pattern = if is_match_all { "*".to_string() } else { format!("*{}*", q) };
+                return Self::exec_name_query(&conn, &sql, pattern, &path_param, lim);
             } else {
                 let sql = format!(
                     "SELECT d.path, f.name FROM files f
@@ -839,10 +839,8 @@ impl Db {
                      WHERE f.name_lower LIKE ?{} LIMIT ?",
                     path_clause
                 );
-                return Self::exec_name_query(
-                    &conn, &sql,
-                    format!("%{}%", q.to_lowercase()), &path_param, lim,
-                );
+                let pattern = if is_match_all { "%".to_string() } else { format!("%{}%", q.to_lowercase()) };
+                return Self::exec_name_query(&conn, &sql, pattern, &path_param, lim);
             }
         }
 

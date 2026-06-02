@@ -1163,7 +1163,7 @@ async fn search(
 
     let total = items.len();
     if items.len() > 5000 {
-        items.truncate(5000);
+        items.truncate(1000);
     }
 
     Ok(SearchResponse {

@@ -552,7 +552,7 @@ function buildSearchRequest(
       pathPrefix: pathPrefix.trim() || null,
       includeFiles,
       includeDirs,
-      limit: 500
+      limit: 1000
     }
   };
 }
