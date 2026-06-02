@@ -307,9 +307,12 @@ impl Engine {
         } else {
             options.query.to_lowercase()
         };
+        // Fetch many more rows than the display limit, because build_results
+        // filters out non-existent paths and non-matching types (file vs dir).
+        let fetch_limit = (limit * 20).max(10_000);
         let results = self
             .db
-            .search_fts(&query, options.case_sensitive, options.path_prefix.as_deref().and_then(|p| p.to_str()), limit);
+            .search_fts(&query, options.case_sensitive, options.path_prefix.as_deref().and_then(|p| p.to_str()), fetch_limit);
         self.build_results(results, options)
     }
 
