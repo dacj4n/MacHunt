@@ -62,8 +62,8 @@ impl Default for GuiSettings {
         Self {
             window_toggle_shortcut: DEFAULT_WINDOW_TOGGLE_SHORTCUT.to_string(),
             launch_at_login: false,
-            silent_start: true,
-            show_dock_icon: false,
+            silent_start: false,
+            show_dock_icon: true,
             auto_vacuum_on_rebuild: default_auto_vacuum_on_rebuild(),
             exclude_exact_dirs: Vec::new(),
             exclude_pattern_dirs: default_exclude_pattern_dirs(),
@@ -1752,6 +1752,12 @@ pub fn run() {
                     .lock()
                     .map(|v| *v)
                     .unwrap_or(false);
+                unsafe {
+                    set_dock_flag(show_dock);
+                    // Swizzle setActivationPolicy: to intercept any
+                    // attempt to create a Dock tile when hidden.
+                    install_policy_guard();
+                }
                 if show_dock {
                     let _ = app
                         .handle()
@@ -1761,12 +1767,6 @@ pub fn run() {
                     let _ = app
                         .handle()
                         .set_activation_policy(tauri::ActivationPolicy::Accessory);
-                }
-                unsafe {
-                    set_dock_flag(show_dock);
-                    // Swizzle setActivationPolicy: to intercept any
-                    // attempt to create a Dock tile when hidden.
-                    install_policy_guard();
                 }
             }
 
