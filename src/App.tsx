@@ -777,6 +777,8 @@ function App() {
   const [sortAscending, setSortAscending] = useState(true);
 
   const [items, setItems] = useState<SearchResultItem[]>([]);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   const [indexed, setIndexed] = useState(0);
   const [appVersion, setAppVersion] = useState("");
   const [totalFound, setTotalFound] = useState(0);
@@ -2045,18 +2047,6 @@ function App() {
     setSelectionAnchorPath(path);
   };
 
-  const clearSelectionOnBlankArea = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.button !== 0) {
-      return;
-    }
-    const target = event.target;
-    if (target instanceof HTMLElement && target.closest(".row")) {
-      return;
-    }
-    setSelectedItemPaths([]);
-    setSelectionAnchorPath(null);
-  };
-
   const moveSelectionByArrow = (delta: number) => {
     if (items.length === 0) {
       return;
@@ -2105,6 +2095,14 @@ function App() {
           event.preventDefault();
           moveSelectionByArrow(event.key === "ArrowDown" ? 1 : -1);
         }
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "a") {
+        if (activeView !== "search" || contextMenu) return;
+        if (isEditableTarget(event.target)) return;
+        event.preventDefault();
+        setSelectedItemPaths(itemsRef.current.map((item) => item.path));
         return;
       }
 
@@ -2350,7 +2348,7 @@ function App() {
                     </span>
                   </div>
 
-                  <div className="table-body" ref={tableBodyRef} onMouseDown={clearSelectionOnBlankArea}
+                  <div className="table-body" ref={tableBodyRef}
                     onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}>
                     <div style={{ height: topSpacerHeight }} />
                     {visibleItems.map((item, vi) => {
