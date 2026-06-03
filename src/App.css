@@ -207,6 +207,8 @@ body {
 
 .path-input-wrap {
   position: relative;
+  display: flex;
+  align-items: center;
   min-width: 0;
 }
 
@@ -1390,4 +1392,24 @@ body {
 
 .update-actions {
   margin-top: 8px;
+}
+
+.path-clear-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.path-clear-btn:hover {
+  color: var(--text-main);
+  background: var(--line);
 }

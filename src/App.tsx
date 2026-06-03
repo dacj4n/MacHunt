@@ -850,18 +850,30 @@ function App() {
   const normalizedPathPrefix = pathPrefix.trim().toLowerCase();
   const visiblePathSuggestions = [...pathSuggestions]
     .filter((path) => {
-      if (!normalizedPathPrefix) {
-        return true;
-      }
+      if (!normalizedPathPrefix) return true;
+      // Always show top-level picks (home, /Volumes) for quick re-selection.
+      if (path.startsWith("/Volumes/")) return true;
+      if (path.startsWith("/Users/") && path.split("/").length <= 3) return true;
       return path.toLowerCase().includes(normalizedPathPrefix);
     })
     .sort((left, right) => {
       const leftLower = left.toLowerCase();
       const rightLower = right.toLowerCase();
-      const leftStarts = normalizedPathPrefix.length > 0 && leftLower.startsWith(normalizedPathPrefix) ? 0 : 1;
-      const rightStarts = normalizedPathPrefix.length > 0 && rightLower.startsWith(normalizedPathPrefix) ? 0 : 1;
-      if (leftStarts !== rightStarts) {
-        return leftStarts - rightStarts;
+      // Give priority to child paths of the prefix (not the prefix itself).
+      const leftChild = normalizedPathPrefix.length > 0
+        && leftLower.startsWith(normalizedPathPrefix)
+        && leftLower.length > normalizedPathPrefix.length;
+      const rightChild = normalizedPathPrefix.length > 0
+        && rightLower.startsWith(normalizedPathPrefix)
+        && rightLower.length > normalizedPathPrefix.length;
+      if (leftChild !== rightChild) {
+        return leftChild ? -1 : 1;
+      }
+      // Root-level picks always show before other matches.
+      const leftRoot = left.startsWith("/Volumes/") || (left.startsWith("/Users/") && left.split("/").length <= 3);
+      const rightRoot = right.startsWith("/Volumes/") || (right.startsWith("/Users/") && right.split("/").length <= 3);
+      if (leftRoot !== rightRoot) {
+        return leftRoot ? -1 : 1;
       }
       if (left.length !== right.length) {
         return left.length - right.length;
@@ -2279,6 +2291,12 @@ function App() {
                           setIsPathDropdownOpen(true);
                         }
                       }}
+                      onClick={() => {
+                        // Re-open dropdown when clicking an already-focused input.
+                        if (!isIndexLoading && pathPrefix.trim().length > 0) {
+                          setIsPathDropdownOpen(true);
+                        }
+                      }}
                       onBlur={(event) => {
                         const next = event.relatedTarget;
                         if (next instanceof Node && pathPickerRef.current?.contains(next)) {
@@ -2293,6 +2311,18 @@ function App() {
                         setActivePathSuggestion(-1);
                       }}
                     />
+                    {pathPrefix.trim().length > 0 && (
+                      <button
+                        type="button"
+                        className="path-clear-btn"
+                        aria-label="Clear path filter"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          setPathPrefix("");
+                          pathInputRef.current?.focus();
+                        }}
+                      >&#10005;</button>
+                    )}
                     {isPathDropdownVisible && (
                       <div className="path-suggest-panel">
                         {visiblePathSuggestions.map((path, index) => (

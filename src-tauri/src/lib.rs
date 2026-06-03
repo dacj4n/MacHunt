@@ -711,8 +711,6 @@ fn add_path_if_dir(out: &mut BTreeSet<String>, path: &Path) {
 fn list_path_suggestions() -> Vec<String> {
     let mut out = BTreeSet::new();
 
-    add_path_if_dir(&mut out, Path::new("/"));
-
     if let Ok(home) = std::env::var("HOME") {
         add_path_if_dir(&mut out, PathBuf::from(home).as_path());
     }
@@ -727,12 +725,19 @@ fn list_path_suggestions() -> Vec<String> {
 }
 
 #[tauri::command]
-fn pick_path_in_finder() -> Option<String> {
+fn pick_path_in_finder(app: tauri::AppHandle) -> Option<String> {
     let output = Command::new("osascript")
         .arg("-e")
         .arg("POSIX path of (choose folder with prompt \"Select a search path\")")
         .output()
         .ok()?;
+
+    // Re-activate MacHunt after the Finder picker deactivates us.
+    let _ = app.show();
+    #[cfg(target_os = "macos")]
+    unsafe {
+        activate_ignoring_other_apps();
+    }
 
     if !output.status.success() {
         return None;
