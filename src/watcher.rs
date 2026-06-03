@@ -229,6 +229,16 @@ unsafe extern "C" fn fsevent_callback(
             continue;
         }
 
+        // Fast-path skip on the raw C string before any allocation.
+        // During bootstrap builds, WAL file writes can generate millions
+        // of self-events that must be discarded cheaply.
+        if path_str.contains("/.Spotlight-V100")
+            || path_str.contains("/.fseventsd")
+            || path_str.contains("/Library/Caches/MacHunt")
+        {
+            continue;
+        }
+
         let path = PathBuf::from(path_str);
 
         if should_skip_path(path.as_path()) {
