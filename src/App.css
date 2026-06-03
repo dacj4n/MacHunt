@@ -1362,3 +1362,32 @@ body {
   }
 
 }
+
+.update-info {
+  margin: 8px 0;
+}
+
+.update-version-line {
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+
+.update-status {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.update-available {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 13px;
+  color: #e05020;
+  font-weight: 600;
+}
+
+.update-actions {
+  margin-top: 8px;
+}

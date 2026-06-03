@@ -31,6 +31,10 @@ fn default_auto_vacuum_on_rebuild() -> bool {
     true
 }
 
+fn default_auto_check_update() -> bool {
+    true
+}
+
 fn default_exclude_pattern_dirs() -> Vec<String> {
     vec![
         "/System/**".to_string(),
@@ -52,6 +56,8 @@ struct GuiSettings {
     show_dock_icon: bool,
     #[serde(default = "default_auto_vacuum_on_rebuild")]
     auto_vacuum_on_rebuild: bool,
+    #[serde(default = "default_auto_check_update")]
+    auto_check_update: bool,
     exclude_exact_dirs: Vec<String>,
     exclude_pattern_dirs: Vec<String>,
     watch_roots: Vec<String>,
@@ -65,6 +71,7 @@ impl Default for GuiSettings {
             silent_start: false,
             show_dock_icon: true,
             auto_vacuum_on_rebuild: default_auto_vacuum_on_rebuild(),
+            auto_check_update: default_auto_check_update(),
             exclude_exact_dirs: Vec::new(),
             exclude_pattern_dirs: default_exclude_pattern_dirs(),
             watch_roots: Vec::new(),
@@ -137,6 +144,10 @@ fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         .auto_vacuum_on_rebuild
         .lock()
         .map_err(|_| "Failed to access auto-vacuum setting".to_string())?;
+    let auto_check_update = *state
+        .auto_check_update
+        .lock()
+        .map_err(|_| "Failed to access auto-check-update setting".to_string())?;
     let watch_roots = state
         .watch_roots
         .lock()
@@ -149,6 +160,7 @@ fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         silent_start,
         show_dock_icon,
         auto_vacuum_on_rebuild,
+        auto_check_update,
         exclude_exact_dirs,
         exclude_pattern_dirs,
         watch_roots,
@@ -164,6 +176,7 @@ struct AppState {
     silent_start: Mutex<bool>,
     show_dock_icon: Mutex<bool>,
     auto_vacuum_on_rebuild: Mutex<bool>,
+    auto_check_update: Mutex<bool>,
     exclude_exact_dirs: Mutex<Vec<String>>,
     exclude_pattern_dirs: Mutex<Vec<String>>,
     watch_roots: Mutex<Vec<String>>,
@@ -204,6 +217,7 @@ impl AppState {
             silent_start: Mutex::new(settings.silent_start),
             show_dock_icon: Mutex::new(settings.show_dock_icon),
             auto_vacuum_on_rebuild: Mutex::new(settings.auto_vacuum_on_rebuild),
+            auto_check_update: Mutex::new(settings.auto_check_update),
             exclude_exact_dirs: Mutex::new(exclude_exact_dirs),
             exclude_pattern_dirs: Mutex::new(exclude_pattern_dirs),
             watch_roots: Mutex::new(watch_roots),
@@ -301,6 +315,19 @@ struct LaunchSettingsResponse {
 #[serde(rename_all = "camelCase")]
 struct AutoVacuumSettingsResponse {
     auto_vacuum_on_rebuild: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCheckResponse {
+    has_update: bool,
+    latest_version: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AutoCheckUpdateResponse {
+    auto_check_update: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -1500,6 +1527,92 @@ fn set_auto_vacuum_settings(
 }
 
 #[tauri::command]
+fn get_auto_check_update(
+    state: tauri::State<'_, AppState>,
+) -> Result<AutoCheckUpdateResponse, String> {
+    let auto_check_update = *state
+        .auto_check_update
+        .lock()
+        .map_err(|_| "Failed to access auto-check-update setting".to_string())?;
+    Ok(AutoCheckUpdateResponse {
+        auto_check_update,
+    })
+}
+
+#[tauri::command]
+fn set_auto_check_update(
+    auto_check_update: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<AutoCheckUpdateResponse, String> {
+    {
+        let mut guard = state
+            .auto_check_update
+            .lock()
+            .map_err(|_| "Failed to access auto-check-update setting".to_string())?;
+        *guard = auto_check_update;
+    }
+
+    let settings = snapshot_gui_settings(&state)?;
+    save_gui_settings(&settings)?;
+
+    Ok(AutoCheckUpdateResponse {
+        auto_check_update,
+    })
+}
+
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateCheckResponse, String> {
+    let current = app.package_info().version.to_string();
+    let url = "https://api.github.com/repos/dacj4n/MacHunt/releases/latest";
+
+    let client = reqwest::Client::builder()
+        .user_agent(format!("MacHunt/{}", current))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to check for updates: {}", e))?;
+
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse update response: {}", e))?;
+
+    let tag = json["tag_name"]
+        .as_str()
+        .unwrap_or("")
+        .trim_start_matches('v');
+
+    let has_update = match (semver(&current), semver(tag)) {
+        (Some(cur), Some(latest)) => latest > cur,
+        _ => tag != current,
+    };
+
+    Ok(UpdateCheckResponse {
+        has_update,
+        latest_version: if has_update {
+            format!("v{}", tag)
+        } else {
+            format!("v{}", current)
+        },
+    })
+}
+
+fn semver(s: &str) -> Option<(u32, u32, u32)> {
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let major = parts[0].parse::<u32>().ok()?;
+    let minor = parts[1].parse::<u32>().ok()?;
+    let patch = parts[2].parse::<u32>().ok()?;
+    Some((major, minor, patch))
+}
+
+#[tauri::command]
 fn get_exclude_dir_settings(
     state: tauri::State<'_, AppState>,
 ) -> Result<ExcludeDirSettingsResponse, String> {
@@ -1837,6 +1950,9 @@ pub fn run() {
             set_launch_settings,
             get_auto_vacuum_settings,
             set_auto_vacuum_settings,
+            get_auto_check_update,
+            set_auto_check_update,
+            check_for_update,
             get_exclude_dir_settings,
             set_exclude_dir_settings,
             get_watch_roots_settings,

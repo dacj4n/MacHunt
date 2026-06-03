@@ -157,7 +157,19 @@ const I18N = {
     excludeExactListTitle: "完整目录规则",
     excludePatternListTitle: "正则/通配符规则",
     removeRule: "删除",
-    excludeSaved: "排除目录规则已保存"
+    excludeSaved: "排除目录规则已保存",
+    updateTitle: "更新",
+    updateDesc: "检查 MacHunt 是否有新版本。",
+    updateAutoCheck: "自动检查更新",
+    updateAutoCheckDesc: "启动时自动检查是否有新版本。",
+    updateCheckNow: "检查更新",
+    updateChecking: "正在检查...",
+    updateNoUpdate: "已是最新版本",
+    updateNewVersion: "有新版本可用: {version}",
+    updateDownload: "下载",
+    updateFailed: "检查更新失败",
+    updateSaved: "更新设置已保存",
+    updateCurrentVersion: "当前版本"
   },
   en: {
     searchPlaceholder: "Search files, folders, content...",
@@ -276,7 +288,19 @@ const I18N = {
     excludeExactListTitle: "Exact Directory Rules",
     excludePatternListTitle: "Regex / Wildcard Rules",
     removeRule: "Remove",
-    excludeSaved: "Excluded directory rules saved"
+    excludeSaved: "Excluded directory rules saved",
+    updateTitle: "Updates",
+    updateDesc: "Check for new MacHunt versions.",
+    updateAutoCheck: "Auto-check for Updates",
+    updateAutoCheckDesc: "Automatically check for new versions on startup.",
+    updateCheckNow: "Check for Updates",
+    updateChecking: "Checking...",
+    updateNoUpdate: "You are up to date",
+    updateNewVersion: "New version available: {version}",
+    updateDownload: "Download",
+    updateFailed: "Failed to check for updates",
+    updateSaved: "Update settings saved",
+    updateCurrentVersion: "Current Version"
   }
 } as const;
 
@@ -755,6 +779,11 @@ function App() {
   const [autoVacuumOnRebuild, setAutoVacuumOnRebuild] = useState(true);
   const [isAutoVacuumSettingsSaving, setIsAutoVacuumSettingsSaving] = useState(false);
   const [autoVacuumSettingsStatus, setAutoVacuumSettingsStatus] = useState("");
+  const [autoCheckUpdate, setAutoCheckUpdate] = useState(true);
+  const [isAutoCheckSaving, setIsAutoCheckSaving] = useState(false);
+  const [autoCheckStatus, setAutoCheckStatus] = useState("");
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<{ hasUpdate: boolean; latestVersion: string } | null>(null);
   const [excludeRuleType, setExcludeRuleType] = useState<ExcludeRuleType>("exact");
   const [excludeRuleDraft, setExcludeRuleDraft] = useState("");
   const [excludeExactDirs, setExcludeExactDirs] = useState<string[]>([]);
@@ -1172,6 +1201,33 @@ function App() {
       mounted = false;
     };
   }, []);
+
+  // Load auto-check-update setting
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      try {
+        const settings = await invoke<{ autoCheckUpdate: boolean }>("get_auto_check_update");
+        if (mounted) setAutoCheckUpdate(settings.autoCheckUpdate);
+      } catch { /* keep default */ }
+    };
+    void load();
+    return () => { mounted = false; };
+  }, []);
+
+  // Auto-check for updates on startup (after settings load)
+  useEffect(() => {
+    if (!autoCheckUpdate) return;
+    let mounted = true;
+    const check = async () => {
+      try {
+        const result = await invoke<{ hasUpdate: boolean; latestVersion: string }>("check_for_update");
+        if (mounted && result.hasUpdate) setUpdateInfo(result);
+      } catch { /* network error, ignore */ }
+    };
+    const timer = window.setTimeout(() => { void check(); }, 3000);
+    return () => { mounted = false; window.clearTimeout(timer); };
+  }, [autoCheckUpdate]);
 
   useEffect(() => {
     let mounted = true;
@@ -1715,6 +1771,39 @@ function App() {
       setError(String(err));
     } finally {
       setIsAutoVacuumSettingsSaving(false);
+    }
+  };
+
+  const applyAutoCheckUpdate = async (nextAutoCheck: boolean) => {
+    if (isAutoCheckSaving) return;
+    setIsAutoCheckSaving(true);
+    setAutoCheckStatus("");
+    setError(null);
+    try {
+      const saved = await invoke<{ autoCheckUpdate: boolean }>("set_auto_check_update", {
+        autoCheckUpdate: nextAutoCheck
+      });
+      setAutoCheckUpdate(saved.autoCheckUpdate);
+      setAutoCheckStatus(t.updateSaved);
+    } catch (err) {
+      setAutoCheckStatus(t.updateFailed);
+      setError(String(err));
+    } finally {
+      setIsAutoCheckSaving(false);
+    }
+  };
+
+  const checkForUpdatesManually = async () => {
+    if (isCheckingUpdate) return;
+    setIsCheckingUpdate(true);
+    setUpdateInfo(null);
+    try {
+      const result = await invoke<{ hasUpdate: boolean; latestVersion: string }>("check_for_update");
+      setUpdateInfo(result);
+    } catch {
+      setUpdateInfo({ hasUpdate: false, latestVersion: "" });
+    } finally {
+      setIsCheckingUpdate(false);
     }
   };
 
@@ -2609,6 +2698,51 @@ function App() {
                 </label>
               </div>
               {autoVacuumSettingsStatus && <div className="shortcut-status">{autoVacuumSettingsStatus}</div>}
+            </article>
+
+            <article className="settings-card">
+              <h3>{t.updateTitle}</h3>
+              <p className="shortcut-desc">{t.updateDesc}</p>
+              <div className="startup-toggle-list">
+                <label className="startup-toggle-row">
+                  <div className="startup-toggle-copy">
+                    <div className="startup-toggle-title">{t.updateAutoCheck}</div>
+                    <div className="startup-toggle-desc">{t.updateAutoCheckDesc}</div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={autoCheckUpdate}
+                    aria-label={t.updateAutoCheck}
+                    className={autoCheckUpdate ? "mac-switch is-on" : "mac-switch"}
+                    disabled={isAutoCheckSaving}
+                    onClick={() => void applyAutoCheckUpdate(!autoCheckUpdate)}
+                  >
+                    <span className="mac-switch-knob" />
+                  </button>
+                </label>
+              </div>
+              <div className="update-info">
+                <div className="update-version-line">{t.updateCurrentVersion}: v{appVersion}</div>
+                {isCheckingUpdate && <div className="update-status">{t.updateChecking}</div>}
+                {!isCheckingUpdate && updateInfo && updateInfo.hasUpdate && (
+                  <div className="update-available">
+                    <span>{fmt(t.updateNewVersion, { version: updateInfo.latestVersion })}</span>
+                    <button className="action-btn primary"
+                      onClick={() => window.open("https://github.com/dacj4n/MacHunt/releases/latest", "_blank")}
+                    >{t.updateDownload}</button>
+                  </div>
+                )}
+                {!isCheckingUpdate && updateInfo && !updateInfo.hasUpdate && updateInfo.latestVersion !== "" && (
+                  <div className="update-status">{t.updateNoUpdate}</div>
+                )}
+              </div>
+              <div className="update-actions">
+                <button className="action-btn" disabled={isCheckingUpdate} onClick={() => void checkForUpdatesManually()}>
+                  {t.updateCheckNow}
+                </button>
+              </div>
+              {autoCheckStatus && <div className="shortcut-status">{autoCheckStatus}</div>}
             </article>
 
             <article className="settings-card">
