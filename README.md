@@ -52,6 +52,8 @@ MacHunt scans your entire filesystem into a local SQLite FTS5 index. CLI searche
 
 Download the latest `.dmg` from [GitHub Releases](https://github.com/dacj4n/MacHunt/releases), mount it, and drag `MacHunt.app` to `/Applications`.
 
+> **First launch**: macOS Gatekeeper may block unsigned apps. If you see "cannot be verified", right-click `MacHunt.app` in Finder and select **Open**, then click **Open** in the dialog. Or run `xattr -cr /Applications/MacHunt.app` in Terminal.
+
 Or build from source:
 
 ```bash
@@ -82,7 +84,13 @@ npm run tauri build
 
 ## Requirements
 
-- macOS 10.15+
+| macOS 15 (Apple Silicon) | ✅ Tested |
+| macOS 13–14 | ✅ Expected to work |
+| macOS 10.15–12 | ⚠️ Theoretically supported (not tested) |
+| Intel Mac (x86_64) | ⚠️ Universal binary included (not tested) |
+
+> **Note**: The app is built as a universal binary (arm64 + x86_64). On macOS <13, login items use AppleScript fallback instead of the modern ServiceManagement API.
+
 - Rust 1.70+
 - Node.js 18+ (GUI only)
 - npm 9+ (GUI only)

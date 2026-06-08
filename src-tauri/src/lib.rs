@@ -1837,6 +1837,7 @@ pub fn run() {
             }
         })
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .on_menu_event(|app, event| {
             if event.id() == MENU_OPEN_SETTINGS_ID {
                 let _ = app.emit(EVENT_OPEN_SETTINGS, ());
