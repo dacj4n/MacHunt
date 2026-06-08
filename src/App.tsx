@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
 type TabId = "all" | "files" | "folders" | "documents" | "images" | "media" | "code" | "archives";
@@ -2759,7 +2760,7 @@ function App() {
                   <div className="update-available">
                     <span>{fmt(t.updateNewVersion, { version: updateInfo.latestVersion })}</span>
                     <button className="action-btn primary"
-                      onClick={() => window.open("https://github.com/dacj4n/MacHunt/releases/latest", "_blank")}
+                      onClick={() => openUrl("https://github.com/dacj4n/MacHunt/releases/latest")}
                     >{t.updateDownload}</button>
                   </div>
                 )}
