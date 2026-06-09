@@ -8,7 +8,7 @@ type TabId = "all" | "files" | "folders" | "documents" | "images" | "media" | "c
 type SortKey = "name" | "path" | "type" | "size" | "modified";
 type ColumnKey = "name" | "path" | "type" | "size" | "modified";
 type ThemeMode = "system" | "light" | "dark";
-type ViewMode = "search" | "settings";
+type ViewMode = "search" | "pinned" | "settings";
 type Language = "zh" | "en";
 type ExcludeRuleType = "exact" | "pattern";
 
@@ -36,6 +36,7 @@ const COLUMN_WIDTHS_STORAGE_KEY = "machunt.table.column.widths";
 const LEGACY_SEARCH_MODE_STORAGE_KEY = "machunt.search.mode";
 const REGEX_ENABLED_STORAGE_KEY = "machunt.search.regex_enabled";
 const CASE_SENSITIVE_STORAGE_KEY = "machunt.search.case_sensitive";
+const PINNED_STORAGE_KEY = "machunt.pinned.items";
 const EVENT_OPEN_SETTINGS = "app://open-settings";
 const EVENT_FOCUS_SEARCH = "app://focus-search";
 const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives"];
@@ -181,7 +182,11 @@ const I18N = {
     updateDownload: "下载",
     updateFailed: "检查更新失败",
     updateSaved: "更新设置已保存",
-    updateCurrentVersion: "当前版本"
+    updateCurrentVersion: "当前版本",
+    pinnedTag: "收藏",
+    pinnedEmpty: "暂无收藏，在搜索结果中右键文件或文件夹即可收藏。",
+    menuPin: "收藏",
+    menuUnpin: "取消收藏",
   },
   en: {
     searchPlaceholder: "Search files, folders, content...",
@@ -312,7 +317,11 @@ const I18N = {
     updateDownload: "Download",
     updateFailed: "Failed to check for updates",
     updateSaved: "Update settings saved",
-    updateCurrentVersion: "Current Version"
+    updateCurrentVersion: "Current Version",
+    pinnedTag: "Pinned",
+    pinnedEmpty: "No pinned items. Right-click a file or folder in search results to pin it.",
+    menuPin: "Pin",
+    menuUnpin: "Unpin",
   }
 } as const;
 
@@ -780,6 +789,24 @@ function loadStoredCaseSensitive(): boolean | null {
   return null;
 }
 
+function loadPinnedItems(): SearchResultItem[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(PINNED_STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as SearchResultItem[];
+  } catch {
+    return [];
+  }
+}
+
+function savePinnedItems(items: SearchResultItem[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(items));
+}
+
 function App() {
   const [activeView, setActiveView] = useState<ViewMode>("search");
   const [themeMode, setThemeMode] = useState<ThemeMode>("system");
@@ -826,6 +853,7 @@ function App() {
   const [items, setItems] = useState<SearchResultItem[]>([]);
   const itemsRef = useRef(items);
   itemsRef.current = items;
+  const [pinnedItems, setPinnedItems] = useState<SearchResultItem[]>(loadPinnedItems);
   const [indexed, setIndexed] = useState(0);
   const [appVersion, setAppVersion] = useState("");
   const [totalFound, setTotalFound] = useState(0);
@@ -902,8 +930,11 @@ function App() {
   const isPathDropdownVisible = !isIndexLoading && isPathDropdownOpen && visiblePathSuggestions.length > 0;
   const selectedItemPathSet = useMemo(() => new Set(selectedItemPaths), [selectedItemPaths]);
   const selectedItemsInOrder = useMemo(
-    () => items.filter((item) => selectedItemPathSet.has(item.path)),
-    [items, selectedItemPathSet]
+    () => {
+      const source = activeView === "pinned" ? pinnedItems : items;
+      return source.filter((item) => selectedItemPathSet.has(item.path));
+    },
+    [items, pinnedItems, selectedItemPathSet, activeView]
   );
   const selectedPathsInOrder = useMemo(
     () => selectedItemsInOrder.map((item) => item.path),
@@ -2206,6 +2237,25 @@ function App() {
     setOpenWithVisible(false);
   };
 
+  const isPinned = useCallback(
+    (path: string) => pinnedItems.some((item) => item.path === path),
+    [pinnedItems]
+  );
+
+  const togglePin = useCallback(
+    (item: SearchResultItem) => {
+      setPinnedItems((prev) => {
+        const already = prev.some((p) => p.path === item.path);
+        const next = already
+          ? prev.filter((p) => p.path !== item.path)
+          : [...prev, item];
+        savePinnedItems(next);
+        return next;
+      });
+    },
+    []
+  );
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.key === "ArrowDown" || event.key === "ArrowUp") && activeView === "search" && !contextMenu) {
@@ -2238,7 +2288,7 @@ function App() {
       }
 
       if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "c") {
-        if (activeView !== "search" || contextMenu || selectedPathsInOrder.length === 0) {
+        if ((activeView !== "search" && activeView !== "pinned") || contextMenu || selectedPathsInOrder.length === 0) {
           return;
         }
         if (isEditableTarget(event.target)) {
@@ -2253,7 +2303,7 @@ function App() {
       if (event.key !== " " && event.code !== "Space") {
         return;
       }
-      if (event.repeat || activeView !== "search" || selectedPathsInOrder.length === 0 || contextMenu) {
+      if (event.repeat || (activeView !== "search" && activeView !== "pinned") || selectedPathsInOrder.length === 0 || contextMenu) {
         return;
       }
       if (isEditableTarget(event.target)) {
@@ -2320,6 +2370,13 @@ function App() {
             >
               <span className="nav-btn-icon">⌂</span>
               {t.searchTag}
+            </button>
+            <button
+              className={activeView === "pinned" ? "nav-btn active" : "nav-btn"}
+              onClick={() => setActiveView("pinned")}
+            >
+              <span className="nav-btn-icon">★</span>
+              {t.pinnedTag}
             </button>
             <button
               className={activeView === "settings" ? "nav-btn active" : "nav-btn"}
@@ -2606,6 +2663,72 @@ function App() {
             <div className="status-right">
               <span className="status-highlight">{formatShownItems(totalFound)}</span>
               <span>{isSearching ? t.searching : `${tookMs} ms`}</span>
+            </div>
+          </footer>
+        </div>
+      ) : activeView === "pinned" ? (
+        <div className="pinned-view"
+          onClick={(e) => {
+            if (!(e.target as HTMLElement).closest(".result-row") && !(e.target as HTMLElement).closest(".context-menu-layer")) {
+              setSelectedItemPaths([]);
+              setSelectionAnchorPath(null);
+            }
+          }}>
+          <header className="settings-header">
+            <div>
+              <h2>{t.pinnedTag}</h2>
+            </div>
+          </header>
+
+          {pinnedItems.length === 0 ? (
+            <div className="empty-state">{t.pinnedEmpty}</div>
+          ) : (
+            <>
+              <div className="table-header" style={{ gridTemplateColumns }}>
+                <span className="header-cell">{t.header_name}</span>
+                <span className="header-cell">{t.header_path}</span>
+                <span className="header-cell">{t.header_type}</span>
+                <span className="header-cell">{t.header_size}</span>
+                <span className="header-cell">{t.header_modified}</span>
+              </div>
+
+              <div className="table-body custom-scrollbar" onScroll={handleScrollbarScroll}>
+                {pinnedItems.map((item, index) => {
+                  const token = iconToken(item);
+                  return (
+                    <article
+                      key={`${item.path}-${index}`}
+                      ref={(element) => {
+                        if (element) {
+                          rowRefs.current.set(item.path, element);
+                        } else {
+                          rowRefs.current.delete(item.path);
+                        }
+                      }}
+                      className={selectedItemPathSet.has(item.path) ? "result-row selected" : "result-row"}
+                      style={{ gridTemplateColumns }}
+                      onClick={(event) => handleRowClick(event, item, index)}
+                      onDoubleClick={() => void openResult(item.path)}
+                      onContextMenu={(event) => openResultContextMenu(event, item)}
+                    >
+                      <div className="cell name-cell">
+                        <span className={`file-icon ${token}`}>{iconGlyph(token)}</span>
+                        <span className="name-text">{item.name}</span>
+                      </div>
+                      <div className="cell path-cell">{item.parent}</div>
+                      <div className="cell type-cell">{typeLabel(item, t.typeFolder, t.typeFile)}</div>
+                      <div className="cell size-cell">{formatBytes(item.sizeBytes)}</div>
+                      <div className="cell date-cell">{formatDate(item.modifiedUnixMs)}</div>
+                    </article>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          <footer className="status-bar">
+            <div className="status-left">
+              <span className="status-highlight">已收藏 {pinnedItems.length} 项</span>
             </div>
           </footer>
         </div>
@@ -3170,6 +3293,23 @@ function App() {
                 </button>
               </>
             )}
+            <div className="context-menu-sep" />
+            <button
+              className="context-menu-item"
+              onClick={() => void runContextAction(async () => {
+                const paths = contextMenu.multiSelection ? selectedPathsInOrder : [contextMenu.item.path];
+                for (const p of paths) {
+                  const target = contextMenu.multiSelection
+                    ? items.find((it) => it.path === p)
+                    : contextMenu.item;
+                  if (target) togglePin(target);
+                }
+                setSelectedItemPaths([]);
+                setSelectionAnchorPath(null);
+              })}
+            >
+              {isPinned(contextMenu.item.path) ? t.menuUnpin : t.menuPin}
+            </button>
             <button
               className="context-menu-item danger"
               onClick={() => void runContextAction(async () => {
