@@ -1368,13 +1368,33 @@ fn start_watch_auto(app: tauri::AppHandle, state: tauri::State<'_, AppState>) ->
 
     match last_event_id {
         Some(id) => {
-            state.engine.start_watch(Some(id));
+            // If the stored event ID is too far behind, skip history replay
+            // to avoid 100% CPU from processing millions of backlogged events
+            // (common after reinstall or long idle periods).
+            let current_id = unsafe { machunt::watcher::FSEventsGetCurrentEventId() };
+            let stale = id < current_id && current_id - id > 1_000_000;
+            let since = if stale {
+                println!(
+                    "EventID {} is too far behind current {} (gap: {}), skipping history replay",
+                    id,
+                    current_id,
+                    current_id - id
+                );
+                None
+            } else {
+                Some(id)
+            };
+            state.engine.start_watch(since);
             WatchResponse {
                 running: true,
-                mode: "resume".to_string(),
-                code: "resume".to_string(),
-                message: format!("Watcher resumed from EventID {}", id),
-                last_event_id: Some(id),
+                mode: if stale { "active".to_string() } else { "resume".to_string() },
+                code: if stale { "active".to_string() } else { "resume".to_string() },
+                message: if stale {
+                    format!("Watcher started (EventID {} too stale, skipped history)", id)
+                } else {
+                    format!("Watcher resumed from EventID {}", id)
+                },
+                last_event_id: if stale { None } else { Some(id) },
             }
         }
         None => {
