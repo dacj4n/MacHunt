@@ -961,6 +961,38 @@ function App() {
   const visibleStart = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VISIBLE_BUFFER);
   const visibleEnd = Math.min(items.length, visibleStart + Math.ceil(window.innerHeight / ROW_HEIGHT) + VISIBLE_BUFFER * 2);
   const visibleItems = items.slice(visibleStart, visibleEnd);
+
+  const sortedPinnedItems = useMemo(() => {
+    const sorted = [...pinnedItems];
+    const dir = sortAscending ? 1 : -1;
+    sorted.sort((a, b) => {
+      let cmp = 0;
+      switch (sortKey) {
+        case "name":
+          cmp = a.name.localeCompare(b.name);
+          break;
+        case "path":
+          cmp = (a.parent || "").localeCompare(b.parent || "");
+          if (cmp === 0) cmp = a.name.localeCompare(b.name);
+          break;
+        case "type": {
+          const extA = a.name.includes(".") ? a.name.slice(a.name.lastIndexOf(".") + 1).toLowerCase() : "";
+          const extB = b.name.includes(".") ? b.name.slice(b.name.lastIndexOf(".") + 1).toLowerCase() : "";
+          cmp = extA.localeCompare(extB);
+          if (cmp === 0) cmp = a.name.localeCompare(b.name);
+          break;
+        }
+        case "size":
+          cmp = (a.sizeBytes ?? 0) - (b.sizeBytes ?? 0);
+          break;
+        case "modified":
+          cmp = (a.modifiedUnixMs ?? 0) - (b.modifiedUnixMs ?? 0);
+          break;
+      }
+      return cmp * dir;
+    });
+    return sorted;
+  }, [pinnedItems, sortKey, sortAscending]);
   const topSpacerHeight = visibleStart * ROW_HEIGHT;
   const bottomSpacerHeight = (items.length - visibleEnd) * ROW_HEIGHT;
 
@@ -2700,15 +2732,56 @@ function App() {
           ) : (
             <>
               <div className="table-header" style={{ gridTemplateColumns }}>
-                <span className="header-cell">{t.header_name}</span>
-                <span className="header-cell">{t.header_path}</span>
-                <span className="header-cell">{t.header_type}</span>
-                <span className="header-cell">{t.header_size}</span>
-                <span className="header-cell">{t.header_modified}</span>
+                <span className="header-cell">
+                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("name")}>
+                    <span className="header-sort-label">{t.header_name}</span>
+                    {sortKey === "name" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                  </button>
+                  <span
+                    className={activeResizer === "name-path" ? "column-resizer active" : "column-resizer"}
+                    onMouseDown={startResize("name", "path", "name-path")}
+                  />
+                </span>
+                <span className="header-cell">
+                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("path")}>
+                    <span className="header-sort-label">{t.header_path}</span>
+                    {sortKey === "path" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                  </button>
+                  <span
+                    className={activeResizer === "path-type" ? "column-resizer active" : "column-resizer"}
+                    onMouseDown={startResize("path", "type", "path-type")}
+                  />
+                </span>
+                <span className="header-cell">
+                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("type")}>
+                    <span className="header-sort-label">{t.header_type}</span>
+                    {sortKey === "type" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                  </button>
+                  <span
+                    className={activeResizer === "type-size" ? "column-resizer active" : "column-resizer"}
+                    onMouseDown={startResize("type", "size", "type-size")}
+                  />
+                </span>
+                <span className="header-cell">
+                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("size")}>
+                    <span className="header-sort-label">{t.header_size}</span>
+                    {sortKey === "size" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                  </button>
+                  <span
+                    className={activeResizer === "size-modified" ? "column-resizer active" : "column-resizer"}
+                    onMouseDown={startResize("size", "modified", "size-modified")}
+                  />
+                </span>
+                <span className="header-cell">
+                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("modified")}>
+                    <span className="header-sort-label">{t.header_modified}</span>
+                    {sortKey === "modified" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                  </button>
+                </span>
               </div>
 
               <div className="table-body custom-scrollbar" onScroll={handleScrollbarScroll}>
-                {pinnedItems.map((item, index) => {
+                {sortedPinnedItems.map((item, index) => {
                   const token = iconToken(item);
                   return (
                     <article
