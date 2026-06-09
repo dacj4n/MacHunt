@@ -2200,6 +2200,14 @@ function App() {
         return;
       }
 
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setActiveView("search");
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        return;
+      }
+
       if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "a") {
         if (activeView !== "search" || contextMenu) {
           if (activeView === "settings" || !isEditableTarget(event.target)) {
@@ -2336,7 +2344,7 @@ function App() {
                   spellCheck={false}
                   onChange={(event) => setQuery(event.target.value)}
                 />
-                <span className="search-kbd">⌘K</span>
+                <span className="search-kbd">⌘F</span>
               </div>
             </div>
 

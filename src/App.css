@@ -344,7 +344,7 @@ body {
   opacity: 0.4;
 }
 
-.act-btn.primary {
+.act-btn.primary:hover:not(:disabled) {
   background: linear-gradient(145deg, #4d8eff, #2563eb);
   border-color: rgba(255, 255, 255, 0.12);
   color: #ffffff;
@@ -352,17 +352,10 @@ body {
     0 0 12px rgba(59, 130, 246, 0.2),
     var(--shadow-depth),
     var(--shadow-highlight);
+  transform: translateY(-1px);
 }
 
-.act-btn.primary:hover:not(:disabled) {
-  box-shadow:
-    0 0 20px rgba(59, 130, 246, 0.3),
-    var(--shadow-depth),
-    var(--shadow-highlight),
-    0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
-.act-btn.danger {
+.act-btn.danger:hover:not(:disabled) {
   background: linear-gradient(145deg, #f87171, #dc2626);
   border-color: rgba(255, 255, 255, 0.12);
   color: #ffffff;
@@ -370,6 +363,7 @@ body {
     0 0 12px rgba(220, 38, 38, 0.2),
     var(--shadow-depth),
     var(--shadow-highlight);
+  transform: translateY(-1px);
 }
 
 .act-btn-icon {
@@ -1201,7 +1195,7 @@ body {
   padding: 12px;
   cursor: pointer !important;
   box-shadow: 3px 3px 6px rgba(0, 0, 0, 0.3), -1px -1px 2px rgba(255, 255, 255, 0.04);
-  transition: transform 0.2s ease, box-shadow 0.3s ease;
+  transition: box-shadow 0.3s ease;
   transform: perspective(600px) rotateX(var(--tilt-y, 0deg)) rotateY(var(--tilt-x, 0deg));
   outline: none;
 }
