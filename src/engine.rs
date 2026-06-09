@@ -404,12 +404,17 @@ impl Engine {
         options: &SearchOptions,
     ) -> Vec<PathBuf> {
         let mut out = Vec::with_capacity(results.len());
+        let mut dead: Vec<PathBuf> = Vec::new();
         for (dir_path, file_name) in results {
             let full_path = if dir_path == "/" {
                 PathBuf::from(format!("/{}", file_name))
             } else {
                 PathBuf::from(format!("{}/{}", dir_path, file_name))
             };
+            if !full_path.exists() {
+                dead.push(full_path);
+                continue;
+            }
             if !prefix_allowed(&full_path, &options.path_prefix) {
                 continue;
             }
@@ -417,6 +422,19 @@ impl Engine {
                 continue;
             }
             out.push(full_path);
+        }
+        // Lazily remove dead entries from the index.
+        if !dead.is_empty() {
+            let db = self.db.clone();
+            let logger = self.logger.clone();
+            std::thread::spawn(move || {
+                for path in dead {
+                    db.delete(path.as_path());
+                    if logger.enabled() {
+                        logger.log(&format!("[-] {}", path.display()));
+                    }
+                }
+            });
         }
         out
     }
