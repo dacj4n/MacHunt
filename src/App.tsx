@@ -2302,12 +2302,30 @@ function App() {
         return;
       }
 
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "f") {
-        event.preventDefault();
-        setActiveView("search");
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-        return;
+      if ((event.metaKey || event.ctrlKey) && !event.altKey) {
+        const key = event.key.toLowerCase();
+        if (key === "1") {
+          event.preventDefault();
+          setActiveView("search");
+          return;
+        }
+        if (key === "2") {
+          event.preventDefault();
+          setActiveView("pinned");
+          return;
+        }
+        if (key === "3") {
+          event.preventDefault();
+          setActiveView("settings");
+          return;
+        }
+        if (key === "f") {
+          event.preventDefault();
+          setActiveView("search");
+          searchInputRef.current?.focus();
+          searchInputRef.current?.select();
+          return;
+        }
       }
 
       if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "a") {
