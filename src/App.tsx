@@ -622,6 +622,17 @@ function resolveTheme(themeMode: ThemeMode, systemDark: boolean): "light" | "dar
   return themeMode;
 }
 
+function loadStoredTheme(): ThemeMode {
+  if (typeof window === "undefined") {
+    return "system";
+  }
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === "light" || stored === "dark") {
+    return stored;
+  }
+  return "system";
+}
+
 function detectDefaultLanguage(): Language {
   if (typeof navigator !== "undefined" && navigator.language.toLowerCase().startsWith("zh")) {
     return "zh";
@@ -809,7 +820,7 @@ function savePinnedItems(items: SearchResultItem[]) {
 
 function App() {
   const [activeView, setActiveView] = useState<ViewMode>("search");
-  const [themeMode, setThemeMode] = useState<ThemeMode>("system");
+  const [themeMode, setThemeMode] = useState<ThemeMode>(loadStoredTheme);
   const [systemDark, setSystemDark] = useState(systemPrefersDark());
   const [language, setLanguage] = useState<Language>(detectDefaultLanguage());
   const [windowToggleShortcut, setWindowToggleShortcut] = useState(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
@@ -1032,13 +1043,6 @@ function App() {
       applyPathSuggestion(visiblePathSuggestions[activePathSuggestion]);
     }
   };
-
-  useEffect(() => {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored === "system" || stored === "light" || stored === "dark") {
-      setThemeMode(stored);
-    }
-  }, []);
 
   useEffect(() => {
     columnWidthsRef.current = columnWidths;
@@ -2275,7 +2279,7 @@ function App() {
       }
 
       if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "a") {
-        if (activeView !== "search" || contextMenu) {
+        if ((activeView !== "search" && activeView !== "pinned") || contextMenu) {
           if (activeView === "settings" || !isEditableTarget(event.target)) {
             event.preventDefault();
           }
@@ -2283,7 +2287,8 @@ function App() {
         }
         if (isEditableTarget(event.target)) return;
         event.preventDefault();
-        setSelectedItemPaths(itemsRef.current.map((item) => item.path));
+        const source = activeView === "pinned" ? pinnedItems : itemsRef.current;
+        setSelectedItemPaths(source.map((item) => item.path));
         return;
       }
 
