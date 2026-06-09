@@ -2807,6 +2807,16 @@ function App() {
                       <div className="cell type-cell">{typeLabel(item, t.typeFolder, t.typeFile)}</div>
                       <div className="cell size-cell">{formatBytes(item.sizeBytes)}</div>
                       <div className="cell date-cell">{formatDate(item.modifiedUnixMs)}</div>
+                          <button
+                            className="pin-btn pinned"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              togglePin(item);
+                            }}
+                            title={t.menuUnpin}
+                          >
+                            ★
+                          </button>
                     </article>
                   );
                 })}
