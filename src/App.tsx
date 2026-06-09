@@ -187,6 +187,7 @@ const I18N = {
     pinnedEmpty: "暂无收藏，在搜索结果中右键文件或文件夹即可收藏。",
     menuPin: "收藏",
     menuUnpin: "取消收藏",
+    pinnedCount: "已收藏 {count} 项",
   },
   en: {
     searchPlaceholder: "Search files, folders, content...",
@@ -322,6 +323,7 @@ const I18N = {
     pinnedEmpty: "No pinned items. Right-click a file or folder in search results to pin it.",
     menuPin: "Pin",
     menuUnpin: "Unpin",
+    pinnedCount: "{count} pinned items",
   }
 } as const;
 
@@ -2390,8 +2392,8 @@ function App() {
   ];
 
   const settingsLanguageOptions: Array<{ code: Language; title: string; description: string }> = [
-    { code: "zh", title: t.languageZhTitle, description: t.languageZhDesc },
-    { code: "en", title: t.languageEnTitle, description: t.languageEnDesc }
+    { code: "zh", title: t.languageZhTitle, description: "界面使用中文。" },
+    { code: "en", title: t.languageEnTitle, description: "Interface in English." }
   ];
 
   const TAB_ICONS: Record<TabId, string> = {
@@ -2844,7 +2846,7 @@ function App() {
 
           <footer className="status-bar">
             <div className="status-left">
-              <span className="status-highlight">已收藏 {pinnedItems.length} 项</span>
+              <span className="status-highlight">{fmt(t.pinnedCount, { count: pinnedItems.length })}</span>
             </div>
           </footer>
         </div>
