@@ -950,7 +950,6 @@ body {
 }
 
 .pin-btn.pinned {
-  opacity: 1;
   color: #d4af37;
   border-color: rgba(212, 175, 55, 0.2);
   box-shadow: var(--shadow-depth), var(--shadow-highlight), 0 0 6px rgba(212, 175, 55, 0.12);
