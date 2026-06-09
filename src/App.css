@@ -1141,10 +1141,17 @@ body {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: var(--sp-xl) var(--sp-gutter);
+}
+
+.pinned-view .pinned-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   max-width: 1200px;
-  margin: 0 auto;
   width: 100%;
+  margin: 0 auto;
+  padding: var(--sp-xl) var(--sp-gutter) 0;
 }
 
 .pinned-view .table-body {

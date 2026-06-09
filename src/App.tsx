@@ -184,7 +184,7 @@ const I18N = {
     updateSaved: "更新设置已保存",
     updateCurrentVersion: "当前版本",
     pinnedTag: "收藏",
-    pinnedEmpty: "暂无收藏，在搜索结果中右键文件或文件夹即可收藏。",
+    pinnedEmpty: "暂无收藏",
     menuPin: "收藏",
     menuUnpin: "取消收藏",
     pinnedCount: "已收藏 {count} 项",
@@ -320,7 +320,7 @@ const I18N = {
     updateSaved: "Update settings saved",
     updateCurrentVersion: "Current Version",
     pinnedTag: "Pinned",
-    pinnedEmpty: "No pinned items. Right-click a file or folder in search results to pin it.",
+    pinnedEmpty: "No pinned items",
     menuPin: "Pin",
     menuUnpin: "Unpin",
     pinnedCount: "{count} pinned items",
@@ -2741,6 +2741,7 @@ function App() {
               setSelectionAnchorPath(null);
             }
           }}>
+          <div className="pinned-content">
           <header className="settings-header">
             <div>
               <h2>{t.pinnedTag}</h2>
@@ -2844,10 +2845,12 @@ function App() {
             </>
           )}
 
+          </div>
           <footer className="status-bar">
             <div className="status-left">
               <span className="status-highlight">{fmt(t.pinnedCount, { count: pinnedItems.length })}</span>
             </div>
+            <div className="status-right" />
           </footer>
         </div>
       ) : (
