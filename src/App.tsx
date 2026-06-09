@@ -830,7 +830,7 @@ function App() {
     () => loadStoredColumnWidths() ?? DEFAULT_COLUMN_WIDTHS
   );
   const [activeResizer, setActiveResizer] = useState<string | null>(null);
-  const tableShellRef = useRef<HTMLElement | null>(null);
+  const tableShellRef = useRef<HTMLDivElement | null>(null);
   const tableBodyRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const pathPickerRef = useRef<HTMLDivElement | null>(null);
@@ -2201,7 +2201,12 @@ function App() {
       }
 
       if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "a") {
-        if (activeView !== "search" || contextMenu) return;
+        if (activeView !== "search" || contextMenu) {
+          if (activeView === "settings" || !isEditableTarget(event.target)) {
+            event.preventDefault();
+          }
+          return;
+        }
         if (isEditableTarget(event.target)) return;
         event.preventDefault();
         setSelectedItemPaths(itemsRef.current.map((item) => item.path));
@@ -2236,8 +2241,16 @@ function App() {
     };
 
     window.addEventListener("keydown", onKeyDown);
+    const onBlur = () => {
+      if (selectedPathsInOrder.length > 0) {
+        setSelectedItemPaths([]);
+        setSelectionAnchorPath(null);
+      }
+    };
+    window.addEventListener("blur", onBlur);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("blur", onBlur);
     };
   }, [activeView, contextMenu, selectedPathsInOrder]);
 
@@ -2252,13 +2265,65 @@ function App() {
     { code: "en", title: t.languageEnTitle, description: t.languageEnDesc }
   ];
 
+  const TAB_ICONS: Record<TabId, string> = {
+    all: "\u229E", files: "\u25A3", folders: "\u25A4", documents: "\u2261", images: "\u25C9", media: "\u266A", code: "\u2329\u232A", archives: "\u25A0"
+  };
+
   return (
-    <div className="app-background">
-      <main className={activeView === "search" ? "app-shell" : "app-shell app-shell-settings"}>
-        {activeView === "search" ? (
-          <>
-            <section className="search-panel">
-              <div className="search-input-wrap">
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="header-left">
+          <div className="logo-wrap">
+            <span className="logo-icon">⚡</span>
+            <span className="logo-text">MacHunt</span>
+          </div>
+          <nav className="header-nav">
+            <button
+              className={activeView === "search" ? "nav-btn active" : "nav-btn"}
+              onClick={() => setActiveView("search")}
+            >
+              <span className="nav-btn-icon">⌂</span>
+              {t.searchTag}
+            </button>
+            <button
+              className={activeView === "settings" ? "nav-btn active" : "nav-btn"}
+              onClick={() => setActiveView("settings")}
+            >
+              <span className="nav-btn-icon">⚙</span>
+              {t.settingsTitle}
+            </button>
+          </nav>
+        </div>
+        <div className="header-right">
+          <button className="act-btn" onClick={() => void runBuild(false)} disabled={isBuilding}>
+            {t.build}
+          </button>
+          <button className="act-btn" onClick={() => void runBuild(true)} disabled={isBuilding}>
+            {t.rebuild}
+          </button>
+          <button
+            className={isWatchRunning ? "act-btn danger" : "act-btn primary"}
+            onClick={() => void toggleWatch()}
+            disabled={isWatchPending}
+          >
+            <span className={isWatchRunning ? "watch-dot on" : "watch-dot off"} />
+            {isWatchPending ? (isWatchRunning ? t.stopping : t.starting) : isWatchRunning ? t.stopWatch : t.startWatch}
+          </button>
+        </div>
+      </header>
+
+      {activeView === "search" ? (
+        <div className="search-view"
+          onClick={(e) => {
+            if (!(e.target as HTMLElement).closest(".result-row") && !(e.target as HTMLElement).closest(".context-menu-layer")) {
+              setSelectedItemPaths([]);
+              setSelectionAnchorPath(null);
+            }
+          }}>
+          <div className="search-main">
+            <div className="search-hero">
+              <div className="search-input-container">
+                <span className="search-icon-left">⌕</span>
                 <input
                   ref={searchInputRef}
                   className="search-input"
@@ -2271,146 +2336,118 @@ function App() {
                   spellCheck={false}
                   onChange={(event) => setQuery(event.target.value)}
                 />
-                <span className="search-shortcut">{t.searchTag}</span>
+                <span className="search-kbd">⌘K</span>
               </div>
+            </div>
 
-              <div className="filter-row">
-                <div className="path-picker" ref={pathPickerRef}>
-                  <div className="path-input-wrap">
-                    <input
-                      ref={pathInputRef}
-                      className="path-input"
-                      placeholder={t.pathPlaceholder}
-                      value={pathPrefix}
-                      disabled={isIndexLoading}
-                      autoComplete="off"
-                      autoCorrect="off"
-                      autoCapitalize="off"
-                      spellCheck={false}
-                      onFocus={() => {
-                        if (!isIndexLoading) {
-                          setIsPathDropdownOpen(true);
-                        }
-                      }}
-                      onClick={() => {
-                        // Re-open dropdown when clicking an already-focused input.
-                        if (!isIndexLoading && pathPrefix.trim().length > 0) {
-                          setIsPathDropdownOpen(true);
-                        }
-                      }}
-                      onBlur={(event) => {
-                        const next = event.relatedTarget;
-                        if (next instanceof Node && pathPickerRef.current?.contains(next)) {
-                          return;
-                        }
-                        closePathDropdown();
-                      }}
-                      onKeyDown={handlePathInputKeyDown}
-                      onChange={(event) => {
-                        setPathPrefix(event.target.value);
+            <div className="filter-chips">
+              {TAB_IDS.map((tab) => (
+                <button
+                  key={tab}
+                  className={tab === activeTab ? "chip-btn active" : "chip-btn"}
+                  onClick={() => setActiveTab(tab)}
+                >
+                  <span className="chip-icon">{TAB_ICONS[tab]}</span>
+                  {tabLabel(tab)}
+                </button>
+              ))}
+            </div>
+
+            <div className="filter-toolbar">
+              <div className="path-picker" ref={pathPickerRef}>
+                <div className="path-input-wrap">
+                  <input
+                    ref={pathInputRef}
+                    className="path-input"
+                    placeholder={t.pathPlaceholder}
+                    value={pathPrefix}
+                    disabled={isIndexLoading}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    onFocus={() => {
+                      if (!isIndexLoading) {
                         setIsPathDropdownOpen(true);
-                        setActivePathSuggestion(-1);
+                      }
+                    }}
+                    onClick={() => {
+                      if (!isIndexLoading && pathPrefix.trim().length > 0) {
+                        setIsPathDropdownOpen(true);
+                      }
+                    }}
+                    onBlur={(event) => {
+                      const next = event.relatedTarget;
+                      if (next instanceof Node && pathPickerRef.current?.contains(next)) {
+                        return;
+                      }
+                      closePathDropdown();
+                    }}
+                    onKeyDown={handlePathInputKeyDown}
+                    onChange={(event) => {
+                      setPathPrefix(event.target.value);
+                      setIsPathDropdownOpen(true);
+                      setActivePathSuggestion(-1);
+                    }}
+                  />
+                  {pathPrefix.trim().length > 0 && (
+                    <button
+                      type="button"
+                      className="path-clear-btn"
+                      aria-label="Clear path filter"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        setPathPrefix("");
+                        pathInputRef.current?.focus();
                       }}
-                    />
-                    {pathPrefix.trim().length > 0 && (
-                      <button
-                        type="button"
-                        className="path-clear-btn"
-                        aria-label="Clear path filter"
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => {
-                          setPathPrefix("");
-                          pathInputRef.current?.focus();
-                        }}
-                      >&#10005;</button>
-                    )}
-                    {isPathDropdownVisible && (
-                      <div className="path-suggest-panel">
-                        {visiblePathSuggestions.map((path, index) => (
-                          <button
-                            key={path}
-                            type="button"
-                            className={index === activePathSuggestion ? "path-suggest-item active" : "path-suggest-item"}
-                            onMouseEnter={() => setActivePathSuggestion(index)}
-                            onMouseDown={(event) => {
-                              event.preventDefault();
-                              applyPathSuggestion(path);
-                            }}
-                          >
-                            <span className="path-suggest-icon">»</span>
-                            <span className="path-suggest-text">{path}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    className="action-btn path-pick-btn"
-                    onClick={() => void pickPath()}
-                    disabled={isPickingPath || isIndexLoading}
-                  >
-                    {t.choosePath}
-                  </button>
+                    >&#10005;</button>
+                  )}
+                  {isPathDropdownVisible && (
+                    <div className="path-suggest-panel">
+                      {visiblePathSuggestions.map((path, index) => (
+                        <button
+                          key={path}
+                          type="button"
+                          className={index === activePathSuggestion ? "path-suggest-item active" : "path-suggest-item"}
+                          onMouseEnter={() => setActivePathSuggestion(index)}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            applyPathSuggestion(path);
+                          }}
+                        >
+                          <span className="path-suggest-icon">›</span>
+                          <span className="path-suggest-text">{path}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-
-                <div className="mode-controls">
-                  <button
-                    className={regexEnabled ? "case-btn active" : "case-btn"}
-                    onClick={() => setRegexEnabled((prev) => !prev)}
-                    title={t.regexEnabled}
-                  >
-                    {t.regexEnabled}
-                  </button>
-                  <button
-                    className={caseSensitive ? "case-btn active" : "case-btn"}
-                    onClick={() => setCaseSensitive((prev) => !prev)}
-                    title={t.caseSensitive}
-                  >
-                    Aa
-                  </button>
-                </div>
-
-                <div className="actions">
-                  <button className="action-btn" onClick={() => void runBuild(false)} disabled={isBuilding}>
-                    {t.build}
-                  </button>
-                  <button className="action-btn" onClick={() => void runBuild(true)} disabled={isBuilding}>
-                    {t.rebuild}
-                  </button>
-                  <button
-                    className={isWatchRunning ? "action-btn watch-stop" : "action-btn primary"}
-                    onClick={() => void toggleWatch()}
-                    disabled={isWatchPending}
-                  >
-                    <span className={isWatchRunning ? "watch-dot stop" : "watch-dot start"} />
-                    {isWatchPending ? (isWatchRunning ? t.stopping : t.starting) : isWatchRunning ? t.stopWatch : t.startWatch}
-                  </button>
-                  <button
-                    className="action-btn"
-                    onClick={() => setActiveView("settings")}
-                    title={t.settingsTitle}
-                  >
-                    {t.settingsTitle}
-                  </button>
-                </div>
+                <button
+                  className="act-btn"
+                  onClick={() => void pickPath()}
+                  disabled={isPickingPath || isIndexLoading}
+                >
+                  {t.choosePath}
+                </button>
               </div>
-            </section>
 
-            <section className="tabs-row">
-              <div className="tabs">
-                {TAB_IDS.map((tab) => (
-                  <button
-                    key={tab}
-                    className={tab === activeTab ? "tab-btn active" : "tab-btn"}
-                    onClick={() => setActiveTab(tab)}
-                  >
-                    {tabLabel(tab)}
-                  </button>
-                ))}
-              </div>
-            </section>
+              <button
+                className={regexEnabled ? "toggle-btn active" : "toggle-btn"}
+                onClick={() => setRegexEnabled((prev) => !prev)}
+                title={t.regexEnabled}
+              >
+                {t.regexEnabled}
+              </button>
+              <button
+                className={caseSensitive ? "toggle-btn active" : "toggle-btn"}
+                onClick={() => setCaseSensitive((prev) => !prev)}
+                title={t.caseSensitive}
+              >
+                Aa
+              </button>
+            </div>
 
-            <section className="table-shell" ref={tableShellRef}>
+            <div className="results-area" ref={tableShellRef}>
               {items.length === 0 ? (
                 <div className="empty-state">
                   {query.trim().length === 0
@@ -2468,7 +2505,7 @@ function App() {
                     </span>
                   </div>
 
-                  <div className="table-body" ref={tableBodyRef}
+                  <div className="table-body custom-scrollbar" ref={tableBodyRef}
                     onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}>
                     <div style={{ height: topSpacerHeight }} />
                     {visibleItems.map((item, vi) => {
@@ -2484,7 +2521,7 @@ function App() {
                               rowRefs.current.delete(item.path);
                             }
                           }}
-                          className={selectedItemPathSet.has(item.path) ? "row selected" : "row"}
+                          className={selectedItemPathSet.has(item.path) ? "result-row selected" : "result-row"}
                           style={{ gridTemplateColumns }}
                           onMouseDown={(event) => {
                             if (event.button === 0) {
@@ -2513,8 +2550,8 @@ function App() {
                             {item.parent}
                           </div>
                           <div className="cell type-cell">{typeLabel(item, t.typeFolder, t.typeFile)}</div>
-                          <div className="cell">{formatBytes(item.sizeBytes)}</div>
-                          <div className="cell">{formatDate(item.modifiedUnixMs)}</div>
+                          <div className="cell size-cell">{formatBytes(item.sizeBytes)}</div>
+                          <div className="cell date-cell">{formatDate(item.modifiedUnixMs)}</div>
                         </article>
                       );
                     })}
@@ -2522,74 +2559,117 @@ function App() {
                   </div>
                 </>
               )}
-            </section>
+            </div>
+          </div>
 
-            <footer className="status-bar">
-              <div className="status-left">
-                <span>{formatIndexedItems(indexed)}</span>
-                <span>{buildStatus}</span>
-              </div>
-              <div className="status-right">
-                <span>{formatShownItems(totalFound)}</span>
-                <span>{isSearching ? t.searching : `${tookMs} ms`}</span>
-              </div>
-            </footer>
-          </>
-        ) : (
-          <section className="settings-page">
-            <header className="settings-header">
-              <div>
-                <h2>{t.settingsTitle}</h2>
-                <p>{t.settingsDesc}</p>
-                {appVersion && <p className="version-text">{t.versionLabel}: v{appVersion}</p>}
-              </div>
-              <button className="action-btn primary" onClick={() => setActiveView("search")}>
-                {t.backToSearch}
-              </button>
-            </header>
+          <footer className="status-bar">
+            <div className="status-left">
+              <span className="status-highlight">{formatIndexedItems(indexed)}</span>
+              <span>{buildStatus}</span>
+            </div>
+            <div className="status-right">
+              <span className="status-highlight">{formatShownItems(totalFound)}</span>
+              <span>{isSearching ? t.searching : `${tookMs} ms`}</span>
+            </div>
+          </footer>
+        </div>
+      ) : (
+        <div className="settings-view custom-scrollbar">
+          <header className="settings-header">
+            <div>
+              <h2>{t.settingsTitle}</h2>
+              <p>{t.settingsDesc}</p>
+            </div>
+          </header>
 
-            <article className="settings-card">
-              <h3>{t.themeModeTitle}</h3>
-              <div className="theme-select-list">
+          <div className="settings-grid">
+            {/* Appearance Module */}
+            <article className="set-card">
+              <div className="set-card-header">
+                <div className="set-card-icon">◉</div>
+                <div>
+                  <div className="set-card-title">{t.themeModeTitle}</div>
+                  <div className="set-card-subtitle">{t.themeCurrent}: {resolvedTheme === "dark" ? t.themeDarkTitle : t.themeLightTitle}</div>
+                </div>
+              </div>
+              <div className="theme-cards">
                 {settingsThemeOptions.map((option) => (
-                  <button
+                  <div
                     key={option.mode}
-                    className={themeMode === option.mode ? "theme-option active" : "theme-option"}
+                    className={themeMode === option.mode ? "tilt-card active" : "tilt-card"}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setThemeMode(option.mode)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setThemeMode(option.mode); } }}
+                    onMouseMove={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const x = ((e.clientX - rect.left) / rect.width - 0.5) * 8;
+                      const y = ((e.clientY - rect.top) / rect.height - 0.5) * -8;
+                      e.currentTarget.style.setProperty("--tilt-x", `${x}deg`);
+                      e.currentTarget.style.setProperty("--tilt-y", `${y}deg`);
+                      e.currentTarget.style.setProperty("--glow-x", `${((e.clientX - rect.left) / rect.width) * 100}%`);
+                      e.currentTarget.style.setProperty("--glow-y", `${((e.clientY - rect.top) / rect.height) * 100}%`);
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.setProperty("--tilt-x", "0deg");
+                      e.currentTarget.style.setProperty("--tilt-y", "0deg");
+                    }}
                   >
-                    <div className="theme-option-title">{option.title}</div>
-                    <div className="theme-option-desc">{option.description}</div>
-                  </button>
+                    <div className={`theme-preview theme-preview-${option.mode}`}>
+                      <div className="tp-bar"/><div className="tp-bar"/><div className="tp-bar"/>
+                    </div>
+                    <div className="tilt-card-label"><span className="dot"/>{option.title}</div>
+                    <div className="tilt-card-desc">{option.description}</div>
+                  </div>
                 ))}
               </div>
-              <div className="theme-preview-line">
-                {t.themeCurrent}: {resolvedTheme === "dark" ? t.themeDarkTitle : t.themeLightTitle}
+
+              <div className="rule-section">
+                <div className="rule-section-title">{t.languageTitle}</div>
+                <div className="lang-cards">
+                  {settingsLanguageOptions.map((option) => (
+                    <div
+                      key={option.code}
+                      className={language === option.code ? "tilt-card active" : "tilt-card"}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setLanguage(option.code)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setLanguage(option.code); } }}
+                      onMouseMove={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const x = ((e.clientX - rect.left) / rect.width - 0.5) * 8;
+                        const y = ((e.clientY - rect.top) / rect.height - 0.5) * -8;
+                        e.currentTarget.style.setProperty("--tilt-x", `${x}deg`);
+                        e.currentTarget.style.setProperty("--tilt-y", `${y}deg`);
+                        e.currentTarget.style.setProperty("--glow-x", `${((e.clientX - rect.left) / rect.width) * 100}%`);
+                        e.currentTarget.style.setProperty("--glow-y", `${((e.clientY - rect.top) / rect.height) * 100}%`);
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.setProperty("--tilt-x", "0deg");
+                        e.currentTarget.style.setProperty("--tilt-y", "0deg");
+                      }}
+                    >
+                      <div className="tilt-card-label"><span className="dot"/>{option.title}</div>
+                      <div className="tilt-card-desc">{option.description}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </article>
 
-            <article className="settings-card">
-              <h3>{t.languageTitle}</h3>
-              <div className="theme-select-list">
-                {settingsLanguageOptions.map((option) => (
-                  <button
-                    key={option.code}
-                    className={language === option.code ? "theme-option active" : "theme-option"}
-                    onClick={() => setLanguage(option.code)}
-                  >
-                    <div className="theme-option-title">{option.title}</div>
-                    <div className="theme-option-desc">{option.description}</div>
-                  </button>
-                ))}
+            {/* Preferences Module */}
+            <article className="set-card">
+              <div className="set-card-header">
+                <div className="set-card-icon">⚙</div>
+                <div>
+                  <div className="set-card-title">{t.shortcutTitle}</div>
+                  <div className="set-card-subtitle">{t.shortcutDesc}</div>
+                </div>
               </div>
-            </article>
-
-            <article className="settings-card">
-              <h3>{t.shortcutTitle}</h3>
-              <p className="shortcut-desc">{t.shortcutDesc}</p>
-              <p className="shortcut-input-hint">{t.shortcutInputHint}</p>
-              <div className="shortcut-editor">
+              <p className="set-card-hint">{t.shortcutInputHint}</p>
+              <div className="form-row">
                 <input
-                  className="shortcut-input"
+                  className="form-input"
                   value={displayShortcut(shortcutDraft)}
                   placeholder={t.shortcutInputPlaceholder}
                   readOnly
@@ -2624,142 +2704,118 @@ function App() {
                     void applyWindowToggleShortcut(next);
                   }}
                 />
-                <div className="shortcut-actions">
-                  <button
-                    className="action-btn"
-                    disabled={isShortcutSaving}
-                    onClick={() => void applyWindowToggleShortcut(shortcutDraft)}
-                  >
-                    {t.shortcutApply}
-                  </button>
-                  <button
-                    className="action-btn"
-                    disabled={isShortcutSaving}
-                    onClick={() => void resetWindowToggleShortcut()}
-                  >
-                    {t.shortcutReset}
-                  </button>
-                </div>
+                <button
+                  className="act-btn"
+                  disabled={isShortcutSaving}
+                  onClick={() => void applyWindowToggleShortcut(shortcutDraft)}
+                >
+                  {t.shortcutApply}
+                </button>
+                <button
+                  className="act-btn"
+                  disabled={isShortcutSaving}
+                  onClick={() => void resetWindowToggleShortcut()}
+                >
+                  {t.shortcutReset}
+                </button>
               </div>
-              <div className="shortcut-current-line">
+              <div className="option-meta">
                 {t.shortcutCurrent}: {displayShortcut(windowToggleShortcut)}
               </div>
-              {shortcutStatus && <div className="shortcut-status">{shortcutStatus}</div>}
+              {shortcutStatus && <div className="status-msg">{shortcutStatus}</div>}
+
+              <div className="rule-section">
+                <div className="rule-section-title">{t.startupTitle}</div>
+                <p className="set-card-desc">{t.startupDesc}</p>
+                <div className="toggle-cards">
+                  <label className="toggle-card">
+                    <div className="toggle-card-copy">
+                      <div className="toggle-card-title">{t.startupLaunchAtLogin}</div>
+                      <div className="toggle-card-desc">{t.startupLaunchAtLoginDesc}</div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={launchAtLogin}
+                      aria-label={t.startupLaunchAtLogin}
+                      className={launchAtLogin ? "ns-switch on" : "ns-switch"}
+                      disabled={isLaunchSettingsSaving}
+                      onClick={() => void applyLaunchSettings(!launchAtLogin, silentStart, showDockIcon)}
+                    >
+                      <span className="ns-switch-knob" />
+                    </button>
+                  </label>
+                  <label className="toggle-card">
+                    <div className="toggle-card-copy">
+                      <div className="toggle-card-title">{t.startupSilentStart}</div>
+                      <div className="toggle-card-desc">{t.startupSilentStartDesc}</div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={silentStart}
+                      aria-label={t.startupSilentStart}
+                      className={silentStart ? "ns-switch on" : "ns-switch"}
+                      disabled={isLaunchSettingsSaving}
+                      onClick={() => void applyLaunchSettings(launchAtLogin, !silentStart, showDockIcon)}
+                    >
+                      <span className="ns-switch-knob" />
+                    </button>
+                  </label>
+                  <label className="toggle-card">
+                    <div className="toggle-card-copy">
+                      <div className="toggle-card-title">{t.startupShowDockIcon}</div>
+                      <div className="toggle-card-desc">{t.startupShowDockIconDesc}</div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={showDockIcon}
+                      aria-label={t.startupShowDockIcon}
+                      className={showDockIcon ? "ns-switch on" : "ns-switch"}
+                      disabled={isLaunchSettingsSaving}
+                      onClick={() => void applyLaunchSettings(launchAtLogin, silentStart, !showDockIcon)}
+                    >
+                      <span className="ns-switch-knob" />
+                    </button>
+                  </label>
+                </div>
+                {launchSettingsStatus && <div className="status-msg">{launchSettingsStatus}</div>}
+              </div>
             </article>
 
-            <article className="settings-card">
-              <h3>{t.startupTitle}</h3>
-              <p className="shortcut-desc">{t.startupDesc}</p>
-              <div className="startup-toggle-list">
-                <label className="startup-toggle-row">
-                  <div className="startup-toggle-copy">
-                    <div className="startup-toggle-title">{t.startupLaunchAtLogin}</div>
-                    <div className="startup-toggle-desc">{t.startupLaunchAtLoginDesc}</div>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={launchAtLogin}
-                    aria-label={t.startupLaunchAtLogin}
-                    className={launchAtLogin ? "mac-switch is-on" : "mac-switch"}
-                    disabled={isLaunchSettingsSaving}
-                    onClick={() => void applyLaunchSettings(!launchAtLogin, silentStart, showDockIcon)}
-                  >
-                    <span className="mac-switch-knob" />
-                  </button>
-                </label>
-                <label className="startup-toggle-row">
-                  <div className="startup-toggle-copy">
-                    <div className="startup-toggle-title">{t.startupSilentStart}</div>
-                    <div className="startup-toggle-desc">{t.startupSilentStartDesc}</div>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={silentStart}
-                    aria-label={t.startupSilentStart}
-                    className={silentStart ? "mac-switch is-on" : "mac-switch"}
-                    disabled={isLaunchSettingsSaving}
-                    onClick={() => void applyLaunchSettings(launchAtLogin, !silentStart, showDockIcon)}
-                  >
-                    <span className="mac-switch-knob" />
-                  </button>
-                </label>
-                <label className="startup-toggle-row">
-                  <div className="startup-toggle-copy">
-                    <div className="startup-toggle-title">{t.startupShowDockIcon}</div>
-                    <div className="startup-toggle-desc">{t.startupShowDockIconDesc}</div>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={showDockIcon}
-                    aria-label={t.startupShowDockIcon}
-                    className={showDockIcon ? "mac-switch is-on" : "mac-switch"}
-                    disabled={isLaunchSettingsSaving}
-                    onClick={() => void applyLaunchSettings(launchAtLogin, silentStart, !showDockIcon)}
-                  >
-                    <span className="mac-switch-knob" />
-                  </button>
-                </label>
+            {/* About Module */}
+            <article className="set-card">
+              <div className="set-card-header">
+                <div className="set-card-icon">ℹ</div>
+                <div>
+                  <div className="set-card-title">{t.updateTitle}</div>
+                  <div className="set-card-subtitle">{appVersion ? `${t.versionLabel}: v${appVersion}` : t.updateDesc}</div>
+                </div>
               </div>
-              {launchSettingsStatus && <div className="shortcut-status">{launchSettingsStatus}</div>}
-            </article>
-
-            <article className="settings-card">
-              <h3>{t.autoVacuumTitle}</h3>
-              <p className="shortcut-desc">{t.autoVacuumDesc}</p>
-              <div className="startup-toggle-list">
-                <label className="startup-toggle-row">
-                  <div className="startup-toggle-copy">
-                    <div className="startup-toggle-title">{t.autoVacuumOn}</div>
-                    <div className="startup-toggle-desc">{t.autoVacuumOnDesc}</div>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={autoVacuumOnRebuild}
-                    aria-label={t.autoVacuumOn}
-                    className={autoVacuumOnRebuild ? "mac-switch is-on" : "mac-switch"}
-                    disabled={isAutoVacuumSettingsSaving}
-                    onClick={() => void applyAutoVacuumSettings(!autoVacuumOnRebuild)}
-                  >
-                    <span className="mac-switch-knob" />
-                  </button>
-                </label>
-              </div>
-              {autoVacuumSettingsStatus && <div className="shortcut-status">{autoVacuumSettingsStatus}</div>}
-            </article>
-
-            <article className="settings-card">
-              <h3>{t.updateTitle}</h3>
-              <p className="shortcut-desc">{t.updateDesc}</p>
-              <div className="startup-toggle-list">
-                <label className="startup-toggle-row">
-                  <div className="startup-toggle-copy">
-                    <div className="startup-toggle-title">{t.updateAutoCheck}</div>
-                    <div className="startup-toggle-desc">{t.updateAutoCheckDesc}</div>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={autoCheckUpdate}
-                    aria-label={t.updateAutoCheck}
-                    className={autoCheckUpdate ? "mac-switch is-on" : "mac-switch"}
-                    disabled={isAutoCheckSaving}
-                    onClick={() => void applyAutoCheckUpdate(!autoCheckUpdate)}
-                  >
-                    <span className="mac-switch-knob" />
-                  </button>
-                </label>
-              </div>
+              <label className="toggle-card">
+                <div className="toggle-card-copy">
+                  <div className="toggle-card-title">{t.updateAutoCheck}</div>
+                  <div className="toggle-card-desc">{t.updateAutoCheckDesc}</div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={autoCheckUpdate}
+                  aria-label={t.updateAutoCheck}
+                  className={autoCheckUpdate ? "ns-switch on" : "ns-switch"}
+                  disabled={isAutoCheckSaving}
+                  onClick={() => void applyAutoCheckUpdate(!autoCheckUpdate)}
+                >
+                  <span className="ns-switch-knob" />
+                </button>
+              </label>
               <div className="update-info">
-                <div className="update-version-line">{t.updateCurrentVersion}: v{appVersion}</div>
                 {isCheckingUpdate && <div className="update-status">{t.updateChecking}</div>}
                 {!isCheckingUpdate && updateInfo && updateInfo.hasUpdate && (
                   <div className="update-available">
                     <span>{fmt(t.updateNewVersion, { version: updateInfo.latestVersion })}</span>
-                    <button className="action-btn primary"
+                    <button className="act-btn primary"
                       onClick={() => openUrl("https://github.com/dacj4n/MacHunt/releases/latest")}
                     >{t.updateDownload}</button>
                   </div>
@@ -2768,21 +2824,49 @@ function App() {
                   <div className="update-status">{t.updateNoUpdate}</div>
                 )}
               </div>
-              <div className="update-actions">
-                <button className="action-btn" disabled={isCheckingUpdate} onClick={() => void checkForUpdatesManually()}>
+              <div className="form-row">
+                <button className="act-btn" disabled={isCheckingUpdate} onClick={() => void checkForUpdatesManually()}>
                   {t.updateCheckNow}
                 </button>
               </div>
-              {autoCheckStatus && <div className="shortcut-status">{autoCheckStatus}</div>}
+              {autoCheckStatus && <div className="status-msg">{autoCheckStatus}</div>}
             </article>
 
-            <article className="settings-card">
-              <h3>{t.watchRootsTitle}</h3>
-              <p className="shortcut-desc">{t.watchRootsDesc}</p>
-              <div className="exclude-rule-editor">
-                <div className="exclude-rule-input-row">
+            {/* Indexing Module */}
+            <article className="set-card">
+              <div className="set-card-header">
+                <div className="set-card-icon">⊞</div>
+                <div>
+                  <div className="set-card-title">{t.autoVacuumTitle}</div>
+                  <div className="set-card-subtitle">{t.autoVacuumDesc}</div>
+                </div>
+              </div>
+              <label className="toggle-card">
+                <div className="toggle-card-copy">
+                  <div className="toggle-card-title">{t.autoVacuumOn}</div>
+                  <div className="toggle-card-desc">{t.autoVacuumOnDesc}</div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={autoVacuumOnRebuild}
+                  aria-label={t.autoVacuumOn}
+                  className={autoVacuumOnRebuild ? "ns-switch on" : "ns-switch"}
+                  disabled={isAutoVacuumSettingsSaving}
+                  onClick={() => void applyAutoVacuumSettings(!autoVacuumOnRebuild)}
+                >
+                  <span className="ns-switch-knob" />
+                </button>
+              </label>
+              {autoVacuumSettingsStatus && <div className="status-msg">{autoVacuumSettingsStatus}</div>}
+
+              <div className="rule-cols">
+              <div className="rule-section">
+                <div className="rule-section-title">{t.watchRootsTitle}</div>
+                <p className="set-card-desc">{t.watchRootsDesc}</p>
+                <div className="form-row">
                   <input
-                    className="shortcut-input"
+                    className="form-input"
                     value={watchRootDraft}
                     placeholder={t.watchRootsInputPlaceholder}
                     disabled={isWatchRootSaving}
@@ -2799,34 +2883,30 @@ function App() {
                     }}
                   />
                   <button
-                    className="action-btn"
+                    className="act-btn"
                     disabled={isWatchRootSaving || isPickingPath}
                     onClick={() => void pickWatchRoot()}
                   >
                     {t.choosePath}
                   </button>
                   <button
-                    className="action-btn"
+                    className="act-btn"
                     disabled={isWatchRootSaving || watchRootDraft.trim().length === 0}
                     onClick={() => void addWatchRoot()}
                   >
                     {t.excludeAdd}
                   </button>
                 </div>
-              </div>
-
-              <div className="exclude-rule-list-wrap">
-                <div className="exclude-rule-list-title">{t.watchRootsTitle}</div>
                 {watchRoots.length === 0 ? (
-                  <div className="shortcut-input-hint">{t.watchRootsEmptyHint}</div>
+                  <div className="set-card-hint">{t.watchRootsEmptyHint}</div>
                 ) : (
-                  <div className="exclude-rule-list">
+                  <div className="rule-list">
                     {watchRoots.map((root) => (
-                      <div key={`watch-root-${root}`} className="exclude-rule-item">
-                        <span className="exclude-rule-tag">root</span>
-                        <span className="exclude-rule-value">{root}</span>
+                      <div key={`watch-root-${root}`} className="rule-item">
+                        <span className="rule-tag">root</span>
+                        <span className="rule-value">{root}</span>
                         <button
-                          className="action-btn"
+                          className="act-btn"
                           disabled={isWatchRootSaving}
                           onClick={() => void removeWatchRoot(root)}
                         >
@@ -2836,30 +2916,28 @@ function App() {
                     ))}
                   </div>
                 )}
+                {watchRootStatus && <div className="status-msg">{watchRootStatus}</div>}
               </div>
 
-              {watchRootStatus && <div className="shortcut-status">{watchRootStatus}</div>}
-            </article>
-
-            <article className="settings-card">
-              <h3>{t.excludeDirsTitle}</h3>
-              <p className="shortcut-desc">{t.excludeDirsDesc}</p>
-              <p className="exclude-wildcard-hint">{t.excludeWildcardHint}</p>
-              <div className="exclude-rule-editor">
-                <label className="exclude-rule-type">
-                  <span>{t.excludeRuleType}</span>
+              <div className="rule-section">
+                <div className="rule-section-title">{t.excludeDirsTitle}</div>
+                <p className="set-card-desc">{t.excludeDirsDesc}</p>
+                <p className="set-card-hint">{t.excludeWildcardHint}</p>
+                <div className="form-row">
                   <select
+                    className="form-select"
                     value={excludeRuleType}
                     disabled={isExcludeDirSaving}
                     onChange={(event) => setExcludeRuleType(event.target.value as ExcludeRuleType)}
+                    style={{ width: "auto", flexShrink: 0 }}
                   >
                     <option value="exact">{t.excludeRuleExact}</option>
                     <option value="pattern">{t.excludeRulePattern}</option>
                   </select>
-                </label>
-                <div className="exclude-rule-input-row">
+                </div>
+                <div className="form-row">
                   <input
-                    className="shortcut-input"
+                    className="form-input"
                     value={excludeRuleDraft}
                     placeholder={
                       excludeRuleType === "exact"
@@ -2881,7 +2959,7 @@ function App() {
                   />
                   {excludeRuleType === "exact" && (
                     <button
-                      className="action-btn"
+                      className="act-btn"
                       disabled={isExcludeDirSaving || isPickingPath}
                       onClick={() => void pickExcludeRulePath()}
                     >
@@ -2889,68 +2967,71 @@ function App() {
                     </button>
                   )}
                   <button
-                    className="action-btn"
+                    className="act-btn"
                     disabled={isExcludeDirSaving || excludeRuleDraft.trim().length === 0}
                     onClick={() => void addExcludeRule()}
                   >
                     {t.excludeAdd}
                   </button>
                 </div>
-              </div>
 
-              <div className="exclude-rule-list-wrap">
-                <div className="exclude-rule-list-title">{t.excludeExactListTitle}</div>
-                {excludeExactDirs.length === 0 ? (
-                  <div className="shortcut-input-hint">{t.excludeEmptyHint}</div>
-                ) : (
-                  <div className="exclude-rule-list">
-                    {excludeExactDirs.map((rule) => (
-                      <div key={`exact-${rule}`} className="exclude-rule-item">
-                        <span className="exclude-rule-tag">{t.excludeRuleExact}</span>
-                        <span className="exclude-rule-value">{rule}</span>
-                        <button
-                          className="action-btn"
-                          disabled={isExcludeDirSaving}
-                          onClick={() => void removeExcludeRule("exact", rule)}
-                        >
-                          {t.removeRule}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                <div className="rule-section">
+                  <div className="rule-section-title">{t.excludeExactListTitle}</div>
+                  {excludeExactDirs.length === 0 ? (
+                    <div className="set-card-hint">{t.excludeEmptyHint}</div>
+                  ) : (
+                    <div className="rule-list">
+                      {excludeExactDirs.map((rule) => (
+                        <div key={`exact-${rule}`} className="rule-item">
+                          <span className="rule-tag">{t.excludeRuleExact}</span>
+                          <span className="rule-value">{rule}</span>
+                          <button
+                            className="act-btn"
+                            disabled={isExcludeDirSaving}
+                            onClick={() => void removeExcludeRule("exact", rule)}
+                          >
+                            {t.removeRule}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-              <div className="exclude-rule-list-wrap">
-                <div className="exclude-rule-list-title">{t.excludePatternListTitle}</div>
-                {excludePatternDirs.length === 0 ? (
-                  <div className="shortcut-input-hint">{t.excludeEmptyHint}</div>
-                ) : (
-                  <div className="exclude-rule-list">
-                    {excludePatternDirs.map((rule) => (
-                      <div key={`pattern-${rule}`} className="exclude-rule-item">
-                        <span className="exclude-rule-tag">{t.excludeRulePattern}</span>
-                        <span className="exclude-rule-value">{rule}</span>
-                        <button
-                          className="action-btn"
-                          disabled={isExcludeDirSaving}
-                          onClick={() => void removeExcludeRule("pattern", rule)}
-                        >
-                          {t.removeRule}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                <div className="rule-section">
+                  <div className="rule-section-title">{t.excludePatternListTitle}</div>
+                  {excludePatternDirs.length === 0 ? (
+                    <div className="set-card-hint">{t.excludeEmptyHint}</div>
+                  ) : (
+                    <div className="rule-list">
+                      {excludePatternDirs.map((rule) => (
+                        <div key={`pattern-${rule}`} className="rule-item">
+                          <span className="rule-tag">{t.excludeRulePattern}</span>
+                          <span className="rule-value">{rule}</span>
+                          <button
+                            className="act-btn"
+                            disabled={isExcludeDirSaving}
+                            onClick={() => void removeExcludeRule("pattern", rule)}
+                          >
+                            {t.removeRule}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-              {excludeDirStatus && <div className="shortcut-status">{excludeDirStatus}</div>}
+                {excludeDirStatus && <div className="status-msg">{excludeDirStatus}</div>}
+              </div>
+              </div>
             </article>
-          </section>
-        )}
 
-        {error && <aside className="error-box">{error}</aside>}
-      </main>
+          </div>
+        </div>
+      )}
+
+      {error && <aside className="error-banner">{error}</aside>}
+
       {contextMenu && (
         <div
           className="context-menu-layer"
@@ -2964,7 +3045,7 @@ function App() {
             onContextMenu={(event) => event.preventDefault()}
           >
             <button
-              className="context-menu-btn"
+              className="context-menu-item"
               onClick={() => void runContextAction(() => openResult(contextMenu.item.path))}
             >
               {t.menuOpen}
@@ -2975,7 +3056,7 @@ function App() {
               onMouseEnter={openOpenWithMenu}
               onMouseLeave={scheduleCloseOpenWithMenu}
             >
-              <button className="context-menu-btn">
+              <button className="context-menu-item">
                 <span>{t.menuOpenWith}</span>
                 <span className="context-menu-arrow">›</span>
               </button>
@@ -2986,25 +3067,25 @@ function App() {
                   onMouseLeave={scheduleCloseOpenWithMenu}
                 >
                   <button
-                    className="context-menu-btn"
+                    className="context-menu-item"
                     onClick={() => void runContextAction(() => revealInFinder(contextMenu.item.path))}
                   >
                     {t.menuFinder}
                   </button>
                   <button
-                    className="context-menu-btn"
+                    className="context-menu-item"
                     onClick={() => void runContextAction(() => openInQSpace(contextMenu.item.path))}
                   >
                     {t.menuQSpace}
                   </button>
                   <button
-                    className="context-menu-btn"
+                    className="context-menu-item"
                     onClick={() => void runContextAction(() => openInTerminal(contextMenu.item.path))}
                   >
                     {t.menuTerminal}
                   </button>
                   <button
-                    className="context-menu-btn"
+                    className="context-menu-item"
                     onClick={() => void runContextAction(() => openInWezTerm(contextMenu.item.path))}
                   >
                     {t.menuWezTerm}
@@ -3016,19 +3097,19 @@ function App() {
             <div className="context-menu-sep" />
 
             <button
-              className="context-menu-btn"
+              className="context-menu-item"
               onClick={() => void runContextAction(() => copyText(contextMenu.item.name))}
             >
               {t.menuCopyName}
             </button>
             <button
-              className="context-menu-btn"
+              className="context-menu-item"
               onClick={() => void runContextAction(() => copyText(contextMenu.item.path))}
             >
               {t.menuCopyPath}
             </button>
             <button
-              className="context-menu-btn"
+              className="context-menu-item"
               onClick={() =>
                 void runContextAction(() =>
                   copySearchResults(contextMenu.multiSelection ? selectedPathsInOrder : [contextMenu.item.path])
@@ -3040,13 +3121,13 @@ function App() {
             {contextMenu.multiSelection && (
               <>
                 <button
-                  className="context-menu-btn"
+                  className="context-menu-item"
                   onClick={() => void runContextAction(copyAllSelectedNames)}
                 >
                   {t.menuCopyAllNames}
                 </button>
                 <button
-                  className="context-menu-btn"
+                  className="context-menu-item"
                   onClick={() => void runContextAction(copyAllSelectedPaths)}
                 >
                   {t.menuCopyAllPaths}
@@ -3054,7 +3135,7 @@ function App() {
               </>
             )}
             <button
-              className="context-menu-btn danger"
+              className="context-menu-item danger"
               onClick={() => void runContextAction(async () => {
                 const paths = contextMenu.multiSelection ? selectedPathsInOrder : [contextMenu.item.path];
                 for (const p of paths) {
