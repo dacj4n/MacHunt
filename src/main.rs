@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use machunt::{Engine, SearchMode, SearchOptions};
+use machunt::{Engine, SearchMode, SearchOptions, SortKey};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -109,6 +109,9 @@ fn main() {
                 include_files: !dirs || (files && dirs) || (!files && !dirs),
                 include_dirs: !files || (files && dirs) || (!files && !dirs),
                 limit: Some(limit),
+                extensions: None,
+                sort_key: SortKey::default(),
+                sort_ascending: true,
             };
 
             let start = Instant::now();
@@ -189,6 +192,9 @@ fn main() {
                     include_files: true,
                     include_dirs: true,
                     limit: Some(50),
+                    extensions: None,
+                    sort_key: SortKey::default(),
+                    sort_ascending: true,
                 };
                 let results = engine.search(options);
                 println!("Found {} results", results.len());

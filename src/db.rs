@@ -5,6 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::model::SortKey;
+
 #[derive(Clone)]
 pub struct Db {
     path: PathBuf,
@@ -798,6 +800,36 @@ impl Db {
         }
     }
 
+    /// Build an extension filter clause for SQL.
+    /// Returns SQL like ` AND (f.name_lower LIKE '%.pdf' OR f.name_lower LIKE '%.png')`.
+    fn extension_sql(extensions: Option<&[String]>) -> String {
+        match extensions {
+            Some(exts) if !exts.is_empty() => {
+                let conditions: Vec<String> = exts
+                    .iter()
+                    .map(|ext| format!("f.name_lower LIKE '%.{}'", ext.replace('\'', "''")))
+                    .collect();
+                format!(" AND ({})", conditions.join(" OR "))
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// Build an ORDER BY clause from sort key and direction.
+    fn sort_clause(key: SortKey, ascending: bool) -> String {
+        let dir = if ascending { "ASC" } else { "DESC" };
+        match key {
+            SortKey::Name => format!("ORDER BY f.name_lower {}, d.path {}", dir, dir),
+            SortKey::Path => format!("ORDER BY d.path {}, f.name_lower {}", dir, dir),
+            SortKey::Type => format!(
+                "ORDER BY CASE WHEN INSTR(f.name_lower, '.') > 0 THEN SUBSTR(f.name_lower, INSTR(f.name_lower, '.') + 1) ELSE '' END {}, f.name_lower {}",
+                dir, dir
+            ),
+            // Size and Modified cannot be sorted in SQL — engine re-sorts post-fetch
+            SortKey::Size | SortKey::Modified => String::from("ORDER BY f.name_lower ASC, d.path ASC"),
+        }
+    }
+
     /// Search via FTS5 trigram. Returns (dir_path, file_name) pairs.
     /// Falls back to LIKE/GLOB for short / non-alphanumeric queries.
     pub fn search_fts(
@@ -805,6 +837,9 @@ impl Db {
         query: &str,
         case_sensitive: bool,
         path_prefix: Option<&str>,
+        extensions: Option<&[String]>,
+        sort_key: SortKey,
+        sort_ascending: bool,
         limit: usize,
     ) -> Vec<(String, String)> {
         let conn = self.conn.lock();
@@ -814,6 +849,8 @@ impl Db {
         }
 
         let (path_clause, path_param) = Self::path_prefix_clause(path_prefix);
+        let ext_clause = Self::extension_sql(extensions);
+        let sort = Self::sort_clause(sort_key, sort_ascending);
         let lim = limit as i64;
 
         // Fall back to LIKE/GLOB when FTS5 trigram is unreliable:
@@ -827,8 +864,8 @@ impl Db {
                 let sql = format!(
                     "SELECT d.path, f.name FROM files f
                      JOIN dirs d ON d.id = f.dir_id
-                     WHERE f.name GLOB ?{} LIMIT ?",
-                    path_clause
+                     WHERE f.name GLOB ?{}{} {} LIMIT ?",
+                    path_clause, ext_clause, sort
                 );
                 let pattern = if is_match_all { "*".to_string() } else { format!("*{}*", q) };
                 return Self::exec_name_query(&conn, &sql, pattern, &path_param, lim);
@@ -836,8 +873,8 @@ impl Db {
                 let sql = format!(
                     "SELECT d.path, f.name FROM files f
                      JOIN dirs d ON d.id = f.dir_id
-                     WHERE f.name_lower LIKE ?{} LIMIT ?",
-                    path_clause
+                     WHERE f.name_lower LIKE ?{}{} {} LIMIT ?",
+                    path_clause, ext_clause, sort
                 );
                 let pattern = if is_match_all { "%".to_string() } else { format!("%{}%", q.to_lowercase()) };
                 return Self::exec_name_query(&conn, &sql, pattern, &path_param, lim);
@@ -850,8 +887,8 @@ impl Db {
                 "SELECT d.path, f.name FROM files_fts
                  JOIN files f ON f.id = files_fts.rowid
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE files_fts MATCH ? AND f.name GLOB ?{} LIMIT ?",
-                path_clause
+                 WHERE files_fts MATCH ? AND f.name GLOB ?{}{} {} LIMIT ?",
+                path_clause, ext_clause, sort
             );
             let lowered = q.to_lowercase();
             let pattern = format!("*{}*", q);
@@ -872,8 +909,8 @@ impl Db {
                 "SELECT d.path, f.name FROM files_fts
                  JOIN files f ON f.id = files_fts.rowid
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE files_fts MATCH ?{} LIMIT ?",
-                path_clause
+                 WHERE files_fts MATCH ?{}{} {} LIMIT ?",
+                path_clause, ext_clause, sort
             );
             let mut stmt = match conn.prepare(&sql) {
                 Ok(s) => s,
@@ -897,17 +934,22 @@ impl Db {
         pattern: &str,
         case_sensitive: bool,
         path_prefix: Option<&str>,
+        extensions: Option<&[String]>,
+        sort_key: SortKey,
+        sort_ascending: bool,
         limit: usize,
     ) -> Vec<(String, String)> {
         let conn = self.conn.lock();
         let (path_clause, path_param) = Self::path_prefix_clause(path_prefix);
+        let ext_clause = Self::extension_sql(extensions);
+        let sort = Self::sort_clause(sort_key, sort_ascending);
         let lim = limit as i64;
         if case_sensitive {
             let sql = format!(
                 "SELECT d.path, f.name FROM files f
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE f.name GLOB ?{} LIMIT ?",
-                path_clause
+                 WHERE f.name GLOB ?{}{} {} LIMIT ?",
+                path_clause, ext_clause, sort
             );
             Self::exec_name_query(
                 &conn, &sql,
@@ -917,8 +959,8 @@ impl Db {
             let sql = format!(
                 "SELECT d.path, f.name FROM files f
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE f.name_lower LIKE ?{} LIMIT ?",
-                path_clause
+                 WHERE f.name_lower LIKE ?{}{} {} LIMIT ?",
+                path_clause, ext_clause, sort
             );
             Self::exec_name_query(
                 &conn, &sql,
@@ -985,6 +1027,7 @@ impl Db {
         &self,
         query_lower: &str,
         path_prefix: Option<&str>,
+        extensions: Option<&[String]>,
         limit: usize,
     ) -> Vec<(String, String)> {
         let conn = self.conn.lock();
@@ -993,6 +1036,7 @@ impl Db {
             return Vec::new();
         }
         let (path_clause, path_param) = Self::path_prefix_clause(path_prefix);
+        let ext_clause = Self::extension_sql(extensions);
         let prefix: String = query_lower.chars().take(2).collect();
         let len_min = q_len.saturating_sub(3).max(1) as i64;
         let len_max = (q_len + 3) as i64;
@@ -1001,8 +1045,8 @@ impl Db {
             "SELECT d.path, f.name FROM files f
              JOIN dirs d ON d.id = f.dir_id
              WHERE f.name_lower LIKE ?
-               AND LENGTH(f.name_lower) BETWEEN ? AND ?{} LIMIT ?",
-            path_clause
+               AND LENGTH(f.name_lower) BETWEEN ? AND ?{}{} LIMIT ?",
+            path_clause, ext_clause
         );
         let mut stmt = conn.prepare(&sql).unwrap();
         if let Some(ref pp) = path_param {

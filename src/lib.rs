@@ -8,4 +8,4 @@ pub mod utils;
 pub mod watcher;
 
 pub use engine::Engine;
-pub use model::{SearchMode, SearchOptions};
+pub use model::{SearchMode, SearchOptions, SortKey};

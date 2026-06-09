@@ -8,6 +8,16 @@ pub enum SearchMode {
     Fuzzy,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum SortKey {
+    #[default]
+    Name,
+    Path,
+    Type,
+    Size,
+    Modified,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchOptions {
     pub query: String,
@@ -17,6 +27,9 @@ pub struct SearchOptions {
     pub include_files: bool,
     pub include_dirs: bool,
     pub limit: Option<usize>,
+    pub extensions: Option<Vec<String>>,
+    pub sort_key: SortKey,
+    pub sort_ascending: bool,
 }
 
 impl SearchOptions {

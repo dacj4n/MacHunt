@@ -1,4 +1,4 @@
-use machunt::{Engine, SearchMode, SearchOptions};
+use machunt::{Engine, SearchMode, SearchOptions, SortKey};
 #[cfg(target_os = "macos")]
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use serde::{Deserialize, Serialize};
@@ -248,6 +248,9 @@ struct SearchRequest {
     include_files: Option<bool>,
     include_dirs: Option<bool>,
     limit: Option<usize>,
+    extensions: Option<Vec<String>>,
+    sort_key: Option<String>,
+    sort_ascending: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -645,6 +648,13 @@ fn apply_launch_settings(_launch_at_login: bool) -> Result<(), String> {
 }
 
 fn to_search_options(req: &SearchRequest, mode: SearchMode, limit: Option<usize>) -> SearchOptions {
+    let sort_key = match req.sort_key.as_deref() {
+        Some("path") => SortKey::Path,
+        Some("type") => SortKey::Type,
+        Some("size") => SortKey::Size,
+        Some("modified") => SortKey::Modified,
+        _ => SortKey::Name,
+    };
     SearchOptions {
         query: req.query.clone(),
         mode,
@@ -653,6 +663,36 @@ fn to_search_options(req: &SearchRequest, mode: SearchMode, limit: Option<usize>
         include_files: req.include_files.unwrap_or(true),
         include_dirs: req.include_dirs.unwrap_or(true),
         limit,
+        extensions: req.extensions.clone(),
+        sort_key,
+        sort_ascending: req.sort_ascending.unwrap_or(true),
+    }
+}
+
+fn sort_results(items: &mut [SearchResultItem], key: SortKey, ascending: bool) {
+    match key {
+        SortKey::Name => items.sort_by(|a, b| {
+            let cmp = a.name.to_lowercase().cmp(&b.name.to_lowercase());
+            if ascending { cmp } else { cmp.reverse() }
+        }),
+        SortKey::Path => items.sort_by(|a, b| {
+            let cmp = a.parent.cmp(&b.parent).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            if ascending { cmp } else { cmp.reverse() }
+        }),
+        SortKey::Type => items.sort_by(|a, b| {
+            let ext_a = a.name.rfind('.').map(|i| &a.name[i+1..]).unwrap_or("");
+            let ext_b = b.name.rfind('.').map(|i| &b.name[i+1..]).unwrap_or("");
+            let cmp = ext_a.cmp(ext_b).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            if ascending { cmp } else { cmp.reverse() }
+        }),
+        SortKey::Size => items.sort_by(|a, b| {
+            let cmp = a.size_bytes.unwrap_or(0).cmp(&b.size_bytes.unwrap_or(0));
+            if ascending { cmp } else { cmp.reverse() }
+        }),
+        SortKey::Modified => items.sort_by(|a, b| {
+            let cmp = a.modified_unix_ms.unwrap_or(0).cmp(&b.modified_unix_ms.unwrap_or(0));
+            if ascending { cmp } else { cmp.reverse() }
+        }),
     }
 }
 
@@ -1146,16 +1186,16 @@ async fn search(
 
     let started = Instant::now();
     let mut items = tauri::async_runtime::spawn_blocking(move || {
-        let paths = if regex_enabled {
+        if regex_enabled {
             let substring_options = to_search_options(&request, SearchMode::Substring, query_limit);
             let regex_options = to_search_options(&request, SearchMode::Pattern, query_limit);
 
-            let mut merged = Vec::<PathBuf>::new();
+            let mut merged = Vec::<SearchResultItem>::new();
             let mut seen = HashSet::<PathBuf>::new();
 
             for path in engine.search(substring_options) {
                 if seen.insert(path.clone()) {
-                    merged.push(path);
+                    merged.push(map_result(path));
                 }
                 if let Some(limit) = query_limit {
                     if merged.len() >= limit {
@@ -1171,7 +1211,7 @@ async fn search(
             {
                 for path in engine.search(regex_options) {
                     if seen.insert(path.clone()) {
-                        merged.push(path);
+                        merged.push(map_result(path));
                     }
                     if let Some(limit) = query_limit {
                         if merged.len() >= limit {
@@ -1181,22 +1221,30 @@ async fn search(
                 }
             }
 
+            // Re-sort merged results since two independently-sorted streams were combined.
+            let sort_key = match request.sort_key.as_deref() {
+                Some("path") => SortKey::Path,
+                Some("type") => SortKey::Type,
+                Some("size") => SortKey::Size,
+                Some("modified") => SortKey::Modified,
+                _ => SortKey::Name,
+            };
+            let sort_ascending = request.sort_ascending.unwrap_or(true);
+            sort_results(&mut merged, sort_key, sort_ascending);
+
             merged
         } else {
             let options = to_search_options(&request, request.mode, query_limit);
-            engine.search(options)
-        };
-        let mut out: Vec<SearchResultItem> = paths.into_iter().map(map_result).collect();
-        out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-        out
+            let paths = engine.search(options);
+            paths.into_iter().map(map_result).collect()
+        }
     })
     .await
     .map_err(|e| e.to_string())?;
 
     let total = items.len();
-    if items.len() > 5000 {
-        items.truncate(1000);
-    }
+    // Safety cap: never return more than 1000 items
+    items.truncate(1000);
 
     Ok(SearchResponse {
         items,

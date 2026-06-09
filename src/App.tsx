@@ -40,6 +40,17 @@ const EVENT_OPEN_SETTINGS = "app://open-settings";
 const EVENT_FOCUS_SEARCH = "app://focus-search";
 const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives"];
 
+const TAB_EXTENSIONS: Record<TabId, string[] | null> = {
+  all: null,
+  files: null,
+  folders: null,
+  documents: ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md"],
+  images: ["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "bmp"],
+  media: ["mp3", "m4a", "wav", "flac", "aac", "mp4", "mov", "avi", "mkv"],
+  code: ["rs", "ts", "tsx", "js", "jsx", "json", "toml", "yaml", "yml", "py", "go", "java", "c", "cpp", "h", "hpp", "html", "css"],
+  archives: ["zip", "rar", "7z", "tar", "gz", "bz2", "xz"],
+};
+
 const I18N = {
   zh: {
     searchPlaceholder: "搜索文件、文件夹、内容...",
@@ -564,10 +575,13 @@ function buildSearchRequest(
   tab: TabId,
   pathPrefix: string,
   caseSensitive: boolean,
-  regexEnabled: boolean
+  regexEnabled: boolean,
+  sortKey: SortKey,
+  sortAscending: boolean
 ) {
   const includeFiles = tab !== "folders";
   const includeDirs = tab === "all" || tab === "folders";
+  const extensions = TAB_EXTENSIONS[tab];
   return {
     request: {
       query,
@@ -577,7 +591,10 @@ function buildSearchRequest(
       pathPrefix: pathPrefix.trim() || null,
       includeFiles,
       includeDirs,
-      limit: 1000
+      limit: 1000,
+      extensions,
+      sortKey,
+      sortAscending,
     }
   };
 }
@@ -1636,14 +1653,13 @@ function App() {
       try {
         const response = await invoke<SearchResponse>(
           "search",
-          buildSearchRequest(needle, activeTab, pathPrefix, caseSensitive, regexEnabled)
+          buildSearchRequest(needle, activeTab, pathPrefix, caseSensitive, regexEnabled, sortKey, sortAscending)
         );
         if (cancelled) {
           return;
         }
-        const sorted = sortItems(filterByTab(response.items, activeTab), sortKey, sortAscending);
-        setItems(sorted);
-        setTotalFound(sorted.length);
+        setItems(response.items);
+        setTotalFound(response.total);
         setTookMs(response.tookMs);
         setScrollTop(0);
         if (tableBodyRef.current) tableBodyRef.current.scrollTop = 0;

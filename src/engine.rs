@@ -3,7 +3,7 @@ use crate::db::Db;
 use crate::filters::{
     compile_exclude_rules, sanitize_owned_rules, sanitize_roots, validate_pattern_rules,
 };
-use crate::model::{SearchMode, SearchOptions};
+use crate::model::{SearchMode, SearchOptions, SortKey};
 use crate::search;
 use crate::utils::{get_root_directories, Logger};
 use crate::watcher;
@@ -252,7 +252,7 @@ impl Engine {
         let query_lower = query.to_lowercase();
         let candidates = self
             .db
-            .search_fuzzy_candidates(&query_lower, options.path_prefix.as_deref().and_then(|p| p.to_str()), 2000);
+            .search_fuzzy_candidates(&query_lower, options.path_prefix.as_deref().and_then(|p| p.to_str()), options.extensions.as_deref(), 2000);
         let q_len = query.chars().count();
         let mut scored: Vec<(PathBuf, usize)> = Vec::new();
 
@@ -307,13 +307,28 @@ impl Engine {
         } else {
             options.query.to_lowercase()
         };
-        // Fetch many more rows than the display limit, because build_results
-        // filters out non-existent paths and non-matching types (file vs dir).
-        let fetch_limit = limit * 2;
+        let needs_meta_sort = matches!(options.sort_key, SortKey::Size | SortKey::Modified);
+        // Fetch more rows than the display limit to compensate for build_results
+        // filtering out non-existent paths and non-matching types (file vs dir).
+        // Need even more for size/modified since SQL can't sort those.
+        let fetch_limit = if needs_meta_sort { limit * 3 } else { limit * 2 };
         let results = self
             .db
-            .search_fts(&query, options.case_sensitive, options.path_prefix.as_deref().and_then(|p| p.to_str()), fetch_limit);
-        self.build_results(results, options)
+            .search_fts(
+                &query,
+                options.case_sensitive,
+                options.path_prefix.as_deref().and_then(|p| p.to_str()),
+                options.extensions.as_deref(),
+                options.sort_key,
+                options.sort_ascending,
+                fetch_limit,
+            );
+        let mut out = self.build_results(results, options);
+        if needs_meta_sort {
+            out = self.sort_by_metadata(out, options.sort_key, options.sort_ascending);
+        }
+        out.truncate(limit);
+        out
     }
 
     fn search_pattern(&self, options: &SearchOptions, limit: usize) -> Vec<PathBuf> {
@@ -334,10 +349,22 @@ impl Engine {
             "%".to_string()
         };
 
+        let needs_meta_sort = matches!(options.sort_key, SortKey::Size | SortKey::Modified);
+        // For size/modified sorts fetch more since SQL can't sort those.
+        let fetch_limit = if needs_meta_sort { limit * 3 } else { limit * 2 };
+
         // Use LIKE with the literal fragment to get candidates, then filter by regex.
         let results = self
             .db
-            .search_like(&pattern, options.case_sensitive, options.path_prefix.as_deref().and_then(|p| p.to_str()), limit * 2);
+            .search_like(
+                &pattern,
+                options.case_sensitive,
+                options.path_prefix.as_deref().and_then(|p| p.to_str()),
+                options.extensions.as_deref(),
+                options.sort_key,
+                options.sort_ascending,
+                fetch_limit,
+            );
         let mut out = Vec::new();
         for (dir_path, file_name) in results {
             let target = if options.case_sensitive {
@@ -360,10 +387,14 @@ impl Engine {
                 continue;
             }
             out.push(full_path);
-            if out.len() >= limit {
+            if out.len() >= fetch_limit {
                 break;
             }
         }
+        if needs_meta_sort {
+            out = self.sort_by_metadata(out, options.sort_key, options.sort_ascending);
+        }
+        out.truncate(limit);
         out
     }
 
@@ -388,6 +419,44 @@ impl Engine {
             out.push(full_path);
         }
         out
+    }
+
+    /// Re-sort results by filesystem metadata (size or modified time).
+    /// Called after SQL fetch when sort_key is Size or Modified.
+    fn sort_by_metadata(
+        &self,
+        paths: Vec<PathBuf>,
+        sort_key: SortKey,
+        ascending: bool,
+    ) -> Vec<PathBuf> {
+        let mut with_meta: Vec<(PathBuf, u64)> = paths
+            .into_iter()
+            .filter_map(|p| {
+                let meta = std::fs::metadata(&p).ok()?;
+                let val = match sort_key {
+                    SortKey::Size => {
+                        if meta.is_file() {
+                            meta.len()
+                        } else {
+                            0
+                        }
+                    }
+                    SortKey::Modified => meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0),
+                    _ => 0,
+                };
+                Some((p, val))
+            })
+            .collect();
+        with_meta.sort_by(|a, b| {
+            let cmp = a.1.cmp(&b.1);
+            if ascending { cmp } else { cmp.reverse() }
+        });
+        with_meta.into_iter().map(|(p, _)| p).collect()
     }
 
     pub fn load_last_event_id(&self) -> Option<u64> {
