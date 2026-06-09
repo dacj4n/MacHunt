@@ -2650,6 +2650,16 @@ function App() {
                           <div className="cell type-cell">{typeLabel(item, t.typeFolder, t.typeFile)}</div>
                           <div className="cell size-cell">{formatBytes(item.sizeBytes)}</div>
                           <div className="cell date-cell">{formatDate(item.modifiedUnixMs)}</div>
+                          <button
+                            className={`pin-btn ${isPinned(item.path) ? "pinned" : ""}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              togglePin(item);
+                            }}
+                            title={isPinned(item.path) ? t.menuUnpin : t.menuPin}
+                          >
+                            {isPinned(item.path) ? "★" : "☆"}
+                          </button>
                         </article>
                       );
                     })}

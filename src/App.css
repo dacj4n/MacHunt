@@ -837,13 +837,14 @@ body {
 .result-row {
   display: grid;
   align-items: center;
-  padding: 0 var(--sp-gutter);
+  padding: 0 46px 0 var(--sp-gutter);
   height: 46px;
   -webkit-user-select: none;
   user-select: none;
   border-bottom: 1px solid rgba(255, 255, 255, 0.015);
   background: transparent;
   transition: background-color var(--ease), box-shadow var(--ease);
+  position: relative;
 }
 
 .result-row:hover {
@@ -908,6 +909,57 @@ body {
 
 .date-cell {
   font-size: 13px;
+}
+
+/* Pin button */
+.pin-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  border-radius: 50%;
+  background: linear-gradient(145deg, var(--pn-surface-container-low), var(--pn-surface-container-lowest));
+  box-shadow: var(--shadow-depth), var(--shadow-highlight);
+  color: var(--pn-outline-variant);
+  font-size: 15px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--ease), color var(--ease), box-shadow var(--ease), transform var(--ease);
+  z-index: 2;
+}
+
+.result-row:hover .pin-btn {
+  opacity: 1;
+  transform: translateY(-50%) translateY(0);
+}
+
+.pin-btn:hover {
+  box-shadow: var(--shadow-depth), var(--shadow-highlight), 0 0 8px rgba(212, 175, 55, 0.15);
+  color: #d4af37;
+}
+
+.pin-btn:active {
+  box-shadow: inset var(--shadow-depth), inset 0 1px 2px rgba(0,0,0,0.2);
+  transform: translateY(-50%) scale(0.95);
+}
+
+.pin-btn.pinned {
+  opacity: 1;
+  color: #d4af37;
+  border-color: rgba(212, 175, 55, 0.2);
+  box-shadow: var(--shadow-depth), var(--shadow-highlight), 0 0 6px rgba(212, 175, 55, 0.12);
+}
+
+.pin-btn.pinned:hover {
+  color: var(--pn-warn);
+  border-color: rgba(239, 68, 68, 0.25);
+  box-shadow: var(--shadow-depth), var(--shadow-highlight), 0 0 8px rgba(239, 68, 68, 0.15);
 }
 
 /* File icons */
