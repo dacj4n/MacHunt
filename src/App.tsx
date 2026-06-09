@@ -2277,6 +2277,18 @@ function App() {
     all: "\u229E", files: "\u25A3", folders: "\u25A4", documents: "\u2261", images: "\u25C9", media: "\u266A", code: "\u2329\u232A", archives: "\u25A0"
   };
 
+  const scrollTimers = useRef(new Map<HTMLElement, ReturnType<typeof setTimeout>>());
+  const handleScrollbarScroll = (e: React.UIEvent<HTMLElement>) => {
+    const el = e.currentTarget;
+    el.classList.add("scrolling");
+    const prev = scrollTimers.current.get(el);
+    if (prev) clearTimeout(prev);
+    scrollTimers.current.set(el, setTimeout(() => {
+      el.classList.remove("scrolling");
+      scrollTimers.current.delete(el);
+    }, 600));
+  };
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -2514,7 +2526,7 @@ function App() {
                   </div>
 
                   <div className="table-body custom-scrollbar" ref={tableBodyRef}
-                    onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}>
+                    onScroll={(e) => { setScrollTop((e.target as HTMLDivElement).scrollTop); handleScrollbarScroll(e); }}>
                     <div style={{ height: topSpacerHeight }} />
                     {visibleItems.map((item, vi) => {
                       const index = visibleStart + vi;
@@ -2582,7 +2594,7 @@ function App() {
           </footer>
         </div>
       ) : (
-        <div className="settings-view custom-scrollbar">
+        <div className="settings-view custom-scrollbar" onScroll={handleScrollbarScroll}>
           <header className="settings-header">
             <div>
               <h2>{t.settingsTitle}</h2>

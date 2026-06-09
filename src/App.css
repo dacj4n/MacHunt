@@ -187,8 +187,28 @@ body {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: var(--pn-surface-variant);
+  background: color-mix(in srgb, var(--pn-outline-variant) 35%, transparent);
   border-radius: 10px;
+}
+
+.custom-scrollbar.scrolling::-webkit-scrollbar-thumb {
+  background: var(--pn-outline-variant);
+}
+
+.custom-scrollbar::-webkit-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: var(--pn-outline-variant);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--pn-outline);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:active {
+  background: var(--pn-outline);
+}
+
+.custom-scrollbar::-webkit-scrollbar:hover {
+  width: 8px;
 }
 
 /* ===== APP SHELL ===== */
@@ -1397,6 +1417,14 @@ body {
 :root[data-theme="light"] .theme-preview-system {
   background: linear-gradient(135deg, #f4f5f7 0%, #f4f5f7 48%, #10131b 52%, #10131b 100%);
 }
+
+/* ===== LIGHT MODE FILE ICONS ===== */
+:root[data-theme="light"] .file-icon.folder  { color: #2563eb; background: #dbeafe; }
+:root[data-theme="light"] .file-icon.doc     { color: #475569; background: #f1f5f9; }
+:root[data-theme="light"] .file-icon.img     { color: #16a34a; background: #dcfce7; }
+:root[data-theme="light"] .file-icon.media   { color: #ea580c; background: #fff7ed; }
+:root[data-theme="light"] .file-icon.code    { color: #7c3aed; background: #ede9fe; }
+:root[data-theme="light"] .file-icon.archive { color: #ca8a04; background: #fef9c3; }
 
 /* Option list */
 .option-list {
