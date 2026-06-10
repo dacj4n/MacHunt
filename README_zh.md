@@ -1,5 +1,7 @@
 # MacHunt
 
+<p align="center"><img src="src-tauri/icons/icon.png" width="128" alt="MacHunt 图标" /></p>
+
 一个纯本地运行的 macOS 文件/文件夹搜索工具，提供 CLI 与原生 GUI（Tauri + React）两种入口。不依赖 HTTP 后端，不上传任何数据。
 
 [English](README.md)

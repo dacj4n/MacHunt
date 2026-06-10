@@ -1,5 +1,7 @@
 # MacHunt
 
+<p align="center"><img src="src-tauri/icons/icon.png" width="128" alt="MacHunt Icon" /></p>
+
 A fully local macOS file/folder search tool with both CLI and native GUI (Tauri + React). No HTTP backend, no cloud services.
 
 [中文文档](README_zh.md)
