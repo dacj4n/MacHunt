@@ -14,17 +14,17 @@ MacHunt scans your entire filesystem into a local SQLite FTS5 index. CLI searche
 <thead>
 <tr>
 <th width="50%" align="center">Search</th>
-<th width="50%" align="center">Settings</th>
+<th width="50%" align="center">Pinned</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/search.png"><img src="./screenshots/search.png" alt="Search" width="100%" style="max-width: 100%;"></a></td>
-<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/settings.png"><img src="./screenshots/settings.png" alt="Settings" width="100%" style="max-width: 100%;"></a></td>
+<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/pinned.png"><img src="./screenshots/pinned.png" alt="Pinned" width="100%" style="max-width: 100%;"></a></td>
 </tr>
 <tr>
 <td align="center"><strong>Full-disk search, category tabs</strong></td>
-<td align="center"><strong>Settings</strong></td>
+<td align="center"><strong>Pinned favorites, persistent across restarts</strong></td>
 </tr>
 </tbody>
 </table>
@@ -42,8 +42,24 @@ MacHunt scans your entire filesystem into a local SQLite FTS5 index. CLI searche
 <td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/context-menu.png"><img src="./screenshots/context-menu.png" alt="Context Menu" width="100%" style="max-width: 100%;"></a></td>
 </tr>
 <tr>
-<td align="center"><strong>Space-triggered native Quick Look, multi-selection supported</strong></td>
+<td align="center"><strong>Space-triggered native Quick Look</strong></td>
 <td align="center"><strong>Finder picker, right-click actions</strong></td>
+</tr>
+</tbody>
+</table>
+
+<table>
+<thead>
+<tr>
+<th width="100%" align="center">Settings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/settings.png"><img src="./screenshots/settings.png" alt="Settings" width="100%" style="max-width: 100%;"></a></td>
+</tr>
+<tr>
+<td align="center"><strong>Theme, language, shortcuts, login items, exclusions</strong></td>
 </tr>
 </tbody>
 </table>
@@ -202,6 +218,7 @@ The native macOS GUI is built with Tauri 2 and React. It communicates with the s
 ### Main Window
 
 - Full-disk search with real-time results
+- Navigation tabs: Search / Pinned / Settings (`Cmd+1/2/3`)
 - Regex toggle + case-sensitive toggle
 - Path filter with suggestion dropdown and Finder picker
 - Category tabs: All / Files / Folders / Documents / Images / Media / Code / Archives
@@ -211,10 +228,15 @@ The native macOS GUI is built with Tauri 2 and React. It communicates with the s
 - Keyboard navigation (`↑` `↓`)
 - Space-triggered Quick Look (multi-selection supported)
 - Double-click to open
+- Inline pin button on each result row (hover to reveal)
 
 ### Right-Click Menu
 
-Open, Open With... (Finder / QSpace Pro / Terminal / WezTerm), copy name/path, copy as file objects, copy all results, move to Trash.
+Open, Open With... (Finder / QSpace Pro / Terminal / WezTerm), copy name/path, copy as file objects, copy all results, move to Trash, Pin to Favorites.
+
+### Pinned / Favorites
+
+Star any search result to pin it. Pinned items persist in localStorage and survive restarts — no DB mix. The dedicated Pinned tab shows all bookmarked items with full sort, resize, Quick Look, and Cmd+A support. Unpin via the same star button or context menu. Star ⭑ appears at the end of every row (visible on hover). Gold filled = pinned, outline = not.
 
 ### Settings Page
 
@@ -235,11 +257,13 @@ Open, Open With... (Finder / QSpace Pro / Terminal / WezTerm), copy name/path, c
 | Path filter | Prefix, suggestion dropdown, Finder picker |
 | Live updates | FSEvents watcher, persists EventID across restarts |
 | File types | 8 category tabs via extension classification |
+| Pinned items | Star button, persistent favorites page, localStorage |
 | Preview | Native Quick Look (space bar, multi-file) |
 | Export | Copy as file objects, JSON output (CLI) |
-| Theming | Light / dark / system |
+| Design | Neomorphic 3D design system, light/dark/system theme |
 | i18n | 中文 / English |
 | Startup | Launch at login, silent mode, Dock toggle |
+| Performance | EventID staleness detection, lazy dead-path cleanup |
 | Privacy | 100% local, no network calls |
 
 ## Comparison
@@ -266,6 +290,7 @@ Open, Open With... (Finder / QSpace Pro / Terminal / WezTerm), copy name/path, c
 - **Storage**: SQLite FTS5 (`rusqlite`, WAL mode, trigram tokenizer)
 - **Scanner**: WalkDir + Crossbeam channels
 - **Watcher**: macOS FSEvents (CoreServices FFI)
+- **Design**: Neomorphic design system with CSS custom properties, inline theme detection for no-flash startup
 
 ### Build Commands
 
@@ -289,7 +314,7 @@ mac_find/
 │   ├── main.rs             # CLI entry point (clap)
 │   ├── lib.rs              # Library root, re-exports Engine
 │   ├── engine.rs           # Engine: build/search/watch orchestration
-│   ├── db.rs                # SQLite FTS5: schema, insert, search, fuzzy
+│   ├── db.rs               # SQLite FTS5: schema, insert, search, fuzzy
 │   ├── builder.rs          # WalkDir filesystem scanner
 │   ├── watcher.rs          # FSEvents FFI watcher
 │   ├── search.rs           # Wildcard-to-regex conversion
@@ -302,15 +327,16 @@ mac_find/
 │   ├── build.rs            # Build script (compiles ObjC bridge)
 │   └── macos/
 │       └── quicklook_bridge.m  # ObjC bridge: Quick Look, clipboard, Dock
-├── src/                    # React frontend
-│   ├── App.tsx             # Main app component
-│   ├── App.css             # Styles
+├── src/                    # React frontend (neomorphic design system)
+│   ├── App.tsx             # Main app component (~3300 lines, all views)
+│   ├── App.css             # Styles (CSS variables, neomorphic theme)
 │   └── main.tsx            # Entry point
+├── index.html              # HTML shell, inline theme detection script
+├── screenshots/            # Screenshots for README
 ├── scripts/
 │   ├── set_version.sh      # Bump version across all config files
 │   └── package_release.sh  # Package .app/.dmg for distribution
-├── doc/                    # Architecture docs & version history
-├── Cargo.toml              # CLI crate manifest
+├── Cargo.toml              # Rust crate manifest
 └── package.json            # Frontend dependencies
 ```
 
