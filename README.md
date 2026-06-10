@@ -1,6 +1,6 @@
-<h1 align="center">MacHunt</h1>
-
 <p align="center"><img src="src-tauri/icons/icon.png" width="384" alt="MacHunt Icon" /></p>
+
+<h1 align="center">MacHunt</h1>
 
 <p align="center">
   <img src="https://img.shields.io/badge/-Rust-000000?logo=rust&logoColor=white" alt="Rust" />
