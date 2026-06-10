@@ -50,22 +50,6 @@ MacHunt scans your entire filesystem into a local SQLite FTS5 index. CLI searche
 </tbody>
 </table>
 
-<table>
-<thead>
-<tr>
-<th width="100%" align="center">Settings</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/settings.png"><img src="./screenshots/settings.png" alt="Settings" width="100%" style="max-width: 100%;"></a></td>
-</tr>
-<tr>
-<td align="center"><strong>Theme, language, shortcuts, login items, exclusions</strong></td>
-</tr>
-</tbody>
-</table>
-
 ## Install
 
 Download the latest `.dmg` from [GitHub Releases](https://github.com/dacj4n/MacHunt/releases), mount it, and drag `MacHunt.app` to `/Applications`.
