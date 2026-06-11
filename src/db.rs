@@ -68,6 +68,7 @@ impl Db {
             Self::save_schema_version(conn, 2);
         }
         Self::ensure_name_lower_column(conn);
+        Self::ensure_is_dir_column(conn);
 
         // v1 leftover index; no longer used.
         let _ = conn.execute("DROP INDEX IF EXISTS idx_name", []);
@@ -106,6 +107,7 @@ impl Db {
                 name   TEXT NOT NULL,
                 name_lower TEXT NOT NULL,
                 dir_id INTEGER NOT NULL REFERENCES dirs(id) ON DELETE CASCADE,
+                is_dir INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(dir_id, name)
             );
         ",
@@ -138,6 +140,39 @@ impl Db {
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('name_lower_backfill_done', '1')",
                 [],
             );
+        }
+    }
+
+    fn ensure_is_dir_column(conn: &Connection) {
+        if Self::files_has_column(conn, "is_dir") {
+            return;
+        }
+        let _ = conn.execute("ALTER TABLE files ADD COLUMN is_dir INTEGER NOT NULL DEFAULT 0", []);
+        // Try to backfill is_dir from the filesystem for existing entries.
+        // Entries whose path no longer exist remain as 0 (file).
+        let mut stmt = conn
+            .prepare(
+                "SELECT f.id, d.path, f.name FROM files f
+                 JOIN dirs d ON d.id = f.dir_id",
+            )
+            .unwrap();
+        let rows: Vec<(i64, String, String)> = stmt
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        for (id, dir_path, name) in rows {
+            let full = if dir_path == "/" {
+                format!("/{}", name)
+            } else {
+                format!("{}/{}", dir_path, name)
+            };
+            let is_dir = std::path::Path::new(&full).is_dir() as i32;
+            if is_dir != 0 {
+                let _ = conn.execute("UPDATE files SET is_dir = 1 WHERE id = ?1", params![id]);
+            }
         }
     }
 
@@ -187,6 +222,7 @@ impl Db {
                 name   TEXT NOT NULL,
                 name_lower TEXT NOT NULL,
                 dir_id INTEGER NOT NULL REFERENCES dirs(id) ON DELETE CASCADE,
+                is_dir INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(dir_id, name)
             );
         ",
@@ -204,7 +240,7 @@ impl Db {
             .unwrap();
         let mut insert_file_stmt = tx
             .prepare_cached(
-                "INSERT OR IGNORE INTO files_v2 (name, name_lower, dir_id) VALUES (?1, ?2, ?3)",
+                "INSERT OR IGNORE INTO files_v2 (name, name_lower, dir_id, is_dir) VALUES (?1, ?2, ?3, ?4)",
             )
             .unwrap();
 
@@ -241,7 +277,8 @@ impl Db {
                 id
             };
 
-            let _ = insert_file_stmt.execute(params![name, name_lower, dir_id]);
+            let is_dir = path.is_dir() as i32;
+            let _ = insert_file_stmt.execute(params![name, name_lower, dir_id, is_dir]);
             migrated += 1;
 
             if migrated.is_multiple_of(500_000) {
@@ -334,7 +371,7 @@ impl Db {
         Ok(())
     }
 
-    pub fn insert(&self, fallback_name: &str, path: &Path) -> Option<i64> {
+    pub fn insert(&self, fallback_name: &str, path: &Path, is_dir: bool) -> Option<i64> {
         let conn = self.conn.lock();
         let dir_path = Self::parent_key(path);
         let stored_name = Self::derive_name(path, fallback_name);
@@ -362,8 +399,8 @@ impl Db {
 
         if let Some(dir_id) = dir_id {
             let _ = conn.execute(
-                "INSERT OR IGNORE INTO files (name, name_lower, dir_id) VALUES (?1, ?2, ?3)",
-                params![stored_name, stored_name_lower, dir_id],
+                "INSERT OR IGNORE INTO files (name, name_lower, dir_id, is_dir) VALUES (?1, ?2, ?3, ?4)",
+                params![stored_name, stored_name_lower, dir_id, is_dir as i32],
             );
             // Return the rowid for FTS sync.
             return Some(conn.last_insert_rowid());
@@ -451,7 +488,7 @@ impl Db {
         );
     }
 
-    pub fn insert_batch(&self, entries: &[(String, PathBuf)]) {
+    pub fn insert_batch(&self, entries: &[(String, PathBuf, bool)]) {
         if entries.is_empty() {
             return;
         }
@@ -469,13 +506,13 @@ impl Db {
                 .unwrap();
             let mut insert_file_stmt = tx
                 .prepare_cached(
-                    "INSERT OR IGNORE INTO files (name, name_lower, dir_id) VALUES (?1, ?2, ?3)",
+                    "INSERT OR IGNORE INTO files (name, name_lower, dir_id, is_dir) VALUES (?1, ?2, ?3, ?4)",
                 )
                 .unwrap();
 
             let mut dir_cache: HashMap<String, i64> = HashMap::new();
 
-            for (fallback_name, path) in entries {
+            for (fallback_name, path, is_dir) in entries {
                 let stored_name = Self::derive_name(path, fallback_name);
                 let stored_name_lower = if fallback_name.is_empty() {
                     stored_name.to_lowercase()
@@ -500,7 +537,7 @@ impl Db {
                     id
                 };
 
-                let _ = insert_file_stmt.execute(params![stored_name, stored_name_lower, dir_id]);
+                let _ = insert_file_stmt.execute(params![stored_name, stored_name_lower, dir_id, *is_dir as i32]);
             }
         }
 
@@ -787,6 +824,31 @@ impl Db {
     }
 
     /// Returns (sql_clause, param_value) for path-prefix filtering, or empty if none.
+    /// Returns a SQL fragment to filter by file/directory type.
+    fn is_dir_sql(include_files: bool, include_dirs: bool) -> &'static str {
+        match (include_files, include_dirs) {
+            (true, true) => "",
+            (true, false) => " AND f.is_dir = 0",
+            (false, true) => " AND f.is_dir = 1",
+            (false, false) => " AND 0",
+        }
+    }
+
+    /// Escape GLOB special characters (*, ?, [, ]) by wrapping them in brackets.
+    fn escape_glob(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() * 2);
+        for ch in s.chars() {
+            match ch {
+                '*' => out.push_str("[*]"),
+                '?' => out.push_str("[?]"),
+                '[' => out.push_str("[[]"),
+                ']' => out.push_str("[]]"),
+                _ => out.push(ch),
+            }
+        }
+        out
+    }
+
     fn path_prefix_clause(prefix: Option<&str>) -> (String, Option<String>) {
         match prefix {
             Some(p) if !p.is_empty() => {
@@ -841,6 +903,8 @@ impl Db {
         sort_key: SortKey,
         sort_ascending: bool,
         limit: usize,
+        include_files: bool,
+        include_dirs: bool,
     ) -> Vec<(String, String)> {
         let conn = self.conn.lock();
         let q = query.trim();
@@ -851,6 +915,7 @@ impl Db {
         let (path_clause, path_param) = Self::path_prefix_clause(path_prefix);
         let ext_clause = Self::extension_sql(extensions);
         let sort = Self::sort_clause(sort_key, sort_ascending);
+        let type_clause = Self::is_dir_sql(include_files, include_dirs);
         let lim = limit as i64;
 
         // Fall back to LIKE/GLOB when FTS5 trigram is unreliable:
@@ -858,25 +923,24 @@ impl Db {
         // - Non-ASCII (CJK, etc. — trigram tokenizer may not handle well)
         // - ASCII with special characters (dots, hyphens — tokenizer splits on these)
         if q.chars().count() < 3 || !q.is_ascii() || !q.chars().all(|c| c.is_alphanumeric()) {
-            // If query is just "*", match everything (SQL "%").
-            let is_match_all = q == "*";
             if case_sensitive {
                 let sql = format!(
                     "SELECT d.path, f.name FROM files f
                      JOIN dirs d ON d.id = f.dir_id
-                     WHERE f.name GLOB ?{}{} {} LIMIT ?",
-                    path_clause, ext_clause, sort
+                     WHERE f.name GLOB ?{}{}{} {} LIMIT ?",
+                    path_clause, ext_clause, type_clause, sort
                 );
-                let pattern = if is_match_all { "*".to_string() } else { format!("*{}*", q) };
+                let pattern = format!("*{}*", Self::escape_glob(q));
                 return Self::exec_name_query(&conn, &sql, pattern, &path_param, lim);
             } else {
                 let sql = format!(
                     "SELECT d.path, f.name FROM files f
                      JOIN dirs d ON d.id = f.dir_id
-                     WHERE f.name_lower LIKE ?{}{} {} LIMIT ?",
-                    path_clause, ext_clause, sort
+                     WHERE f.name_lower LIKE ?{}{}{} {} LIMIT ?",
+                    path_clause, ext_clause, type_clause, sort
                 );
-                let pattern = if is_match_all { "%".to_string() } else { format!("%{}%", q.to_lowercase()) };
+                // LIKE treats * as a literal character, so no escaping needed.
+                let pattern = format!("%{}%", q.to_lowercase());
                 return Self::exec_name_query(&conn, &sql, pattern, &path_param, lim);
             }
         }
@@ -887,8 +951,8 @@ impl Db {
                 "SELECT d.path, f.name FROM files_fts
                  JOIN files f ON f.id = files_fts.rowid
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE files_fts MATCH ? AND f.name GLOB ?{}{} {} LIMIT ?",
-                path_clause, ext_clause, sort
+                 WHERE files_fts MATCH ? AND f.name GLOB ?{}{}{} {} LIMIT ?",
+                path_clause, ext_clause, type_clause, sort
             );
             let lowered = q.to_lowercase();
             let pattern = format!("*{}*", q);
@@ -909,8 +973,8 @@ impl Db {
                 "SELECT d.path, f.name FROM files_fts
                  JOIN files f ON f.id = files_fts.rowid
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE files_fts MATCH ?{}{} {} LIMIT ?",
-                path_clause, ext_clause, sort
+                 WHERE files_fts MATCH ?{}{}{} {} LIMIT ?",
+                path_clause, ext_clause, type_clause, sort
             );
             let mut stmt = match conn.prepare(&sql) {
                 Ok(s) => s,
@@ -938,18 +1002,21 @@ impl Db {
         sort_key: SortKey,
         sort_ascending: bool,
         limit: usize,
+        include_files: bool,
+        include_dirs: bool,
     ) -> Vec<(String, String)> {
         let conn = self.conn.lock();
         let (path_clause, path_param) = Self::path_prefix_clause(path_prefix);
         let ext_clause = Self::extension_sql(extensions);
         let sort = Self::sort_clause(sort_key, sort_ascending);
+        let type_clause = Self::is_dir_sql(include_files, include_dirs);
         let lim = limit as i64;
         if case_sensitive {
             let sql = format!(
                 "SELECT d.path, f.name FROM files f
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE f.name GLOB ?{}{} {} LIMIT ?",
-                path_clause, ext_clause, sort
+                 WHERE f.name GLOB ?{}{}{} {} LIMIT ?",
+                path_clause, ext_clause, type_clause, sort
             );
             Self::exec_name_query(
                 &conn, &sql,
@@ -959,8 +1026,8 @@ impl Db {
             let sql = format!(
                 "SELECT d.path, f.name FROM files f
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE f.name_lower LIKE ?{}{} {} LIMIT ?",
-                path_clause, ext_clause, sort
+                 WHERE f.name_lower LIKE ?{}{}{} {} LIMIT ?",
+                path_clause, ext_clause, type_clause, sort
             );
             Self::exec_name_query(
                 &conn, &sql,
@@ -1029,6 +1096,8 @@ impl Db {
         path_prefix: Option<&str>,
         extensions: Option<&[String]>,
         limit: usize,
+        include_files: bool,
+        include_dirs: bool,
     ) -> Vec<(String, String)> {
         let conn = self.conn.lock();
         let q_len = query_lower.chars().count();
@@ -1037,6 +1106,7 @@ impl Db {
         }
         let (path_clause, path_param) = Self::path_prefix_clause(path_prefix);
         let ext_clause = Self::extension_sql(extensions);
+        let type_clause = Self::is_dir_sql(include_files, include_dirs);
         let prefix: String = query_lower.chars().take(2).collect();
         let len_min = q_len.saturating_sub(3).max(1) as i64;
         let len_max = (q_len + 3) as i64;
@@ -1045,8 +1115,8 @@ impl Db {
             "SELECT d.path, f.name FROM files f
              JOIN dirs d ON d.id = f.dir_id
              WHERE f.name_lower LIKE ?
-               AND LENGTH(f.name_lower) BETWEEN ? AND ?{}{} LIMIT ?",
-            path_clause, ext_clause
+               AND LENGTH(f.name_lower) BETWEEN ? AND ?{}{}{} LIMIT ?",
+            path_clause, ext_clause, type_clause
         );
         let mut stmt = conn.prepare(&sql).unwrap();
         if let Some(ref pp) = path_param {

@@ -134,7 +134,7 @@ fn upsert_file(ctx: &WatchContext, path: &Path) {
         None => return,
     };
     // Direct DB insert — UNIQUE constraint handles dedup.
-    if let Some(rowid) = ctx.db.insert(&file_name_lower, path) {
+    if let Some(rowid) = ctx.db.insert(&file_name_lower, path, path.is_dir()) {
         ctx.db.insert_fts(rowid, &file_name_lower);
     }
     if ctx.logger.enabled() {

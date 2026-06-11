@@ -252,7 +252,7 @@ impl Engine {
         let query_lower = query.to_lowercase();
         let candidates = self
             .db
-            .search_fuzzy_candidates(&query_lower, options.path_prefix.as_deref().and_then(|p| p.to_str()), options.extensions.as_deref(), 2000);
+            .search_fuzzy_candidates(&query_lower, options.path_prefix.as_deref().and_then(|p| p.to_str()), options.extensions.as_deref(), usize::MAX, options.include_files, options.include_dirs);
         let q_len = query.chars().count();
         let mut scored: Vec<(PathBuf, usize)> = Vec::new();
 
@@ -288,9 +288,6 @@ impl Engine {
                 continue;
             }
             scored.push((full_path, dist));
-            if scored.len() >= limit * 3 {
-                break;
-            }
         }
 
         // Sort by edit distance (best match first), then by path length.
@@ -308,9 +305,8 @@ impl Engine {
             options.query.to_lowercase()
         };
         let needs_meta_sort = matches!(options.sort_key, SortKey::Size | SortKey::Modified);
-        // Fetch more rows than the display limit to compensate for build_results
-        // filtering out non-existent paths and non-matching types (file vs dir).
-        // Need even more for size/modified since SQL can't sort those.
+        // Type filtering (file/dir) now happens at the SQL level via is_dir column,
+        // so fetch_limit only needs to compensate for dead-path cleanup and meta-sort.
         let fetch_limit = if needs_meta_sort { limit * 3 } else { limit * 2 };
         let results = self
             .db
@@ -322,6 +318,8 @@ impl Engine {
                 options.sort_key,
                 options.sort_ascending,
                 fetch_limit,
+                options.include_files,
+                options.include_dirs,
             );
         let mut out = self.build_results(results, options);
         if needs_meta_sort {
@@ -350,7 +348,7 @@ impl Engine {
         };
 
         let needs_meta_sort = matches!(options.sort_key, SortKey::Size | SortKey::Modified);
-        // For size/modified sorts fetch more since SQL can't sort those.
+        // Type filtering happens at SQL level via is_dir column.
         let fetch_limit = if needs_meta_sort { limit * 3 } else { limit * 2 };
 
         // Use LIKE with the literal fragment to get candidates, then filter by regex.
@@ -364,6 +362,8 @@ impl Engine {
                 options.sort_key,
                 options.sort_ascending,
                 fetch_limit,
+                options.include_files,
+                options.include_dirs,
             );
         let mut out = Vec::new();
         for (dir_path, file_name) in results {
@@ -387,9 +387,6 @@ impl Engine {
                 continue;
             }
             out.push(full_path);
-            if out.len() >= fetch_limit {
-                break;
-            }
         }
         if needs_meta_sort {
             out = self.sort_by_metadata(out, options.sort_key, options.sort_ascending);

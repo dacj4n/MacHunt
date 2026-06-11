@@ -20,7 +20,7 @@ pub struct BuildFilterSettings {
 
 fn scan_root(
     root: PathBuf,
-    tx: Sender<Vec<(String, PathBuf)>>,
+    tx: Sender<Vec<(String, PathBuf, bool)>>,
     include_dirs: bool,
     exclude_rules: Arc<ExcludeRules>,
 ) {
@@ -46,7 +46,7 @@ fn scan_root(
         }
         if let Some(name) = entry.file_name().to_str() {
             let normalized = normalize_path_for_index(entry.path());
-            batch.push((name.to_lowercase(), normalized));
+            batch.push((name.to_lowercase(), normalized, file_type.is_dir()));
             if batch.len() >= BATCH_SIZE {
                 let _ = tx.send(std::mem::replace(
                     &mut batch,
@@ -100,7 +100,7 @@ pub fn build_index(
     ));
     let include_dirs = filters.include_dirs;
 
-    let (tx, rx) = crossbeam::channel::bounded::<Vec<(String, PathBuf)>>(256);
+    let (tx, rx) = crossbeam::channel::bounded::<Vec<(String, PathBuf, bool)>>(256);
 
     let handles: Vec<_> = roots
         .into_iter()
@@ -112,7 +112,7 @@ pub fn build_index(
         .collect();
     drop(tx);
 
-    let mut db_batch: Vec<(String, PathBuf)> = Vec::with_capacity(BATCH_SIZE);
+    let mut db_batch: Vec<(String, PathBuf, bool)> = Vec::with_capacity(BATCH_SIZE);
     let mut count = 0usize;
 
     for chunk in rx {
