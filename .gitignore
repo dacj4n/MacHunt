@@ -12,3 +12,5 @@
 .DS_Store
 /release/
 /scripts/
+.codegraph/
+.reasonix/
