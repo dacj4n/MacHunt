@@ -225,16 +225,15 @@ impl Engine {
     }
 
     /// Spawn a low-frequency background thread that cleans dead paths.
-    /// Runs after a 10-min initial delay, then every 2 hours — just
-    /// enough to prevent unbounded accumulation without adding
-    /// meaningful CPU overhead.
+    /// Processes paths in batches to avoid loading millions of rows into
+    /// a single Vec (which would consume 300+ MB per GC cycle).
     fn start_lazy_gc(&self) {
         let db = self.db.clone();
         let logger = self.logger.clone();
         let cleanup_running = self.cleanup_running.clone();
 
         thread::spawn(move || {
-            thread::sleep(std::time::Duration::from_secs(600)); // 10 min delay
+            thread::sleep(std::time::Duration::from_secs(600));
             loop {
                 if !watcher::is_watch_running() {
                     break;
@@ -246,22 +245,32 @@ impl Engine {
                     thread::sleep(std::time::Duration::from_secs(3600));
                     continue;
                 }
-                let rows = db.list_all_paths();
-                let mut removed = 0usize;
-                for (_, path_str) in &rows {
-                    if !std::path::Path::new(path_str).exists() {
-                        db.delete(std::path::Path::new(path_str));
-                        if logger.enabled() {
-                            logger.log(&format!("[gc] {}", path_str));
+                // Process in 10K-row batches — each batch ~1 MB, vs
+                // 300+ MB if loaded all at once for 3M+ files.
+                const BATCH: usize = 10_000;
+                let mut last_id: u64 = 0;
+                let mut total_removed = 0usize;
+                loop {
+                    let rows = db.list_paths_after_id(last_id, BATCH);
+                    if rows.is_empty() {
+                        break;
+                    }
+                    last_id = rows.last().map(|(id, _)| *id as u64).unwrap_or(0);
+                    for (_, path_str) in &rows {
+                        if !std::path::Path::new(path_str).exists() {
+                            db.delete(std::path::Path::new(path_str));
+                            if logger.enabled() {
+                                logger.log(&format!("[gc] {}", path_str));
+                            }
+                            total_removed += 1;
                         }
-                        removed += 1;
                     }
                 }
-                if removed > 0 {
-                    println!("[GC] removed {} dead paths", removed);
+                if total_removed > 0 {
+                    println!("[GC] removed {} dead paths", total_removed);
                 }
                 cleanup_running.store(false, Ordering::SeqCst);
-                thread::sleep(std::time::Duration::from_secs(7200)); // 2 hours
+                thread::sleep(std::time::Duration::from_secs(7200));
             }
         });
     }
