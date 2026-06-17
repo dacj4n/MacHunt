@@ -99,6 +99,7 @@ struct WatchContext {
     last_event_id: Arc<AtomicU64>,
     include_dirs: bool,
     exclude_rules: Arc<ExcludeRules>,
+    history_done: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Default)]
@@ -226,6 +227,7 @@ unsafe extern "C" fn fsevent_callback(
                 event_id
             );
             ctx.db.save_last_event_id(event_id);
+            ctx.history_done.store(true, std::sync::atomic::Ordering::Relaxed);
             continue;
         }
 
@@ -249,7 +251,25 @@ unsafe extern "C" fn fsevent_callback(
         if flags & FLAG_ITEM_IS_FILE == 0 {
             if flags & FLAG_ITEM_REMOVED != 0 {
                 remove_tree(ctx, path.as_path());
-            } else if flags & (FLAG_ITEM_CREATED | FLAG_ITEM_RENAMED | FLAG_ITEM_MODIFIED) != 0 {
+                continue;
+            }
+            // Only CREATED needs recursive indexing (new directory with
+            // files inside). MODIFIED means something inside changed —
+            // file-level events handle those individually. Re-indexing
+            // the entire directory on every MODIFIED event is the #1
+            // cause of 100% CPU during history replay.
+            if flags & FLAG_ITEM_CREATED != 0 {
+                if path.is_dir() {
+                    index_directory(ctx, path.as_path());
+                } else if path.exists() {
+                    upsert_file(ctx, path.as_path());
+                }
+            } else if flags & FLAG_ITEM_RENAMED != 0 {
+                // Renamed directory: clean stale entries in parent,
+                // then index the renamed directory if it exists.
+                if let Some(parent) = path.parent() {
+                    clean_dead_in_dir(ctx, parent);
+                }
                 if path.is_dir() {
                     index_directory(ctx, path.as_path());
                 } else if path.exists() {
@@ -342,6 +362,7 @@ pub fn start_watch(
             last_event_id,
             include_dirs,
             exclude_rules,
+            history_done: std::sync::atomic::AtomicBool::new(false),
         });
         let ctx_ptr = Box::into_raw(ctx);
         let mut fsevent_ctx = FSEventStreamContext {
