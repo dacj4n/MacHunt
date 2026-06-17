@@ -1372,10 +1372,12 @@ fn start_watch_auto(app: tauri::AppHandle, state: tauri::State<'_, AppState>) ->
             // to avoid 100% CPU from processing millions of backlogged events
             // (common after reinstall or long idle periods).
             let current_id = unsafe { machunt::watcher::FSEventsGetCurrentEventId() };
-            let stale = id < current_id && current_id - id > 1_000_000;
+            // Gap > 50K (~1 min of 100% CPU replay). Skip history
+            // to avoid startup thrashing; watcher picks up from NOW.
+            let stale = id < current_id && current_id - id > 50_000;
             let since = if stale {
                 println!(
-                    "EventID {} is too far behind current {} (gap: {}), skipping history replay",
+                    "EventID {} too far behind current {} (gap: {}), skipping history replay",
                     id,
                     current_id,
                     current_id - id

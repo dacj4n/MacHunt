@@ -152,11 +152,20 @@ fn main() {
             } else {
                 match last_event_id {
                     Some(id) => {
-                        println!(
-                            "Resuming from last exit point (EventID: {}), playing back offline changes...",
-                            id
-                        );
-                        engine.start_watch(Some(id));
+                        let current_id = unsafe { machunt::watcher::FSEventsGetCurrentEventId() };
+                        if id < current_id && current_id - id > 50_000 {
+                            println!(
+                                "EventID {} too far behind (gap: {}), skipping history replay",
+                                id, current_id - id
+                            );
+                            engine.start_watch(None);
+                        } else {
+                            println!(
+                                "Resuming from last exit point (EventID: {}), replaying...",
+                                id
+                            );
+                            engine.start_watch(Some(id));
+                        }
                     }
                     None => {
                         println!("Background validation...");
