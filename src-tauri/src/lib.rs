@@ -1372,16 +1372,22 @@ fn start_watch_auto(app: tauri::AppHandle, state: tauri::State<'_, AppState>) ->
             // to avoid 100% CPU from processing millions of backlogged events
             // (common after reinstall or long idle periods).
             let current_id = unsafe { machunt::watcher::FSEventsGetCurrentEventId() };
-            // Gap > 50K (~1 min of 100% CPU replay). Skip history
-            // to avoid startup thrashing; watcher picks up from NOW.
+            // Gap > 50K (~1 min of 100% CPU replay): skip synchronous
+            // history replay, start from NOW, and run an incremental
+            // background scan to catch up without blocking startup.
             let stale = id < current_id && current_id - id > 50_000;
             let since = if stale {
                 println!(
-                    "EventID {} too far behind current {} (gap: {}), skipping history replay",
-                    id,
-                    current_id,
-                    current_id - id
+                    "EventID {} too far behind current {} (gap: {}), starting background catch-up",
+                    id, current_id, current_id - id
                 );
+                // Background incremental scan — inserts new files, ignores
+                // duplicates via INSERT OR IGNORE. Dead entries cleaned by GC.
+                let engine_bg = state.engine.clone();
+                let include_dirs = engine_bg.get_include_dirs();
+                std::thread::spawn(move || {
+                    engine_bg.build_index(None, false, include_dirs, false);
+                });
                 None
             } else {
                 Some(id)
@@ -1392,7 +1398,7 @@ fn start_watch_auto(app: tauri::AppHandle, state: tauri::State<'_, AppState>) ->
                 mode: if stale { "active".to_string() } else { "resume".to_string() },
                 code: if stale { "active".to_string() } else { "resume".to_string() },
                 message: if stale {
-                    format!("Watcher started (EventID {} too stale, skipped history)", id)
+                    format!("Watcher started (gap: {}, background catch-up running)", current_id - id)
                 } else {
                     format!("Watcher resumed from EventID {}", id)
                 },

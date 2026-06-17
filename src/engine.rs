@@ -59,6 +59,10 @@ impl Engine {
         self.db.count_files()
     }
 
+    pub fn get_include_dirs(&self) -> bool {
+        self.include_dirs.load(Ordering::Relaxed)
+    }
+
     pub fn build_index(
         &self,
         path: Option<String>,

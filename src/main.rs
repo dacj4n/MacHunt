@@ -155,10 +155,14 @@ fn main() {
                         let current_id = unsafe { machunt::watcher::FSEventsGetCurrentEventId() };
                         if id < current_id && current_id - id > 50_000 {
                             println!(
-                                "EventID {} too far behind (gap: {}), skipping history replay",
+                                "EventID {} too far behind (gap: {}), starting background catch-up",
                                 id, current_id - id
                             );
                             engine.start_watch(None);
+                            let engine_bg = engine.clone();
+                            std::thread::spawn(move || {
+                                engine_bg.build_index(None, false, true, false);
+                            });
                         } else {
                             println!(
                                 "Resuming from last exit point (EventID: {}), replaying...",
