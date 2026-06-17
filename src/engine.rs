@@ -217,6 +217,53 @@ impl Engine {
             watch_roots,
             Arc::new(exclude_rules),
         );
+
+        // Start lazy dead-path GC to compensate for removing the
+        // per-search `exists()` check. Runs infrequently and at low
+        // priority to avoid competing with search/watcher operations.
+        self.start_lazy_gc();
+    }
+
+    /// Spawn a low-frequency background thread that cleans dead paths.
+    /// Runs after a 10-min initial delay, then every 2 hours — just
+    /// enough to prevent unbounded accumulation without adding
+    /// meaningful CPU overhead.
+    fn start_lazy_gc(&self) {
+        let db = self.db.clone();
+        let logger = self.logger.clone();
+        let cleanup_running = self.cleanup_running.clone();
+
+        thread::spawn(move || {
+            thread::sleep(std::time::Duration::from_secs(600)); // 10 min delay
+            loop {
+                if !watcher::is_watch_running() {
+                    break;
+                }
+                if cleanup_running
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_err()
+                {
+                    thread::sleep(std::time::Duration::from_secs(3600));
+                    continue;
+                }
+                let rows = db.list_all_paths();
+                let mut removed = 0usize;
+                for (_, path_str) in &rows {
+                    if !std::path::Path::new(path_str).exists() {
+                        db.delete(std::path::Path::new(path_str));
+                        if logger.enabled() {
+                            logger.log(&format!("[gc] {}", path_str));
+                        }
+                        removed += 1;
+                    }
+                }
+                if removed > 0 {
+                    println!("[GC] removed {} dead paths", removed);
+                }
+                cleanup_running.store(false, Ordering::SeqCst);
+                thread::sleep(std::time::Duration::from_secs(7200)); // 2 hours
+            }
+        });
     }
 
     pub fn stop_watch(&self) -> bool {
@@ -401,17 +448,15 @@ impl Engine {
         options: &SearchOptions,
     ) -> Vec<PathBuf> {
         let mut out = Vec::with_capacity(results.len());
-        let mut dead: Vec<PathBuf> = Vec::new();
         for (dir_path, file_name) in results {
             let full_path = if dir_path == "/" {
                 PathBuf::from(format!("/{}", file_name))
             } else {
                 PathBuf::from(format!("{}/{}", dir_path, file_name))
             };
-            if !full_path.exists() {
-                dead.push(full_path);
-                continue;
-            }
+            // Skip `exists()` check — stat() on every candidate is the
+            // #1 search-time CPU cost. Dead paths are cleaned by the
+            // watcher (rename/remove events) and periodic GC instead.
             if !prefix_allowed(&full_path, &options.path_prefix) {
                 continue;
             }
@@ -419,19 +464,6 @@ impl Engine {
                 continue;
             }
             out.push(full_path);
-        }
-        // Lazily remove dead entries from the index.
-        if !dead.is_empty() {
-            let db = self.db.clone();
-            let logger = self.logger.clone();
-            std::thread::spawn(move || {
-                for path in dead {
-                    db.delete(path.as_path());
-                    if logger.enabled() {
-                        logger.log(&format!("[-] {}", path.display()));
-                    }
-                }
-            });
         }
         out
     }

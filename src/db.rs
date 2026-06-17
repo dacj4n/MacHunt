@@ -398,12 +398,23 @@ impl Db {
             .ok();
 
         if let Some(dir_id) = dir_id {
-            let _ = conn.execute(
-                "INSERT OR IGNORE INTO files (name, name_lower, dir_id, is_dir) VALUES (?1, ?2, ?3, ?4)",
-                params![stored_name, stored_name_lower, dir_id, is_dir as i32],
-            );
-            // Return the rowid for FTS sync.
-            return Some(conn.last_insert_rowid());
+            let changed = conn
+                .execute(
+                    "INSERT OR IGNORE INTO files (name, name_lower, dir_id, is_dir) VALUES (?1, ?2, ?3, ?4)",
+                    params![stored_name, stored_name_lower, dir_id, is_dir as i32],
+                )
+                .unwrap_or(0);
+            if changed > 0 {
+                return Some(conn.last_insert_rowid());
+            }
+            // Already exists — return existing rowid for FTS sync.
+            return conn
+                .query_row(
+                    "SELECT id FROM files WHERE name = ?1 AND dir_id = ?2",
+                    params![stored_name.as_str(), dir_id],
+                    |row| row.get(0),
+                )
+                .ok();
         }
         None
     }
