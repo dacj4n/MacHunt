@@ -2304,8 +2304,26 @@ function App() {
         return;
       }
 
+      const openSelectedResult = () => {
+        const source = activeView === "pinned" ? pinnedItems : itemsRef.current;
+        const selected = source.find((i) => selectedItemPathSet.has(i.path));
+        if (selected) {
+          event.preventDefault();
+          void openResult(selected.path);
+        }
+      };
+
+      if (event.key === "Enter" && (activeView === "search" || activeView === "pinned") && !contextMenu && !isEditableTarget(event.target)) {
+        openSelectedResult();
+        return;
+      }
+
       if ((event.metaKey || event.ctrlKey) && !event.altKey) {
         const key = event.key.toLowerCase();
+        if (key === "o") {
+          openSelectedResult();
+          return;
+        }
         if (key === "1") {
           event.preventDefault();
           setActiveView("search");
