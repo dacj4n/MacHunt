@@ -905,6 +905,7 @@ impl Db {
 
     /// Search via FTS5 trigram. Returns (dir_path, file_name) pairs.
     /// Falls back to LIKE/GLOB for short / non-alphanumeric queries.
+    #[allow(clippy::too_many_arguments)]
     pub fn search_fts(
         &self,
         query: &str,
@@ -1004,6 +1005,7 @@ impl Db {
 
     /// LIKE/GLOB-based candidate search — returns (dir_path, file_name).
     /// Used as fallback for non-ASCII queries and regex/pattern filtering.
+    #[allow(clippy::too_many_arguments)]
     pub fn search_like(
         &self,
         pattern: &str,
