@@ -53,37 +53,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Write version from tag
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "Setting version to $VERSION"
-
-          # TOML files (Cargo.toml, src-tauri/Cargo.toml)
-          for f in Cargo.toml src-tauri/Cargo.toml; do
-            awk -v ver="$VERSION" '
-              BEGIN { in_pkg = 0 }
-              /^\[package\]/ { in_pkg = 1; print; next }
-              /^\[/ { in_pkg = 0 }
-              in_pkg && /^version = "/ { print "version = \"" ver "\""; next }
-              { print }
-            ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-          done
-
-          # JSON files
-          node -e "
-            const fs = require('fs');
-            const v = '$VERSION';
-            for (const f of ['package.json', 'package-lock.json', 'src-tauri/tauri.conf.json']) {
-              const j = JSON.parse(fs.readFileSync(f, 'utf8'));
-              j.version = v;
-              if (j.packages && j.packages['']) j.packages[''].version = v;
-              fs.writeFileSync(f, JSON.stringify(j, null, 2) + '\n');
-            }
-          "
-
-          # VERSION file
-          echo "$VERSION" > VERSION
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.arch == 'universal' && 'universal-apple-darwin' || '' }}
