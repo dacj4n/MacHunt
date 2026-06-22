@@ -1,0 +1,104 @@
+name: CI & Release
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    name: Lint & Build Check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Rust clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Rust build
+        run: cargo build
+
+      - name: TypeScript check & Vite build
+        run: npm run build
+
+  release:
+    name: Build & Publish DMG (${{ matrix.arch }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - arch: aarch64
+            build_args: ""
+            dmg_glob: "src-tauri/target/release/bundle/dmg/*.dmg"
+          - arch: universal
+            build_args: "--target universal-apple-darwin"
+            dmg_glob: "src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.arch == 'universal' && 'universal-apple-darwin' || '' }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build DMG
+        run: npx tauri build ${{ matrix.build_args }}
+
+      - name: Rename DMG
+        run: |
+          DMG=$(ls ${{ matrix.dmg_glob }})
+          DEST="MacHunt_${{ steps.version.outputs.VERSION }}_${{ matrix.arch }}.dmg"
+          mv "$DMG" "$DEST"
+          echo "DMG_PATH=$DEST" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MacHunt-${{ matrix.arch }}
+          path: ${{ env.DMG_PATH }}
+
+  publish:
+    name: Create GitHub Release
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect DMGs
+        run: |
+          mkdir -p release
+          find artifacts -name "*.dmg" -exec cp {} release/ \;
+          ls -lh release/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.dmg
+          generate_release_notes: true
