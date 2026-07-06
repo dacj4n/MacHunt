@@ -3250,6 +3250,90 @@ function App() {
               {autoCheckStatus && <div className="status-msg">{autoCheckStatus}</div>}
             </article>
 
+            {/* File Manager & Terminal Module */}
+            <article className="set-card">
+              <div className="set-card-header">
+                <div className="set-card-icon">⌘</div>
+                <div>
+                  <div className="set-card-title">{t.fileManagerTitle}</div>
+                  <div className="set-card-subtitle">{t.fileManagerDesc}</div>
+                </div>
+              </div>
+
+              <div className="rule-section">
+                <div className="rule-section-title">{t.defaultFolderAction}</div>
+                <div className="form-row">
+                  <select
+                    className="form-select"
+                    value={defaultFolderAction}
+                    onChange={async (event) => {
+                      const val = event.target.value;
+                      if (val === "__custom__") {
+                        const appStr = await pickApp();
+                        if (appStr) {
+                          setDefaultFolderAction(appStr);
+                          setCustomFolderApp(appStr);
+                          void applyFileManagerSettings(appStr, defaultTerminalAction, appStr, customTerminalApp);
+                        }
+                      } else {
+                        setDefaultFolderAction(val);
+                        setCustomFolderApp("");
+                        void applyFileManagerSettings(val, defaultTerminalAction, "", customTerminalApp);
+                      }
+                    }}
+                    style={{ flex: 1 }}
+                  >
+                    <option value="Finder">{t.folderActionFinder}</option>
+                    <option value="QSpace Pro">{t.folderActionQSpace}</option>
+                    {!["Finder", "QSpace Pro"].includes(defaultFolderAction) && defaultFolderAction && (
+                      <option value={defaultFolderAction}>
+                        {defaultFolderAction.includes("|") ? defaultFolderAction.split("|")[0] : defaultFolderAction}
+                      </option>
+                    )}
+                    <option value="__custom__">{t.folderActionCustom}</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="rule-section">
+                <div className="rule-section-title">{t.defaultTerminalAction}</div>
+                <div className="form-row">
+                  <select
+                    className="form-select"
+                    value={defaultTerminalAction}
+                    onChange={async (event) => {
+                      const val = event.target.value;
+                      if (val === "__custom__") {
+                        const appStr = await pickApp();
+                        if (appStr) {
+                          setDefaultTerminalAction(appStr);
+                          setCustomTerminalApp(appStr);
+                          void applyFileManagerSettings(defaultFolderAction, appStr, customFolderApp, appStr);
+                        }
+                      } else {
+                        setDefaultTerminalAction(val);
+                        setCustomTerminalApp("");
+                        void applyFileManagerSettings(defaultFolderAction, val, customFolderApp, "");
+                      }
+                    }}
+                    style={{ flex: 1 }}
+                  >
+                    <option value="Terminal">{t.terminalActionTerminal}</option>
+                    <option value="WezTerm">{t.terminalActionWezTerm}</option>
+                    <option value="iTerm">iTerm2</option>
+                    <option value="kitty">Kitty</option>
+                    <option value="Warp">Warp</option>
+                    {!["Terminal", "WezTerm", "iTerm", "kitty", "Warp"].includes(defaultTerminalAction) && defaultTerminalAction && (
+                      <option value={defaultTerminalAction}>
+                        {defaultTerminalAction.includes("|") ? defaultTerminalAction.split("|")[0] : defaultTerminalAction}
+                      </option>
+                    )}
+                    <option value="__custom__">{t.terminalActionCustom}</option>
+                  </select>
+                </div>
+              </div>
+            </article>
+
             {/* Indexing Module */}
             <article className="set-card">
               <div className="set-card-header">
@@ -3441,90 +3525,6 @@ function App() {
 
                 {excludeDirStatus && <div className="status-msg">{excludeDirStatus}</div>}
               </div>
-              </div>
-            </article>
-
-            {/* File Manager & Terminal Module */}
-            <article className="set-card">
-              <div className="set-card-header">
-                <div className="set-card-icon">⌘</div>
-                <div>
-                  <div className="set-card-title">{t.fileManagerTitle}</div>
-                  <div className="set-card-subtitle">{t.fileManagerDesc}</div>
-                </div>
-              </div>
-
-              <div className="rule-section">
-                <div className="rule-section-title">{t.defaultFolderAction}</div>
-                <div className="form-row">
-                  <select
-                    className="form-select"
-                    value={defaultFolderAction}
-                    onChange={async (event) => {
-                      const val = event.target.value;
-                      if (val === "__custom__") {
-                        const appStr = await pickApp();
-                        if (appStr) {
-                          setDefaultFolderAction(appStr);
-                          setCustomFolderApp(appStr);
-                          void applyFileManagerSettings(appStr, defaultTerminalAction, appStr, customTerminalApp);
-                        }
-                      } else {
-                        setDefaultFolderAction(val);
-                        setCustomFolderApp("");
-                        void applyFileManagerSettings(val, defaultTerminalAction, "", customTerminalApp);
-                      }
-                    }}
-                    style={{ flex: 1 }}
-                  >
-                    <option value="Finder">{t.folderActionFinder}</option>
-                    <option value="QSpace Pro">{t.folderActionQSpace}</option>
-                    {!["Finder", "QSpace Pro"].includes(defaultFolderAction) && defaultFolderAction && (
-                      <option value={defaultFolderAction}>
-                        {defaultFolderAction.includes("|") ? defaultFolderAction.split("|")[0] : defaultFolderAction}
-                      </option>
-                    )}
-                    <option value="__custom__">{t.folderActionCustom}</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="rule-section">
-                <div className="rule-section-title">{t.defaultTerminalAction}</div>
-                <div className="form-row">
-                  <select
-                    className="form-select"
-                    value={defaultTerminalAction}
-                    onChange={async (event) => {
-                      const val = event.target.value;
-                      if (val === "__custom__") {
-                        const appStr = await pickApp();
-                        if (appStr) {
-                          setDefaultTerminalAction(appStr);
-                          setCustomTerminalApp(appStr);
-                          void applyFileManagerSettings(defaultFolderAction, appStr, customFolderApp, appStr);
-                        }
-                      } else {
-                        setDefaultTerminalAction(val);
-                        setCustomTerminalApp("");
-                        void applyFileManagerSettings(defaultFolderAction, val, customFolderApp, "");
-                      }
-                    }}
-                    style={{ flex: 1 }}
-                  >
-                    <option value="Terminal">{t.terminalActionTerminal}</option>
-                    <option value="WezTerm">{t.terminalActionWezTerm}</option>
-                    <option value="iTerm">iTerm2</option>
-                    <option value="kitty">Kitty</option>
-                    <option value="Warp">Warp</option>
-                    {!["Terminal", "WezTerm", "iTerm", "kitty", "Warp"].includes(defaultTerminalAction) && defaultTerminalAction && (
-                      <option value={defaultTerminalAction}>
-                        {defaultTerminalAction.includes("|") ? defaultTerminalAction.split("|")[0] : defaultTerminalAction}
-                      </option>
-                    )}
-                    <option value="__custom__">{t.terminalActionCustom}</option>
-                  </select>
-                </div>
               </div>
             </article>
 
