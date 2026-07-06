@@ -3459,7 +3459,7 @@ function App() {
                 <div className="form-row">
                   <select
                     className="form-select"
-                    value={["Finder", "QSpace Pro"].includes(defaultFolderAction) ? defaultFolderAction : "__custom__"}
+                    value={defaultFolderAction}
                     onChange={async (event) => {
                       const val = event.target.value;
                       if (val === "__custom__") {
@@ -3479,12 +3479,14 @@ function App() {
                   >
                     <option value="Finder">{t.folderActionFinder}</option>
                     <option value="QSpace Pro">{t.folderActionQSpace}</option>
+                    {!["Finder", "QSpace Pro"].includes(defaultFolderAction) && defaultFolderAction && (
+                      <option value={defaultFolderAction}>
+                        {defaultFolderAction.includes("|") ? defaultFolderAction.split("|")[0] : defaultFolderAction}
+                      </option>
+                    )}
                     <option value="__custom__">{t.folderActionCustom}</option>
                   </select>
                 </div>
-                {!["Finder", "QSpace Pro"].includes(defaultFolderAction) && customFolderApp && (
-                  <div className="option-meta">{t.customApp}: {customFolderApp.split("|")[0]}</div>
-                )}
               </div>
 
               <div className="rule-section">
@@ -3492,7 +3494,7 @@ function App() {
                 <div className="form-row">
                   <select
                     className="form-select"
-                    value={["Terminal", "WezTerm"].includes(defaultTerminalAction) ? defaultTerminalAction : "__custom__"}
+                    value={defaultTerminalAction}
                     onChange={async (event) => {
                       const val = event.target.value;
                       if (val === "__custom__") {
@@ -3512,12 +3514,14 @@ function App() {
                   >
                     <option value="Terminal">{t.terminalActionTerminal}</option>
                     <option value="WezTerm">{t.terminalActionWezTerm}</option>
+                    {!["Terminal", "WezTerm"].includes(defaultTerminalAction) && defaultTerminalAction && (
+                      <option value={defaultTerminalAction}>
+                        {defaultTerminalAction.includes("|") ? defaultTerminalAction.split("|")[0] : defaultTerminalAction}
+                      </option>
+                    )}
                     <option value="__custom__">{t.terminalActionCustom}</option>
                   </select>
                 </div>
-                {!["Terminal", "WezTerm"].includes(defaultTerminalAction) && customTerminalApp && (
-                  <div className="option-meta">{t.customApp}: {customTerminalApp.split("|")[0]}</div>
-                )}
               </div>
             </article>
 

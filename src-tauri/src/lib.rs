@@ -1122,9 +1122,13 @@ fn open_in_wezterm(path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn pick_app(app: tauri::AppHandle) -> Option<String> {
+    // Use "choose file" instead of "choose application" because
+    // "choose application" automatically launches the selected app.
+    // Default location is Applications folder for convenience.
+    let script = r#"POSIX path of (choose file with prompt "Select an application" default location (path to applications folder))"#;
     let output = Command::new("osascript")
         .arg("-e")
-        .arg(r#"POSIX path of (choose application with prompt "Select an application")"#)
+        .arg(script)
         .output()
         .ok()?;
 
@@ -1144,9 +1148,14 @@ fn pick_app(app: tauri::AppHandle) -> Option<String> {
         return None;
     }
 
-    // osascript returns path like /Applications/QSpace Pro.app
-    // We need the app name: "QSpace Pro"
+    // Validate that the selected file is a .app bundle
     let path = PathBuf::from(&raw);
+    if path.extension().and_then(|ext| ext.to_str()) != Some("app") {
+        return None;
+    }
+
+    // osascript returns path like /Applications/QSpace Pro.app
+    // Extract app name: "QSpace Pro"
     let app_name = path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -1270,18 +1279,50 @@ fn open_in_default_terminal(path: String, state: tauri::State<'_, AppState>) -> 
             // Custom or unknown app
             let app_path = resolve_app_path(&terminal_action, &custom_app);
             if !app_path.is_empty() {
-                Command::new("open")
-                    .arg("-a")
-                    .arg(&app_path)
-                    .arg(&open_target)
-                    .status()
-                    .map_err(|e| format!("Failed to open in '{}': {}", app_path, e))?;
-                Ok(())
+                open_custom_terminal_app(&app_path, &open_target)
             } else {
                 // Fallback to Terminal
                 open_with_terminal_internal(&open_target)
             }
         }
+    }
+}
+
+fn open_custom_terminal_app(app_path: &str, open_target: &Path) -> Result<(), String> {
+    let app_lower = app_path.to_lowercase();
+
+    // Known terminal patterns:
+    // - Terminal, Warp, Hyper: open -a AppName <dir>  (no --args)
+    // - iTerm2, Kitty, Alacritty: open -a AppName --args <dir>
+    // - WezTerm: handled separately (needs --cwd)
+
+    if app_lower.contains("warp") || app_lower.contains("hyper") {
+        // Warp / Hyper: pass directory directly
+        let status = Command::new("open")
+            .arg("-a")
+            .arg(app_path)
+            .arg(open_target)
+            .status()
+            .map_err(|e| format!("Failed to open '{}': {}", app_path, e))?;
+        if status.success() {
+            return Ok(());
+        }
+        return Err(format!("Failed to open in '{}'", app_path));
+    }
+
+    // iTerm2, Kitty, Alacritty, and most other terminals:
+    // use --args to pass the directory as a positional argument
+    let status = Command::new("open")
+        .arg("-a")
+        .arg(app_path)
+        .arg("--args")
+        .arg(open_target)
+        .status()
+        .map_err(|e| format!("Failed to open in '{}': {}", app_path, e))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("Failed to open in '{}' (may not be installed or unsupported)", app_path))
     }
 }
 
