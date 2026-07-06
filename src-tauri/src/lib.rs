@@ -1096,28 +1096,7 @@ fn open_in_terminal(path: String) -> Result<(), String> {
 #[tauri::command]
 fn open_in_wezterm(path: String) -> Result<(), String> {
     let open_target = open_container_path(&path)?;
-
-    if is_wezterm_running() && try_spawn_wezterm_tab(&open_target) {
-        let _ = activate_application("WezTerm");
-        return Ok(());
-    }
-
-    let status = Command::new("open")
-        .arg("-a")
-        .arg("WezTerm")
-        .arg("--args")
-        .arg("start")
-        .arg("--cwd")
-        .arg(open_target)
-        .status()
-        .map_err(|e| e.to_string())?;
-
-    if status.success() {
-        let _ = activate_application("WezTerm");
-        Ok(())
-    } else {
-        Err("Failed to open in WezTerm (check whether WezTerm is installed)".to_string())
-    }
+    open_with_wezterm_internal(&open_target)
 }
 
 #[tauri::command]
@@ -1289,40 +1268,20 @@ fn open_in_default_terminal(path: String, state: tauri::State<'_, AppState>) -> 
 }
 
 fn open_custom_terminal_app(app_path: &str, open_target: &Path) -> Result<(), String> {
-    let app_lower = app_path.to_lowercase();
-
-    // Known terminal patterns:
-    // - Terminal, Warp, Hyper: open -a AppName <dir>  (no --args)
-    // - iTerm2, Kitty, Alacritty: open -a AppName --args <dir>
-    // - WezTerm: handled separately (needs --cwd)
-
-    if app_lower.contains("warp") || app_lower.contains("hyper") {
-        // Warp / Hyper: pass directory directly
-        let status = Command::new("open")
-            .arg("-a")
-            .arg(app_path)
-            .arg(open_target)
-            .status()
-            .map_err(|e| format!("Failed to open '{}': {}", app_path, e))?;
-        if status.success() {
-            return Ok(());
-        }
-        return Err(format!("Failed to open in '{}'", app_path));
-    }
-
-    // iTerm2, Kitty, Alacritty, and most other terminals:
-    // use --args to pass the directory as a positional argument
+    // Uniform approach: open -a AppName <dir>
+    // Pass the directory as a direct open event, same as Finder double-click.
+    // The app handles the open event through its own event loop, which
+    // respects its config (window position, profile, etc.).
     let status = Command::new("open")
         .arg("-a")
         .arg(app_path)
-        .arg("--args")
         .arg(open_target)
         .status()
         .map_err(|e| format!("Failed to open in '{}': {}", app_path, e))?;
     if status.success() {
         Ok(())
     } else {
-        Err(format!("Failed to open in '{}' (may not be installed or unsupported)", app_path))
+        Err(format!("Failed to open in '{}' (may not be installed)", app_path))
     }
 }
 
@@ -1361,18 +1320,17 @@ fn open_with_wezterm_internal(open_target: &Path) -> Result<(), String> {
         return Ok(());
     }
 
+    // Open WezTerm with the directory as a direct argument (no --args).
+    // This lets WezTerm handle the open event through its own event loop,
+    // which respects config including window position settings.
     let status = Command::new("open")
         .arg("-a")
         .arg("WezTerm")
-        .arg("--args")
-        .arg("start")
-        .arg("--cwd")
         .arg(open_target)
         .status()
         .map_err(|e| e.to_string())?;
 
     if status.success() {
-        let _ = activate_application("WezTerm");
         Ok(())
     } else {
         Err("Failed to open in WezTerm (check whether WezTerm is installed)".to_string())

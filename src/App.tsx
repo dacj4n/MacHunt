@@ -3514,7 +3514,10 @@ function App() {
                   >
                     <option value="Terminal">{t.terminalActionTerminal}</option>
                     <option value="WezTerm">{t.terminalActionWezTerm}</option>
-                    {!["Terminal", "WezTerm"].includes(defaultTerminalAction) && defaultTerminalAction && (
+                    <option value="iTerm">iTerm2</option>
+                    <option value="kitty">Kitty</option>
+                    <option value="Warp">Warp</option>
+                    {!["Terminal", "WezTerm", "iTerm", "kitty", "Warp"].includes(defaultTerminalAction) && defaultTerminalAction && (
                       <option value={defaultTerminalAction}>
                         {defaultTerminalAction.includes("|") ? defaultTerminalAction.split("|")[0] : defaultTerminalAction}
                       </option>
