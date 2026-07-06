@@ -1320,20 +1320,27 @@ fn open_with_wezterm_internal(open_target: &Path) -> Result<(), String> {
         return Ok(());
     }
 
-    // Open WezTerm with the directory as a direct argument (no --args).
-    // This lets WezTerm handle the open event through its own event loop,
-    // which respects config including window position settings.
+    // Cold start: open WezTerm naturally first (respects config/position),
+    // then spawn a tab at the target directory once it's ready.
     let status = Command::new("open")
         .arg("-a")
         .arg("WezTerm")
-        .arg(open_target)
         .status()
         .map_err(|e| e.to_string())?;
 
-    if status.success() {
+    if !status.success() {
+        return Err("Failed to open WezTerm".to_string());
+    }
+
+    // Wait for WezTerm to start, then spawn a tab at the target dir
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    if try_spawn_wezterm_tab(open_target) {
+        let _ = activate_application("WezTerm");
         Ok(())
     } else {
-        Err("Failed to open in WezTerm (check whether WezTerm is installed)".to_string())
+        // Tab spawn failed — WezTerm is open but at default dir.
+        // Still not an error since the app did launch.
+        Ok(())
     }
 }
 
