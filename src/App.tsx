@@ -188,6 +188,19 @@ const I18N = {
     menuPin: "收藏",
     menuUnpin: "取消收藏",
     pinnedCount: "已收藏 {count} 项",
+    fileManagerTitle: "文件管理器与终端",
+    fileManagerDesc: "自定义搜索结果中文件夹和终端的默认打开方式。",
+    defaultFolderAction: "默认文件夹打开方式",
+    defaultTerminalAction: "默认终端打开方式",
+    folderActionFinder: "访达",
+    folderActionQSpace: "QSpace Pro",
+    folderActionCustom: "自定义 App...",
+    terminalActionTerminal: "终端",
+    terminalActionWezTerm: "WezTerm",
+    terminalActionCustom: "自定义 App...",
+    selectCustomApp: "选择自定义 App",
+    customApp: "自定义 App",
+    openInDefaultTerminal: "在默认终端中打开",
   },
   en: {
     searchPlaceholder: "Search files, folders, content...",
@@ -324,6 +337,19 @@ const I18N = {
     menuPin: "Pin",
     menuUnpin: "Unpin",
     pinnedCount: "{count} pinned items",
+    fileManagerTitle: "File Manager & Terminal",
+    fileManagerDesc: "Customize the default apps for opening folders and terminal from search results.",
+    defaultFolderAction: "Default Folder Opener",
+    defaultTerminalAction: "Default Terminal",
+    folderActionFinder: "Finder",
+    folderActionQSpace: "QSpace Pro",
+    folderActionCustom: "Custom App...",
+    terminalActionTerminal: "Terminal",
+    terminalActionWezTerm: "WezTerm",
+    terminalActionCustom: "Custom App...",
+    selectCustomApp: "Select Custom App",
+    customApp: "Custom App",
+    openInDefaultTerminal: "Open in Default Terminal",
   }
 } as const;
 
@@ -385,6 +411,13 @@ interface ExcludeDirSettingsResponse {
 
 interface WatchRootsSettingsResponse {
   roots: string[];
+}
+
+interface FileManagerSettingsResponse {
+  defaultFolderAction: string;
+  defaultTerminalAction: string;
+  customFolderApp: string;
+  customTerminalApp: string;
 }
 
 interface ContextMenuState {
@@ -867,6 +900,10 @@ function App() {
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const [pinnedItems, setPinnedItems] = useState<SearchResultItem[]>(loadPinnedItems);
+  const [defaultFolderAction, setDefaultFolderAction] = useState("Finder");
+  const [defaultTerminalAction, setDefaultTerminalAction] = useState("Terminal");
+  const [customFolderApp, setCustomFolderApp] = useState("");
+  const [customTerminalApp, setCustomTerminalApp] = useState("");
   const [indexed, setIndexed] = useState(0);
   const [appVersion, setAppVersion] = useState("");
   const [totalFound, setTotalFound] = useState(0);
@@ -1373,6 +1410,30 @@ function App() {
     };
 
     void loadExcludeDirSettings();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadFileManagerSettings = async () => {
+      try {
+        const settings = await invoke<FileManagerSettingsResponse>("get_file_manager_settings");
+        if (!mounted) {
+          return;
+        }
+        setDefaultFolderAction(settings.defaultFolderAction);
+        setDefaultTerminalAction(settings.defaultTerminalAction);
+        setCustomFolderApp(settings.customFolderApp);
+        setCustomTerminalApp(settings.customTerminalApp);
+      } catch (err) {
+        console.error("Failed to load file manager settings", err);
+      }
+    };
+
+    void loadFileManagerSettings();
 
     return () => {
       mounted = false;
@@ -2041,6 +2102,45 @@ function App() {
       setError(String(err));
     } finally {
       setIsPickingPath(false);
+    }
+  };
+
+  const pickApp = async (): Promise<string | null> => {
+    if (isPickingPath) {
+      return null;
+    }
+    setError(null);
+    setIsPickingPath(true);
+    try {
+      const selected = await invoke<string | null>("pick_app");
+      return selected ?? null;
+    } catch (err) {
+      setError(String(err));
+      return null;
+    } finally {
+      setIsPickingPath(false);
+    }
+  };
+
+  const applyFileManagerSettings = async (
+    nextFolderAction: string,
+    nextTerminalAction: string,
+    nextCustomFolderApp: string,
+    nextCustomTerminalApp: string
+  ) => {
+    try {
+      const saved = await invoke<FileManagerSettingsResponse>("set_file_manager_settings", {
+        defaultFolderAction: nextFolderAction,
+        defaultTerminalAction: nextTerminalAction,
+        customFolderApp: nextCustomFolderApp,
+        customTerminalApp: nextCustomTerminalApp,
+      });
+      setDefaultFolderAction(saved.defaultFolderAction);
+      setDefaultTerminalAction(saved.defaultTerminalAction);
+      setCustomFolderApp(saved.customFolderApp);
+      setCustomTerminalApp(saved.customTerminalApp);
+    } catch (err) {
+      setError(String(err));
     }
   };
 
@@ -2721,6 +2821,16 @@ function App() {
                           <div className="cell size-cell">{formatBytes(item.sizeBytes)}</div>
                           <div className="cell date-cell">{formatDate(item.modifiedUnixMs)}</div>
                           <button
+                            className="term-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void invoke("open_in_default_terminal", { path: item.path });
+                            }}
+                            title={t.openInDefaultTerminal}
+                          >
+                            &gt;_
+                          </button>
+                          <button
                             className={`pin-btn ${isPinned(item.path) ? "pinned" : ""}`}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -2846,6 +2956,16 @@ function App() {
                       <div className="cell type-cell">{typeLabel(item, t.typeFolder, t.typeFile)}</div>
                       <div className="cell size-cell">{formatBytes(item.sizeBytes)}</div>
                       <div className="cell date-cell">{formatDate(item.modifiedUnixMs)}</div>
+                          <button
+                            className="term-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void invoke("open_in_default_terminal", { path: item.path });
+                            }}
+                            title={t.openInDefaultTerminal}
+                          >
+                            &gt;_
+                          </button>
                           <button
                             className="pin-btn pinned"
                             onClick={(e) => {
@@ -3321,6 +3441,83 @@ function App() {
 
                 {excludeDirStatus && <div className="status-msg">{excludeDirStatus}</div>}
               </div>
+              </div>
+            </article>
+
+            {/* File Manager & Terminal Module */}
+            <article className="set-card">
+              <div className="set-card-header">
+                <div className="set-card-icon">⌘</div>
+                <div>
+                  <div className="set-card-title">{t.fileManagerTitle}</div>
+                  <div className="set-card-subtitle">{t.fileManagerDesc}</div>
+                </div>
+              </div>
+
+              <div className="rule-section">
+                <div className="rule-section-title">{t.defaultFolderAction}</div>
+                <div className="form-row">
+                  <select
+                    className="form-select"
+                    value={["Finder", "QSpace Pro"].includes(defaultFolderAction) ? defaultFolderAction : "__custom__"}
+                    onChange={async (event) => {
+                      const val = event.target.value;
+                      if (val === "__custom__") {
+                        const appStr = await pickApp();
+                        if (appStr) {
+                          setDefaultFolderAction(appStr);
+                          setCustomFolderApp(appStr);
+                          void applyFileManagerSettings(appStr, defaultTerminalAction, appStr, customTerminalApp);
+                        }
+                      } else {
+                        setDefaultFolderAction(val);
+                        setCustomFolderApp("");
+                        void applyFileManagerSettings(val, defaultTerminalAction, "", customTerminalApp);
+                      }
+                    }}
+                    style={{ flex: 1 }}
+                  >
+                    <option value="Finder">{t.folderActionFinder}</option>
+                    <option value="QSpace Pro">{t.folderActionQSpace}</option>
+                    <option value="__custom__">{t.folderActionCustom}</option>
+                  </select>
+                </div>
+                {!["Finder", "QSpace Pro"].includes(defaultFolderAction) && customFolderApp && (
+                  <div className="option-meta">{t.customApp}: {customFolderApp.split("|")[0]}</div>
+                )}
+              </div>
+
+              <div className="rule-section">
+                <div className="rule-section-title">{t.defaultTerminalAction}</div>
+                <div className="form-row">
+                  <select
+                    className="form-select"
+                    value={["Terminal", "WezTerm"].includes(defaultTerminalAction) ? defaultTerminalAction : "__custom__"}
+                    onChange={async (event) => {
+                      const val = event.target.value;
+                      if (val === "__custom__") {
+                        const appStr = await pickApp();
+                        if (appStr) {
+                          setDefaultTerminalAction(appStr);
+                          setCustomTerminalApp(appStr);
+                          void applyFileManagerSettings(defaultFolderAction, appStr, customFolderApp, appStr);
+                        }
+                      } else {
+                        setDefaultTerminalAction(val);
+                        setCustomTerminalApp("");
+                        void applyFileManagerSettings(defaultFolderAction, val, customFolderApp, "");
+                      }
+                    }}
+                    style={{ flex: 1 }}
+                  >
+                    <option value="Terminal">{t.terminalActionTerminal}</option>
+                    <option value="WezTerm">{t.terminalActionWezTerm}</option>
+                    <option value="__custom__">{t.terminalActionCustom}</option>
+                  </select>
+                </div>
+                {!["Terminal", "WezTerm"].includes(defaultTerminalAction) && customTerminalApp && (
+                  <div className="option-meta">{t.customApp}: {customTerminalApp.split("|")[0]}</div>
+                )}
               </div>
             </article>
 

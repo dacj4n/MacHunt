@@ -61,6 +61,10 @@ struct GuiSettings {
     exclude_exact_dirs: Vec<String>,
     exclude_pattern_dirs: Vec<String>,
     watch_roots: Vec<String>,
+    default_folder_action: String,
+    default_terminal_action: String,
+    custom_folder_app: String,
+    custom_terminal_app: String,
 }
 
 impl Default for GuiSettings {
@@ -75,6 +79,10 @@ impl Default for GuiSettings {
             exclude_exact_dirs: Vec::new(),
             exclude_pattern_dirs: default_exclude_pattern_dirs(),
             watch_roots: Vec::new(),
+            default_folder_action: "Finder".to_string(),
+            default_terminal_action: "Terminal".to_string(),
+            custom_folder_app: String::new(),
+            custom_terminal_app: String::new(),
         }
     }
 }
@@ -153,6 +161,26 @@ fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         .lock()
         .map_err(|_| "Failed to access watch roots".to_string())?
         .clone();
+    let default_folder_action = state
+        .default_folder_action
+        .lock()
+        .map_err(|_| "Failed to access default folder action".to_string())?
+        .clone();
+    let default_terminal_action = state
+        .default_terminal_action
+        .lock()
+        .map_err(|_| "Failed to access default terminal action".to_string())?
+        .clone();
+    let custom_folder_app = state
+        .custom_folder_app
+        .lock()
+        .map_err(|_| "Failed to access custom folder app".to_string())?
+        .clone();
+    let custom_terminal_app = state
+        .custom_terminal_app
+        .lock()
+        .map_err(|_| "Failed to access custom terminal app".to_string())?
+        .clone();
 
     Ok(GuiSettings {
         window_toggle_shortcut,
@@ -164,6 +192,10 @@ fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         exclude_exact_dirs,
         exclude_pattern_dirs,
         watch_roots,
+        default_folder_action,
+        default_terminal_action,
+        custom_folder_app,
+        custom_terminal_app,
     })
 }
 
@@ -180,6 +212,10 @@ struct AppState {
     exclude_exact_dirs: Mutex<Vec<String>>,
     exclude_pattern_dirs: Mutex<Vec<String>>,
     watch_roots: Mutex<Vec<String>>,
+    default_folder_action: Mutex<String>,
+    default_terminal_action: Mutex<String>,
+    custom_folder_app: Mutex<String>,
+    custom_terminal_app: Mutex<String>,
     is_quitting: AtomicBool,
 }
 
@@ -221,6 +257,10 @@ impl AppState {
             exclude_exact_dirs: Mutex::new(exclude_exact_dirs),
             exclude_pattern_dirs: Mutex::new(exclude_pattern_dirs),
             watch_roots: Mutex::new(watch_roots),
+            default_folder_action: Mutex::new(settings.default_folder_action),
+            default_terminal_action: Mutex::new(settings.default_terminal_action),
+            custom_folder_app: Mutex::new(settings.custom_folder_app),
+            custom_terminal_app: Mutex::new(settings.custom_terminal_app),
             is_quitting: AtomicBool::new(false),
         }
     }
@@ -795,30 +835,56 @@ fn pick_path_in_finder(app: tauri::AppHandle) -> Option<String> {
 }
 
 #[tauri::command]
-fn open_search_result(path: String) -> Result<(), String> {
+fn open_search_result(path: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let target = PathBuf::from(path);
     if !target.exists() {
         return Err("Target path does not exist".to_string());
     }
 
-    let status = if target.is_dir() {
-        Command::new("open")
-            .arg("-a")
-            .arg("Finder")
+    // For files, always use the default OS handler
+    if !target.is_dir() {
+        let status = Command::new("open")
             .arg(&target)
             .status()
-            .map_err(|e| e.to_string())?
-    } else {
-        Command::new("open")
-            .arg(&target)
-            .status()
-            .map_err(|e| e.to_string())?
-    };
+            .map_err(|e| e.to_string())?;
+        return if status.success() {
+            Ok(())
+        } else {
+            Err("Failed to open target".to_string())
+        };
+    }
 
-    if status.success() {
-        Ok(())
-    } else {
-        Err("Failed to open target".to_string())
+    // For directories, use the configured default folder action
+    let folder_action = state
+        .default_folder_action
+        .lock()
+        .map_err(|_| "Failed to access default folder action".to_string())?
+        .clone();
+    let custom_app = state
+        .custom_folder_app
+        .lock()
+        .map_err(|_| "Failed to access custom folder app".to_string())?
+        .clone();
+
+    match folder_action.as_str() {
+        "QSpace Pro" => open_with_app_internal("QSpace Pro", &target),
+        "Finder" => open_with_app_internal("Finder", &target),
+        _ => {
+            // Custom or unknown app
+            let app_path = resolve_app_path(&folder_action, &custom_app);
+            if !app_path.is_empty() {
+                Command::new("open")
+                    .arg("-a")
+                    .arg(&app_path)
+                    .arg(&target)
+                    .status()
+                    .map_err(|e| format!("Failed to open in '{}': {}", app_path, e))?;
+                Ok(())
+            } else {
+                // Fallback to Finder
+                open_with_app_internal("Finder", &target)
+            }
+        }
     }
 }
 
@@ -1051,6 +1117,240 @@ fn open_in_wezterm(path: String) -> Result<(), String> {
         Ok(())
     } else {
         Err("Failed to open in WezTerm (check whether WezTerm is installed)".to_string())
+    }
+}
+
+#[tauri::command]
+fn pick_app(app: tauri::AppHandle) -> Option<String> {
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(r#"POSIX path of (choose application with prompt "Select an application")"#)
+        .output()
+        .ok()?;
+
+    // Re-activate MacHunt after the picker deactivates us.
+    let _ = app.show();
+    #[cfg(target_os = "macos")]
+    unsafe {
+        activate_ignoring_other_apps();
+    }
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+
+    // osascript returns path like /Applications/QSpace Pro.app
+    // We need the app name: "QSpace Pro"
+    let path = PathBuf::from(&raw);
+    let app_name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&raw)
+        .to_string();
+
+    // Return both the app name as the display name and the full path
+    // Format: "QSpace Pro|/Applications/QSpace Pro.app"
+    Some(format!("{}|{}", app_name, raw.trim_end_matches('/')))
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileManagerSettingsResponse {
+    default_folder_action: String,
+    default_terminal_action: String,
+    custom_folder_app: String,
+    custom_terminal_app: String,
+}
+
+#[tauri::command]
+fn get_file_manager_settings(
+    state: tauri::State<'_, AppState>,
+) -> Result<FileManagerSettingsResponse, String> {
+    let default_folder_action = state
+        .default_folder_action
+        .lock()
+        .map_err(|_| "Failed to access default folder action".to_string())?
+        .clone();
+    let default_terminal_action = state
+        .default_terminal_action
+        .lock()
+        .map_err(|_| "Failed to access default terminal action".to_string())?
+        .clone();
+    let custom_folder_app = state
+        .custom_folder_app
+        .lock()
+        .map_err(|_| "Failed to access custom folder app".to_string())?
+        .clone();
+    let custom_terminal_app = state
+        .custom_terminal_app
+        .lock()
+        .map_err(|_| "Failed to access custom terminal app".to_string())?
+        .clone();
+
+    Ok(FileManagerSettingsResponse {
+        default_folder_action,
+        default_terminal_action,
+        custom_folder_app,
+        custom_terminal_app,
+    })
+}
+
+#[tauri::command]
+fn set_file_manager_settings(
+    default_folder_action: String,
+    default_terminal_action: String,
+    custom_folder_app: String,
+    custom_terminal_app: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<FileManagerSettingsResponse, String> {
+    {
+        let mut guard = state
+            .default_folder_action
+            .lock()
+            .map_err(|_| "Failed to access default folder action".to_string())?;
+        *guard = default_folder_action.clone();
+    }
+    {
+        let mut guard = state
+            .default_terminal_action
+            .lock()
+            .map_err(|_| "Failed to access default terminal action".to_string())?;
+        *guard = default_terminal_action.clone();
+    }
+    {
+        let mut guard = state
+            .custom_folder_app
+            .lock()
+            .map_err(|_| "Failed to access custom folder app".to_string())?;
+        *guard = custom_folder_app.clone();
+    }
+    {
+        let mut guard = state
+            .custom_terminal_app
+            .lock()
+            .map_err(|_| "Failed to access custom terminal app".to_string())?;
+        *guard = custom_terminal_app.clone();
+    }
+
+    let settings = snapshot_gui_settings(&state)?;
+    save_gui_settings(&settings)?;
+
+    Ok(FileManagerSettingsResponse {
+        default_folder_action,
+        default_terminal_action,
+        custom_folder_app,
+        custom_terminal_app,
+    })
+}
+
+#[tauri::command]
+fn open_in_default_terminal(path: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let open_target = open_container_path(&path)?;
+
+    let terminal_action = state
+        .default_terminal_action
+        .lock()
+        .map_err(|_| "Failed to access default terminal action".to_string())?
+        .clone();
+    let custom_app = state
+        .custom_terminal_app
+        .lock()
+        .map_err(|_| "Failed to access custom terminal app".to_string())?
+        .clone();
+
+    match terminal_action.as_str() {
+        "WezTerm" => open_with_wezterm_internal(&open_target),
+        "Terminal" => open_with_terminal_internal(&open_target),
+        _ => {
+            // Custom or unknown app
+            let app_path = resolve_app_path(&terminal_action, &custom_app);
+            if !app_path.is_empty() {
+                Command::new("open")
+                    .arg("-a")
+                    .arg(&app_path)
+                    .arg(&open_target)
+                    .status()
+                    .map_err(|e| format!("Failed to open in '{}': {}", app_path, e))?;
+                Ok(())
+            } else {
+                // Fallback to Terminal
+                open_with_terminal_internal(&open_target)
+            }
+        }
+    }
+}
+
+/// Resolve the actual .app path from either the action value or the custom app field.
+/// The format is "AppName|/path/to/App.app" (from `pick_app`).
+fn resolve_app_path(action: &str, custom: &str) -> String {
+    // prefer custom if non-empty
+    let source = if custom.is_empty() { action } else { custom };
+    if let Some(idx) = source.rfind('|') {
+        source[idx + 1..].to_string()
+    } else {
+        // If no '|' separator, treat the whole string as an app name/path
+        source.to_string()
+    }
+}
+
+fn open_with_terminal_internal(open_target: &Path) -> Result<(), String> {
+    let status = Command::new("open")
+        .arg("-a")
+        .arg("Terminal")
+        .arg(open_target)
+        .status()
+        .map_err(|e| e.to_string())?;
+
+    if status.success() {
+        let _ = activate_application("Terminal");
+        Ok(())
+    } else {
+        Err("Failed to open in Terminal".to_string())
+    }
+}
+
+fn open_with_wezterm_internal(open_target: &Path) -> Result<(), String> {
+    if is_wezterm_running() && try_spawn_wezterm_tab(open_target) {
+        let _ = activate_application("WezTerm");
+        return Ok(());
+    }
+
+    let status = Command::new("open")
+        .arg("-a")
+        .arg("WezTerm")
+        .arg("--args")
+        .arg("start")
+        .arg("--cwd")
+        .arg(open_target)
+        .status()
+        .map_err(|e| e.to_string())?;
+
+    if status.success() {
+        let _ = activate_application("WezTerm");
+        Ok(())
+    } else {
+        Err("Failed to open in WezTerm (check whether WezTerm is installed)".to_string())
+    }
+}
+
+fn open_with_app_internal(app_name: &str, open_target: &Path) -> Result<(), String> {
+    let status = Command::new("open")
+        .arg("-a")
+        .arg(app_name)
+        .arg(open_target)
+        .status()
+        .map_err(|e| e.to_string())?;
+
+    if status.success() {
+        let _ = activate_application(app_name);
+        Ok(())
+    } else {
+        Err(format!("Failed to open in {} (may not be installed)", app_name))
     }
 }
 
@@ -2015,12 +2315,14 @@ pub fn run() {
             watch_status,
             list_path_suggestions,
             pick_path_in_finder,
+            pick_app,
             open_search_result,
             preview_search_result,
             reveal_in_finder,
             open_in_qspace,
             open_in_terminal,
             open_in_wezterm,
+            open_in_default_terminal,
             copy_to_clipboard,
             copy_search_results,
             move_to_trash,
@@ -2039,6 +2341,8 @@ pub fn run() {
             set_exclude_dir_settings,
             get_watch_roots_settings,
             set_watch_roots_settings,
+            get_file_manager_settings,
+            set_file_manager_settings,
             toggle_main_window,
             get_version
         ])
