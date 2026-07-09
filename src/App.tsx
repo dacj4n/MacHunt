@@ -84,13 +84,13 @@ const I18N = {
     timeWeek: "一周内",
     timeMonth: "一月内",
     timeYear: "一年内",
-    timeCustom: "自定义天数...",
+    timeCustom: "自定义...",
     sizeFilter: "大小",
     sizeAll: "所有大小",
     sizeKB: "小于 1 MB",
     sizeMB: "1 MB ~ 100 MB",
     sizeGB: "大于 100 MB",
-    sizeCustom: "自定义范围...",
+    sizeCustom: "自定义...",
     sizeMin: "最小",
     sizeMax: "最大",
     appFilter: "应用",
@@ -252,13 +252,13 @@ const I18N = {
     timeWeek: "This Week",
     timeMonth: "This Month",
     timeYear: "This Year",
-    timeCustom: "Custom days...",
+    timeCustom: "Custom...",
     sizeFilter: "Size",
     sizeAll: "Any Size",
     sizeKB: "Under 1 MB",
     sizeMB: "1 MB – 100 MB",
     sizeGB: "Over 100 MB",
-    sizeCustom: "Custom range...",
+    sizeCustom: "Custom...",
     sizeMin: "Min",
     sizeMax: "Max",
     appFilter: "App",
@@ -1059,11 +1059,21 @@ function App() {
   const [fuzzyEnabled, setFuzzyEnabled] = useState(() => loadStoredFuzzyEnabled() ?? false);
   const [activeTab, setActiveTab] = useState<TabId>("all");
   const [timeFilter, setTimeFilter] = useState("all"); // all | today | week | month | year | custom
-  const [customTimeDays, setCustomTimeDays] = useState("");
+  const [customTimeFrom, setCustomTimeFrom] = useState("");  // YYYY-MM-DD
+  const [customTimeTo, setCustomTimeTo] = useState("");      // YYYY-MM-DD
   const [sizeFilter, setSizeFilter] = useState("all"); // all | kb | mb | gb | custom
-  const [customSizeMin, setCustomSizeMin] = useState("");
-  const [customSizeMax, setCustomSizeMax] = useState("");
+  const [customSizeMin, setCustomSizeMinTemp] = useState("");
+  const [customSizeMax, setCustomSizeMaxTemp] = useState("");
+  const [customSizeUnit, setCustomSizeUnit] = useState("MB");
   const [appFilter, setAppFilter] = useState(""); // "" = all, or app name
+  const [showTimePopover, setShowTimePopover] = useState(false);
+  const [showSizePopover, setShowSizePopover] = useState(false);
+  // Applied custom values (separate from draft)
+  const customSizeMinRef = useRef(0);
+  const customSizeMaxRef = useRef(0);
+  const customTimeFromRef = useRef(0);
+  const customTimeToRef = useRef(0);
+  const [filterVersion, setFilterVersion] = useState(0);
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAscending, setSortAscending] = useState(true);
 
@@ -1175,19 +1185,23 @@ function App() {
     if (timeFilter !== "all") {
       const now = Date.now();
       const cutoff = timeFilter === "custom"
-        ? now - (parseInt(customTimeDays) || 0) * 86400000
+        ? 0
         : now - ({
             today: 86400000,
             week: 604800000,
             month: 2592000000,
             year: 31536000000,
           }[timeFilter] ?? 0);
-      if (cutoff < now) {
-        list = list.filter((item) => {
-          const m = item.modifiedUnixMs;
-          return m != null && m >= cutoff;
-        });
-      }
+      list = list.filter((item) => {
+        const m = item.modifiedUnixMs;
+        if (m == null) return false;
+        if (timeFilter === "custom") {
+          const from = customTimeFromRef.current;
+          const to = customTimeToRef.current;
+          return (from === 0 || m >= from) && (to === 0 || m <= to);
+        }
+        return m >= cutoff;
+      });
     }
     // Size filter
     if (sizeFilter !== "all") {
@@ -1199,8 +1213,8 @@ function App() {
           case "mb": return b >= 1048576 && b < 104857600;
           case "gb": return b >= 104857600;
           case "custom": {
-            const min = parseSize(customSizeMin);
-            const max = parseSize(customSizeMax);
+            const min = customSizeMinRef.current;
+            const max = customSizeMaxRef.current;
             return (min <= 0 || b >= min) && (max <= 0 || b <= max);
           }
           default: return true;
@@ -1215,7 +1229,7 @@ function App() {
       });
     }
     return list;
-  }, [items, timeFilter, customTimeDays, sizeFilter, customSizeMin, customSizeMax, appFilter]);
+  }, [items, timeFilter, sizeFilter, appFilter, filterVersion]);
   const visibleStart = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VISIBLE_BUFFER);
   const visibleEnd = Math.min(filteredItems.length, visibleStart + Math.ceil(window.innerHeight / ROW_HEIGHT) + VISIBLE_BUFFER * 2);
   const visibleItems = filteredItems.slice(visibleStart, visibleEnd);
@@ -3004,41 +3018,91 @@ function App() {
               <span className="toolbar-sep" />
 
               {/* Time filter */}
-              <select className="filter-select" value={timeFilter} onChange={(e) => setTimeFilter(e.target.value)}>
-                <option value="all">{t.timeAll}</option>
-                <option value="today">{t.timeToday}</option>
-                <option value="week">{t.timeWeek}</option>
-                <option value="month">{t.timeMonth}</option>
-                <option value="year">{t.timeYear}</option>
-                <option value="custom">{t.timeCustom}</option>
-              </select>
-              {timeFilter === "custom" && (
-                <input
-                  className="filter-input"
-                  type="number"
-                  min="1"
-                  placeholder="30"
-                  value={customTimeDays}
-                  onChange={(e) => setCustomTimeDays(e.target.value)}
-                />
-              )}
+              <div style={{ position: "relative" }}>
+                <select className="filter-select" value={timeFilter} onChange={(e) => {
+                  const v = e.target.value;
+                  setTimeFilter(v);
+                  if (v === "custom") { setShowTimePopover(true); setShowSizePopover(false); }
+                  else { setShowTimePopover(false); customTimeFromRef.current = 0; customTimeToRef.current = 0; }
+                }}>
+                  <option value="all">{t.timeAll}</option>
+                  <option value="today">{t.timeToday}</option>
+                  <option value="week">{t.timeWeek}</option>
+                  <option value="month">{t.timeMonth}</option>
+                  <option value="year">{t.timeYear}</option>
+                  <option value="custom">{t.timeCustom}</option>
+                </select>
+                {showTimePopover && (
+                  <div className="filter-popover" onClick={(e) => e.stopPropagation()}>
+                    <div className="filter-popover-row">
+                      <label>{t.sizeMin}</label>
+                      <input className="filter-input" type="date" value={customTimeFrom}
+                        onChange={(e) => setCustomTimeFrom(e.target.value)} />
+                    </div>
+                    <div className="filter-popover-row">
+                      <label>{t.sizeMax}</label>
+                      <input className="filter-input" type="date" value={customTimeTo}
+                        onChange={(e) => setCustomTimeTo(e.target.value)} />
+                    </div>
+                    <div className="filter-popover-actions">
+                      <button className="act-btn" onClick={() => {
+                        customTimeFromRef.current = customTimeFrom ? new Date(customTimeFrom).getTime() : 0;
+                        customTimeToRef.current = customTimeTo ? new Date(customTimeTo).getTime() + 86399999 : 0;
+                        setShowTimePopover(false);
+                        setFilterVersion(v => v + 1);
+                      }}>{t.shortcutApply}</button>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Size filter */}
-              <select className="filter-select" value={sizeFilter} onChange={(e) => setSizeFilter(e.target.value)}>
-                <option value="all">{t.sizeAll}</option>
-                <option value="kb">{t.sizeKB}</option>
-                <option value="mb">{t.sizeMB}</option>
-                <option value="gb">{t.sizeGB}</option>
-                <option value="custom">{t.sizeCustom}</option>
-              </select>
-              {sizeFilter === "custom" && (
-                <>
-                  <input className="filter-input" type="text" placeholder={`${t.sizeMin} (如 100KB)`}
-                    value={customSizeMin} onChange={(e) => setCustomSizeMin(e.target.value)} />
-                  <input className="filter-input" type="text" placeholder={`${t.sizeMax} (如 50MB)`}
-                    value={customSizeMax} onChange={(e) => setCustomSizeMax(e.target.value)} />
-                </>
-              )}
+              <div style={{ position: "relative" }}>
+                <select className="filter-select" value={sizeFilter} onChange={(e) => {
+                  const v = e.target.value;
+                  setSizeFilter(v);
+                  if (v === "custom") { setShowSizePopover(true); setShowTimePopover(false); }
+                  else { setShowSizePopover(false); customSizeMinRef.current = 0; customSizeMaxRef.current = 0; }
+                }}>
+                  <option value="all">{t.sizeAll}</option>
+                  <option value="kb">{t.sizeKB}</option>
+                  <option value="mb">{t.sizeMB}</option>
+                  <option value="gb">{t.sizeGB}</option>
+                  <option value="custom">{t.sizeCustom}</option>
+                </select>
+                {showSizePopover && (
+                  <div className="filter-popover" onClick={(e) => e.stopPropagation()}>
+                    <div className="filter-popover-row">
+                      <label>{t.sizeMin}</label>
+                      <input className="filter-input" type="number" min="0" placeholder="0"
+                        value={customSizeMin} onChange={(e) => setCustomSizeMinTemp(e.target.value)} />
+                    </div>
+                    <div className="filter-popover-row">
+                      <label>{t.sizeMax}</label>
+                      <input className="filter-input" type="number" min="0" placeholder="100"
+                        value={customSizeMax} onChange={(e) => setCustomSizeMaxTemp(e.target.value)} />
+                    </div>
+                    <div className="filter-popover-row">
+                      <label>单位</label>
+                      <select className="filter-select" style={{ width: 100 }} value={customSizeUnit}
+                        onChange={(e) => setCustomSizeUnit(e.target.value)}>
+                        <option value="KB">KB</option>
+                        <option value="MB">MB</option>
+                        <option value="GB">GB</option>
+                      </select>
+                    </div>
+                    <div className="filter-popover-actions">
+                      <button className="act-btn" onClick={() => {
+                        const mul = customSizeUnit === "GB" ? 1073741824 : customSizeUnit === "MB" ? 1048576 : 1024;
+                        customSizeMinRef.current = (parseFloat(customSizeMin) || 0) * mul;
+                        customSizeMaxRef.current = (parseFloat(customSizeMax) || 0) * mul;
+                        setShowSizePopover(false);
+                        setFilterVersion(v => v + 1);
+                      }}>{t.shortcutApply}</button>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* App filter */}
               <select className="filter-select" value={appFilter} onChange={(e) => setAppFilter(e.target.value)}>

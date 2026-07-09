@@ -783,6 +783,53 @@ body {
   box-shadow: 0 0 0 1px var(--pn-primary), var(--shadow-depth), var(--shadow-highlight);
 }
 
+/* ===== Filter Popover ===== */
+.filter-popover {
+  position: absolute;
+  top: 40px;
+  right: 0;
+  z-index: 100;
+  background: var(--pn-surface-container-high);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5), var(--shadow-depth);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 220px;
+}
+
+.filter-popover-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-popover-row label {
+  font-size: 0.8rem;
+  color: var(--pn-on-surface-variant);
+  width: 36px;
+  flex-shrink: 0;
+}
+
+.filter-popover-row .filter-input,
+.filter-popover-row .filter-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.filter-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+.filter-popover-actions .act-btn {
+  font-size: 0.8rem;
+  padding: 4px 14px;
+  height: auto;
+}
+
 /* Even tab widths */
 .filter-chips {
   display: grid;
