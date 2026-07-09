@@ -74,7 +74,7 @@ const I18N = {
     menuCopyAllPaths: "拷贝所有文件路径",
     menuTrash: "移到废纸篓",
     regexEnabled: "正则",
-    fuzzyEnabled: "容错",
+    fuzzyEnabled: "模糊",
     caseSensitive: "区分大小写",
     build: "构建",
     rebuild: "重建",
