@@ -36,6 +36,7 @@ const COLUMN_WIDTHS_STORAGE_KEY = "machunt.table.column.widths";
 const LEGACY_SEARCH_MODE_STORAGE_KEY = "machunt.search.mode";
 const REGEX_ENABLED_STORAGE_KEY = "machunt.search.regex_enabled";
 const CASE_SENSITIVE_STORAGE_KEY = "machunt.search.case_sensitive";
+const FUZZY_ENABLED_STORAGE_KEY = "machunt.search.fuzzy_enabled";
 const PINNED_STORAGE_KEY = "machunt.pinned.items";
 const EVENT_OPEN_SETTINGS = "app://open-settings";
 const EVENT_FOCUS_SEARCH = "app://focus-search";
@@ -73,6 +74,7 @@ const I18N = {
     menuCopyAllPaths: "拷贝所有文件路径",
     menuTrash: "移到废纸篓",
     regexEnabled: "正则",
+    fuzzyEnabled: "容错",
     caseSensitive: "区分大小写",
     build: "构建",
     rebuild: "重建",
@@ -226,6 +228,7 @@ const I18N = {
     menuCopyAllPaths: "Copy All Paths",
     menuTrash: "Move to Trash",
     regexEnabled: "Regex",
+    fuzzyEnabled: "Fuzzy",
     caseSensitive: "Case Sensitive",
     build: "Build",
     rebuild: "Rebuild",
@@ -701,16 +704,18 @@ function buildSearchRequest(
   pathPrefix: string,
   caseSensitive: boolean,
   regexEnabled: boolean,
+  fuzzyEnabled: boolean,
   sortKey: SortKey,
   sortAscending: boolean
 ) {
   const includeFiles = tab !== "folders";
   const includeDirs = tab === "all" || tab === "folders" || tab === "applications";
   const extensions = TAB_EXTENSIONS[tab];
+  const mode = fuzzyEnabled ? "Fuzzy" : regexEnabled ? "Pattern" : "Substring";
   return {
     request: {
       query,
-      mode: "Substring",
+      mode,
       regexEnabled,
       caseSensitive,
       pathPrefix: pathPrefix.trim() || null,
@@ -718,8 +723,8 @@ function buildSearchRequest(
       includeDirs,
       limit: 1000,
       extensions,
-      sortKey,
-      sortAscending,
+      sortKey: fuzzyEnabled ? "name" : sortKey,
+      sortAscending: fuzzyEnabled ? false : sortAscending,
     }
   };
 }
@@ -916,6 +921,16 @@ function loadStoredCaseSensitive(): boolean | null {
   return null;
 }
 
+function loadStoredFuzzyEnabled(): boolean | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const raw = window.localStorage.getItem(FUZZY_ENABLED_STORAGE_KEY);
+  if (raw === "1") return true;
+  if (raw === "0") return false;
+  return null;
+}
+
 function loadPinnedItems(): SearchResultItem[] {
   if (typeof window === "undefined") {
     return [];
@@ -973,6 +988,7 @@ function App() {
   const [activePathSuggestion, setActivePathSuggestion] = useState(-1);
   const [regexEnabled, setRegexEnabled] = useState(() => loadStoredRegexEnabled() ?? false);
   const [caseSensitive, setCaseSensitive] = useState(() => loadStoredCaseSensitive() ?? false);
+  const [fuzzyEnabled, setFuzzyEnabled] = useState(() => loadStoredFuzzyEnabled() ?? false);
   const [activeTab, setActiveTab] = useState<TabId>("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAscending, setSortAscending] = useState(true);
@@ -1297,6 +1313,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem(CASE_SENSITIVE_STORAGE_KEY, caseSensitive ? "1" : "0");
   }, [caseSensitive]);
+
+  useEffect(() => {
+    localStorage.setItem(FUZZY_ENABLED_STORAGE_KEY, fuzzyEnabled ? "1" : "0");
+  }, [fuzzyEnabled]);
 
   useEffect(() => {
     localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
@@ -1878,7 +1898,7 @@ function App() {
       try {
         const response = await invoke<SearchResponse>(
           "search",
-          buildSearchRequest(needle, activeTab, pathPrefix, caseSensitive, regexEnabled, sortKey, sortAscending)
+          buildSearchRequest(needle, activeTab, pathPrefix, caseSensitive, regexEnabled, fuzzyEnabled, sortKey, sortAscending)
         );
         if (cancelled) {
           return;
@@ -1910,7 +1930,7 @@ function App() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, pathPrefix, activeTab, regexEnabled, caseSensitive, sortKey, sortAscending, isIndexLoading]);
+  }, [query, pathPrefix, activeTab, regexEnabled, caseSensitive, fuzzyEnabled, sortKey, sortAscending, isIndexLoading]);
 
   const runBuild = async (rebuild: boolean) => {
     if (isBuilding) {
@@ -2796,10 +2816,23 @@ function App() {
 
               <button
                 className={regexEnabled ? "toggle-btn active" : "toggle-btn"}
-                onClick={() => setRegexEnabled((prev) => !prev)}
+                onClick={() => {
+                  if (fuzzyEnabled) setFuzzyEnabled(false);
+                  setRegexEnabled((prev) => !prev);
+                }}
                 title={t.regexEnabled}
               >
                 {t.regexEnabled}
+              </button>
+              <button
+                className={fuzzyEnabled ? "toggle-btn active" : "toggle-btn"}
+                onClick={() => {
+                  if (regexEnabled) setRegexEnabled(false);
+                  setFuzzyEnabled((prev) => !prev);
+                }}
+                title={t.fuzzyEnabled}
+              >
+                {t.fuzzyEnabled}
               </button>
               <button
                 className={caseSensitive ? "toggle-btn active" : "toggle-btn"}
