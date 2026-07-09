@@ -1076,7 +1076,7 @@ function App() {
   const [filterVersion, setFilterVersion] = useState(0);
 
   const customTimeLabel = useMemo(() => {
-    if (timeFilter !== "custom" || showTimePopover) return null;
+    if (timeFilter !== "custom") return null;
     const from = customTimeFromRef.current;
     const to = customTimeToRef.current;
     if (!from && !to) return null;
@@ -1095,10 +1095,11 @@ function App() {
     const min = customSizeMinRef.current;
     const max = customSizeMaxRef.current;
     if (!min && !max) return null;
+    const fmtNum = (v: number) => Number.isInteger(v) ? v.toString() : v.toFixed(1);
     const fmt = (b: number) => {
-      if (b >= 1073741824) return `${(b/1073741824).toFixed(1)} GB`;
-      if (b >= 1048576) return `${(b/1048576).toFixed(1)} MB`;
-      if (b >= 1024) return `${(b/1024).toFixed(1)} KB`;
+      if (b >= 1073741824) return `${fmtNum(b/1073741824)} GB`;
+      if (b >= 1048576) return `${fmtNum(b/1048576)} MB`;
+      if (b >= 1024) return `${fmtNum(b/1024)} KB`;
       return `${b} B`;
     };
     let label = "";
@@ -3077,7 +3078,12 @@ function App() {
 
               {/* Time filter */}
               <div style={{ position: "relative", flex: "1 1 0", minWidth: 0 }}>
-                <select className="filter-select" style={{ width: "100%" }} value={timeSelectValue} onChange={(e) => {
+                <select className="filter-select" style={{ width: "100%" }} title={timeFilter === "custom" ? (customTimeLabel ?? t.timeCustom) : ({ all: t.timeAll, today: t.timeToday, week: t.timeWeek, month: t.timeMonth, year: t.timeYear } as Record<string, string>)[timeFilter]} value={timeSelectValue} onMouseDown={(e) => {
+                  // Allow re-selecting "custom" when already on custom with popover closed
+                  if (timeFilter === "custom" && !showTimePopover) {
+                    (e.currentTarget as HTMLSelectElement).value = "";
+                  }
+                }} onChange={(e) => {
                   const v = e.target.value;
                   if (v === "custom") {
                     // Sync calendar state to current filter
@@ -3089,7 +3095,7 @@ function App() {
                     } else { setCalTo(""); }
                     setCalSelecting("from");
                     setShowTimePopover(true); setShowSizePopover(false);
-                  } else {
+                  } else if (v !== "") {
                     setShowTimePopover(false);
                     customTimeFromRef.current = 0; customTimeToRef.current = 0;
                     setTimeFilter(v);
@@ -3168,12 +3174,17 @@ function App() {
               </div>
 
               {/* Size filter */}
-              <div style={{ position: "relative", flex: "1 1 0", minWidth: 0 }}>
-                <select className="filter-select" style={{ width: "100%" }} value={sizeSelectValue} onChange={(e) => {
+              <div style={{ position: "relative", flex: "0.7 1 0", minWidth: 0 }}>
+                <select className="filter-select" style={{ width: "100%" }} value={sizeSelectValue} onMouseDown={(e) => {
+                  // Allow re-selecting "custom" when already on custom with popover closed
+                  if (sizeFilter === "custom" && !showSizePopover) {
+                    (e.currentTarget as HTMLSelectElement).value = "";
+                  }
+                }} onChange={(e) => {
                   const v = e.target.value;
                   if (v === "custom") {
                     setShowSizePopover(true); setShowTimePopover(false);
-                  } else {
+                  } else if (v !== "") {
                     setShowSizePopover(false);
                     customSizeMinRef.current = 0; customSizeMaxRef.current = 0;
                     setSizeFilter(v);
@@ -3189,12 +3200,12 @@ function App() {
                   <div className="filter-popover" ref={sizePopoverRef} onClick={(e) => e.stopPropagation()}>
                     <div className="filter-popover-row">
                       <label>{t.sizeMin}</label>
-                      <input className="filter-input" type="number" min="0" placeholder="0"
+                      <input className="filter-input" type="text" inputMode="decimal" placeholder="0"
                         value={customSizeMin} onChange={(e) => setCustomSizeMinTemp(e.target.value)} />
                     </div>
                     <div className="filter-popover-row">
                       <label>{t.sizeMax}</label>
-                      <input className="filter-input" type="number" min="0" placeholder="100"
+                      <input className="filter-input" type="text" inputMode="decimal" placeholder="100"
                         value={customSizeMax} onChange={(e) => setCustomSizeMaxTemp(e.target.value)} />
                     </div>
                     <div className="filter-popover-row">
@@ -3221,7 +3232,7 @@ function App() {
               </div>
 
               {/* App filter */}
-              <div style={{ flex: "1 1 0", minWidth: 0 }}>
+              <div style={{ flex: "0.7 1 0", minWidth: 0 }}>
                 <select className="filter-select" style={{ width: "100%" }} value={appFilter} onChange={(e) => setAppFilter(e.target.value)}>
                 <option value="">{t.appFilterAll}</option>
                 {appFilterOptions.map((app) => (

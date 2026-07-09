@@ -574,7 +574,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--sp-sm);
-  flex: 1 1 auto;
+  flex: 1 1 200px;
   min-width: 200px;
 }
 
