@@ -370,10 +370,11 @@ impl Engine {
                 for vol_path in &new_volumes {
                     let name = vol_name(vol_path);
                     if let Some(tx) = get_tx(&event_tx) {
-                        let _ = tx.send(VolumeEvent::MountDetected {
-                            path: vol_path.clone(),
-                            name: name.clone(),
-                        });
+                        let _ = tx.send(serde_json::json!({
+                            "type": "mountDetected",
+                            "path": vol_path,
+                            "name": name
+                        }));
                     }
                     println!(
                         "[VolumePoller] detected new mount: {} — starting background index",
@@ -388,11 +389,12 @@ impl Engine {
                         let count = engine_bg.build_index(Some(vol.clone()), false, inc_dirs, false);
                         let total = db_bg.count_files();
                         if let Some(tx) = tx_bg {
-                            let _ = tx.send(VolumeEvent::IndexComplete {
-                                path: vol,
-                                file_count: count,
-                                total_indexed: total,
-                            });
+                            let _ = tx.send(serde_json::json!({
+                                "type": "indexComplete",
+                                "path": vol,
+                                "fileCount": count,
+                                "totalIndexed": total
+                            }));
                         }
                     });
                 }
@@ -412,11 +414,12 @@ impl Engine {
                     db.delete_under_root(std::path::Path::new(vol_path));
                     let total = db.count_files();
                     if let Some(tx) = get_tx(&event_tx) {
-                        let _ = tx.send(VolumeEvent::VolumeRemoved {
-                            path: vol_path.clone(),
-                            name: vol_name(vol_path),
-                            total_indexed: total,
-                        });
+                        let _ = tx.send(serde_json::json!({
+                            "type": "volumeRemoved",
+                            "path": vol_path.clone(),
+                            "name": vol_name(vol_path),
+                            "totalIndexed": total
+                        }));
                     }
                 }
 

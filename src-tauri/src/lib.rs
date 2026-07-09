@@ -2398,7 +2398,7 @@ pub fn run() {
             // The volume poller sends mount/unmount/index-complete events
             // which are forwarded to the frontend for status bar updates.
             {
-                let (tx, rx) = crossbeam::channel::unbounded::<machunt::VolumeEvent>();
+                let (tx, rx) = crossbeam::channel::unbounded::<serde_json::Value>();
                 let state = app.state::<AppState>();
                 state.engine.set_volume_event_tx(tx);
                 let app_handle = app.handle().clone();
