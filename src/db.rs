@@ -554,15 +554,6 @@ impl Db {
 
         tx.commit().unwrap();
         let _ = conn.execute_batch("PRAGMA synchronous=NORMAL;");
-
-        // Sync FTS: insert any files missing from FTS index (LEFT JOIN for speed).
-        let _ = conn.execute_batch(
-            "INSERT OR IGNORE INTO files_fts(rowid, name_lower)
-             SELECT f.id, f.name_lower
-             FROM files f LEFT JOIN files_fts ft ON f.id = ft.rowid
-             WHERE ft.rowid IS NULL
-             LIMIT 100000;",
-        );
     }
 
     pub fn count_files(&self) -> usize {
