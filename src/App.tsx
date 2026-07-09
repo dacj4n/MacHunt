@@ -50,10 +50,10 @@ const TAB_EXTENSIONS: Record<TabId, string[] | null> = {
   files: null,
   folders: null,
   documents: ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md"],
-  images: ["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "bmp"],
-  media: ["mp3", "m4a", "wav", "flac", "aac", "mp4", "mov", "avi", "mkv"],
-  code: ["rs", "ts", "tsx", "js", "jsx", "json", "toml", "yaml", "yml", "py", "go", "java", "c", "cpp", "h", "hpp", "html", "css"],
-  archives: ["zip", "rar", "7z", "tar", "gz", "bz2", "xz"],
+  images: ["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "bmp", "tif", "tiff", "eps", "raw", "cr2", "nef", "arw", "avif", "hdr", "exr", "ico", "icns"],
+  media: ["mp3", "m4a", "wav", "flac", "aac", "ogg", "mp4", "mov", "avi", "mkv", "webm", "wmv", "mts", "aiff"],
+  code: ["rs", "ts", "tsx", "js", "jsx", "json", "toml", "yaml", "yml", "py", "go", "java", "c", "cpp", "h", "hpp", "html", "css", "scss", "less", "vue", "rb", "php", "sql", "sh", "bash", "zsh", "swift", "m", "mm", "xml"],
+  archives: ["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "dmg", "iso"],
 };
 
 const I18N = {
@@ -553,56 +553,97 @@ function formatDate(ms?: number): string {
   return new Date(ms).toLocaleString();
 }
 
-// ── Extension → Application name mapping (frontend-side, matches Rust src/apps.rs) ──
+// ── Extension → Application name mapping (frontend-side) ──
 const EXT_APP_MAP: Record<string, string> = {
-  // Adobe
-  ai: "Adobe Illustrator", ait: "Adobe Illustrator",
-  psd: "Adobe Photoshop", psb: "Adobe Photoshop", psp: "Adobe Photoshop", aco: "Adobe Photoshop", abr: "Adobe Photoshop", pat: "Adobe Photoshop", csh: "Adobe Photoshop", grd: "Adobe Photoshop",
-  indd: "Adobe InDesign", indt: "Adobe InDesign", idml: "Adobe InDesign",
-  aep: "Adobe After Effects", aet: "Adobe After Effects",
-  prproj: "Adobe Premiere Pro", lrcat: "Adobe Lightroom", xmp: "Adobe Lightroom", dng: "Adobe Lightroom",
-  fla: "Adobe Animate", swf: "Flash",
+  // ═══ Adobe Creative Cloud ═══
+  ai: "Adobe Illustrator", ait: "Adobe Illustrator", eps: "Adobe Illustrator",
+  psd: "Adobe Photoshop", psb: "Adobe Photoshop", psp: "Adobe Photoshop",
+  aco: "Adobe Photoshop", abr: "Adobe Photoshop", pat: "Adobe Photoshop",
+  csh: "Adobe Photoshop", grd: "Adobe Photoshop", ase: "Adobe Photoshop",
+  indd: "Adobe InDesign", indt: "Adobe InDesign", idml: "Adobe InDesign", indb: "Adobe InDesign",
+  aep: "Adobe After Effects", aet: "Adobe After Effects", aepx: "Adobe After Effects",
+  prproj: "Adobe Premiere Pro", prel: "Adobe Premiere Pro",
+  lrcat: "Adobe Lightroom", xmp: "Adobe Lightroom", lrtemplate: "Adobe Lightroom",
+  dng: "Adobe Lightroom",
+  fla: "Adobe Animate", xfl: "Adobe Animate",
+  swf: "Adobe Flash",
   xd: "Adobe XD",
-  // Sketch / Figma
-  sketch: "Sketch", fig: "Figma", jam: "Figma",
-  // Affinity
+  pdf: "Adobe Acrobat",
+  // ═══ Apple 专业应用 ═══
+  fcpxml: "Final Cut Pro", fcpx: "Final Cut Pro",
+  aupreset: "Logic Pro",
+  band: "GarageBand",
+  // ═══ Sketch / Figma ═══
+  sketch: "Sketch",
+  fig: "Figma", jam: "Figma",
+  // ═══ Affinity Suite ═══
   afdesign: "Affinity Designer", afphoto: "Affinity Photo", afpub: "Affinity Publisher",
-  // Corel
-  cdr: "CorelDRAW", cdt: "CorelDRAW",
-  // Pixelmator
+  // ═══ Corel ═══
+  cdr: "CorelDRAW", cdt: "CorelDRAW", cmx: "CorelDRAW",
+  // ═══ 像素画 ═══
   pxm: "Pixelmator Pro",
-  // 3D
-  blend: "Blender", c4d: "Cinema 4D", skp: "SketchUp",
-  max: "3ds Max", "3ds": "3ds Max", ma: "Maya", mb: "Maya",
-  obj: "Preview", fbx: "Preview", stl: "Preview", glb: "Preview", usdz: "Preview",
-  // Font
-  ttf: "Font Book", otf: "Font Book", woff: "Font Book", woff2: "Font Book",
-  // Common image
-  jpg: "Preview", jpeg: "Preview", png: "Preview", gif: "Preview", webp: "Preview",
-  bmp: "Preview", heic: "Preview", tif: "Preview", tiff: "Preview", ico: "Preview", icns: "Preview",
-  eps: "Preview", svg: "Preview", svgz: "Preview",
-  raw: "Preview", cr2: "Preview", cr3: "Preview", nef: "Preview",
-  arw: "Preview", orf: "Preview", avif: "Preview", hdr: "Preview", exr: "Preview",
-  // Audio/Video
+  aseprite: "Aseprite",
+  // ═══ DaVinci Resolve ═══
+  drp: "DaVinci Resolve",
+  // ═══ Capture One ═══
+  cos: "Capture One", eip: "Capture One",
+  // ═══ 3D / CAD ═══
+  blend: "Blender", blend1: "Blender",
+  c4d: "Cinema 4D",
+  skp: "SketchUp",
+  max: "3ds Max", "3ds": "3ds Max",
+  ma: "Maya", mb: "Maya",
+  fbx: "预览", obj: "预览", stl: "预览", glb: "预览", gltf: "预览",
+  usdz: "预览", usd: "预览", usda: "预览", usdc: "预览",
+  // ═══ 字体 ═══
+  ttf: "字体册", otf: "字体册", woff: "字体册", woff2: "字体册",
+  // ═══ 通用图像 ═══
+  jpg: "预览", jpeg: "预览", jpe: "预览",
+  png: "预览", gif: "预览", webp: "预览",
+  bmp: "预览", heic: "预览", heif: "预览",
+  tif: "预览", tiff: "预览",
+  ico: "预览", icns: "预览",
+  svg: "预览", svgz: "预览",
+  raw: "预览", cr2: "预览", cr3: "预览", crw: "预览",
+  nef: "预览", nrw: "预览",
+  arw: "预览", srf: "预览", sr2: "预览",
+  orf: "预览", rw2: "预览",
+  pef: "预览", raf: "预览",
+  dcr: "预览", kdc: "预览", mrw: "预览",
+  "3fr": "预览", fff: "预览",
+  avif: "预览", hdr: "预览", exr: "预览",
+  // ═══ 音视频 ═══
   mp4: "QuickTime Player", m4v: "QuickTime Player", mov: "QuickTime Player",
   avi: "QuickTime Player", mkv: "QuickTime Player", webm: "QuickTime Player",
-  mp3: "Music", m4a: "Music", wav: "Music", aiff: "Music", flac: "Music", aac: "Music", ogg: "Music",
-  // Documents
-  pdf: "Preview", doc: "Microsoft Word", docx: "Microsoft Word",
-  xls: "Microsoft Excel", xlsx: "Microsoft Excel", csv: "Microsoft Excel",
-  ppt: "Microsoft PowerPoint", pptx: "Microsoft PowerPoint",
-  txt: "TextEdit", md: "TextEdit", rtf: "TextEdit",
-  pages: "Pages", numbers: "Numbers", key: "Keynote",
-  // Code / Web
-  html: "Safari", htm: "Safari", css: "Safari", xml: "Safari",
-  rs: "Xcode", swift: "Xcode", c: "Xcode", cpp: "Xcode", h: "Xcode", hpp: "Xcode", m: "Xcode", mm: "Xcode",
-  ts: "VS Code", tsx: "VS Code", js: "VS Code", jsx: "VS Code", json: "VS Code", toml: "VS Code",
-  yaml: "VS Code", yml: "VS Code", py: "VS Code", go: "VS Code", java: "VS Code",
-  sh: "Terminal", bash: "Terminal", zsh: "Terminal",
-  // Archives
-  zip: "Archive Utility", rar: "Archive Utility", "7z": "Archive Utility",
-  tar: "Archive Utility", gz: "Archive Utility", bz2: "Archive Utility", xz: "Archive Utility",
-  dmg: "Disk Utility",
+  wmv: "QuickTime Player", flv: "QuickTime Player",
+  mts: "QuickTime Player", m2ts: "QuickTime Player",
+  mp3: "音乐", m4a: "音乐", m4r: "音乐",
+  wav: "音乐", aiff: "音乐", aif: "音乐",
+  flac: "音乐", aac: "音乐", ogg: "音乐",
+  wma: "音乐", caf: "音乐",
+  // ═══ 办公文档 ═══
+  doc: "Microsoft Word", docx: "Microsoft Word", dot: "Microsoft Word", dotx: "Microsoft Word",
+  xls: "Microsoft Excel", xlsx: "Microsoft Excel", xlt: "Microsoft Excel", xltx: "Microsoft Excel",
+  csv: "Microsoft Excel",
+  ppt: "Microsoft PowerPoint", pptx: "Microsoft PowerPoint", pot: "Microsoft PowerPoint", potx: "Microsoft PowerPoint",
+  pages: "Pages", numbers: "Numbers", key: "Keynote", kth: "Keynote",
+  txt: "文本编辑", md: "文本编辑", rtf: "文本编辑", rtfd: "文本编辑",
+  // ═══ 代码 / Web ═══
+  html: "Safari 浏览器", htm: "Safari 浏览器", css: "Safari 浏览器", xml: "Safari 浏览器",
+  swift: "Xcode", c: "Xcode", cpp: "Xcode", h: "Xcode", hpp: "Xcode", m: "Xcode", mm: "Xcode",
+  playground: "Xcode", xcodeproj: "Xcode", xcworkspace: "Xcode",
+  storyboard: "Xcode", xib: "Xcode", plist: "Xcode",
+  rs: "VS Code", ts: "VS Code", tsx: "VS Code", js: "VS Code", jsx: "VS Code",
+  json: "VS Code", toml: "VS Code", yaml: "VS Code", yml: "VS Code",
+  py: "VS Code", go: "VS Code", java: "VS Code", rb: "VS Code", php: "VS Code", sql: "VS Code",
+  scss: "VS Code", less: "VS Code", sass: "VS Code", vue: "VS Code", svelte: "VS Code",
+  sh: "终端", bash: "终端", zsh: "终端", fish: "终端", command: "终端",
+  // ═══ 压缩 / 磁盘 ═══
+  zip: "归档实用工具", rar: "归档实用工具", "7z": "归档实用工具",
+  tar: "归档实用工具", gz: "归档实用工具", bz2: "归档实用工具", xz: "归档实用工具",
+  tgz: "归档实用工具", tbz2: "归档实用工具",
+  dmg: "磁盘工具", iso: "磁盘工具",
+  sparseimage: "磁盘工具", sparsebundle: "磁盘工具",
 };
 
 function appForExt(ext: string): string {
