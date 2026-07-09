@@ -721,6 +721,55 @@ body {
     var(--shadow-highlight);
 }
 
+/* ===== Toolbar Separator & Filter Dropdowns ===== */
+.toolbar-sep {
+  width: 1px;
+  height: 24px;
+  background: var(--pn-outline-variant);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.filter-select {
+  height: 32px;
+  padding: 0 28px 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: var(--pn-surface-container);
+  color: var(--pn-on-surface);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  box-shadow: var(--shadow-depth), var(--shadow-highlight);
+  transition: all var(--t-speed) var(--t-ease);
+  flex-shrink: 0;
+}
+
+.filter-select:hover {
+  background-color: var(--pn-surface-container-high);
+}
+
+.filter-select:focus-visible {
+  outline: 2px solid var(--pn-primary);
+  outline-offset: 1px;
+}
+
+/* Even tab widths */
+.filter-chips {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 6px;
+}
+
+.filter-chips .chip-btn {
+  justify-content: center;
+}
+
 /* ===== RESULTS TABLE ===== */
 .results-area {
   flex: 1 1 auto;

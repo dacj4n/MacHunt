@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
-type TabId = "all" | "files" | "folders" | "documents" | "images" | "media" | "code" | "archives" | "applications";
+type TabId = "all" | "files" | "folders" | "documents" | "images" | "media" | "code" | "archives";
 type SortKey = "name" | "path" | "type" | "size" | "modified";
 type ColumnKey = "name" | "path" | "type" | "size" | "modified";
 type ThemeMode = "system" | "light" | "dark";
@@ -40,7 +40,7 @@ const FUZZY_ENABLED_STORAGE_KEY = "machunt.search.fuzzy_enabled";
 const PINNED_STORAGE_KEY = "machunt.pinned.items";
 const EVENT_OPEN_SETTINGS = "app://open-settings";
 const EVENT_FOCUS_SEARCH = "app://focus-search";
-const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives", "applications"];
+const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives"];
 
 const TAB_EXTENSIONS: Record<TabId, string[] | null> = {
   all: null,
@@ -51,7 +51,6 @@ const TAB_EXTENSIONS: Record<TabId, string[] | null> = {
   media: ["mp3", "m4a", "wav", "flac", "aac", "mp4", "mov", "avi", "mkv"],
   code: ["rs", "ts", "tsx", "js", "jsx", "json", "toml", "yaml", "yml", "py", "go", "java", "c", "cpp", "h", "hpp", "html", "css"],
   archives: ["zip", "rar", "7z", "tar", "gz", "bz2", "xz"],
-  applications: null,
 };
 
 const I18N = {
@@ -76,6 +75,19 @@ const I18N = {
     regexEnabled: "正则",
     fuzzyEnabled: "模糊",
     caseSensitive: "区分大小写",
+    timeFilter: "时间",
+    timeAll: "所有时间",
+    timeToday: "今天",
+    timeWeek: "一周内",
+    timeMonth: "一月内",
+    timeYear: "一年内",
+    sizeFilter: "大小",
+    sizeAll: "所有大小",
+    sizeKB: "小于 1 MB",
+    sizeMB: "1 MB ~ 100 MB",
+    sizeGB: "大于 100 MB",
+    appFilter: "应用",
+    appFilterAll: "所有应用",
     build: "构建",
     rebuild: "重建",
     buildStatusBuilding: "正在构建索引...",
@@ -95,10 +107,7 @@ const I18N = {
     tab_media: "音视频",
     tab_code: "代码",
     tab_archives: "压缩包",
-    tab_applications: "应用程序",
-    appGroup: "按应用程序分组",
     appGroupDesc: "文件将按默认打开应用程序分组显示。",
-    appGroupOther: "其他",
     sort: "排序",
     sort_name: "名称",
     sort_size: "大小",
@@ -230,6 +239,19 @@ const I18N = {
     regexEnabled: "Regex",
     fuzzyEnabled: "Fuzzy",
     caseSensitive: "Case Sensitive",
+    timeFilter: "Time",
+    timeAll: "Any Time",
+    timeToday: "Today",
+    timeWeek: "This Week",
+    timeMonth: "This Month",
+    timeYear: "This Year",
+    sizeFilter: "Size",
+    sizeAll: "Any Size",
+    sizeKB: "Under 1 MB",
+    sizeMB: "1 MB – 100 MB",
+    sizeGB: "Over 100 MB",
+    appFilter: "App",
+    appFilterAll: "Any App",
     build: "Build",
     rebuild: "Rebuild",
     buildStatusBuilding: "Building index...",
@@ -250,9 +272,7 @@ const I18N = {
     tab_code: "Code",
     tab_archives: "Archives",
     tab_applications: "Applications",
-    appGroup: "Group by Application",
     appGroupDesc: "Files are grouped by their default opening application.",
-    appGroupOther: "Other",
     sort: "Sort",
     sort_name: "Name",
     sort_size: "Size",
@@ -587,21 +607,6 @@ function appForExt(ext: string): string {
   return EXT_APP_MAP[ext.toLowerCase()] || "Other";
 }
 
-type AppSection = { app: string; items: SearchResultItem[] };
-function groupItemsByApp(items: SearchResultItem[]): AppSection[] {
-  const map = new Map<string, SearchResultItem[]>();
-  for (const item of items) {
-    if (item.isDir) continue;
-    const ext = extensionOf(item.name);
-    const app = appForExt(ext);
-    if (!map.has(app)) map.set(app, []);
-    map.get(app)!.push(item);
-  }
-  // Sort alphabetically, then by count descending
-  return Array.from(map.entries(), ([app, appItems]) => ({ app, items: appItems }))
-    .sort((a, b) => b.items.length - a.items.length || a.app.localeCompare(b.app));
-}
-
 function iconToken(item: SearchResultItem): string {
   if (item.isDir) {
     return "folder";
@@ -709,7 +714,7 @@ function buildSearchRequest(
   sortAscending: boolean
 ) {
   const includeFiles = tab !== "folders";
-  const includeDirs = tab === "all" || tab === "folders" || tab === "applications";
+  const includeDirs = tab === "all" || tab === "folders";
   const extensions = TAB_EXTENSIONS[tab];
   const mode = fuzzyEnabled ? "Fuzzy" : regexEnabled ? "Pattern" : "Substring";
   return {
@@ -990,6 +995,9 @@ function App() {
   const [caseSensitive, setCaseSensitive] = useState(() => loadStoredCaseSensitive() ?? false);
   const [fuzzyEnabled, setFuzzyEnabled] = useState(() => loadStoredFuzzyEnabled() ?? false);
   const [activeTab, setActiveTab] = useState<TabId>("all");
+  const [timeFilter, setTimeFilter] = useState("all"); // all | today | week | month | year
+  const [sizeFilter, setSizeFilter] = useState("all"); // all | kb | mb | gb
+  const [appFilter, setAppFilter] = useState(""); // "" = all, or app name
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAscending, setSortAscending] = useState(true);
 
@@ -1094,9 +1102,48 @@ function App() {
   const formatShownItems = (count: number): string => fmt(t.shownItems, { count: count.toLocaleString() });
   const ROW_HEIGHT = 46;
   const VISIBLE_BUFFER = 10;
+  // Apply time/size/app dropdown filters on top of the existing items
+  const filteredItems = useMemo(() => {
+    let list = items;
+    // Time filter
+    if (timeFilter !== "all") {
+      const now = Date.now();
+      const cutoff = now - ({
+        today: 86400000,
+        week: 604800000,
+        month: 2592000000,
+        year: 31536000000,
+      }[timeFilter] ?? 0);
+      list = list.filter((item) => {
+        const m = item.modifiedUnixMs;
+        return m != null && m >= cutoff;
+      });
+    }
+    // Size filter
+    if (sizeFilter !== "all") {
+      list = list.filter((item) => {
+        const b = item.sizeBytes;
+        if (b == null) return false;
+        switch (sizeFilter) {
+          case "kb": return b < 1048576;           // < 1 MB
+          case "mb": return b >= 1048576 && b < 104857600; // 1 MB – 100 MB
+          case "gb": return b >= 104857600;         // > 100 MB
+          default: return true;
+        }
+      });
+    }
+    // App filter (by file extension → app mapping)
+    if (appFilter !== "") {
+      list = list.filter((item) => {
+        if (item.isDir) return false;
+        return appForExt(extensionOf(item.name)) === appFilter;
+      });
+    }
+    return list;
+  }, [items, timeFilter, sizeFilter, appFilter]);
   const visibleStart = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VISIBLE_BUFFER);
-  const visibleEnd = Math.min(items.length, visibleStart + Math.ceil(window.innerHeight / ROW_HEIGHT) + VISIBLE_BUFFER * 2);
-  const visibleItems = items.slice(visibleStart, visibleEnd);
+  const visibleEnd = Math.min(filteredItems.length, visibleStart + Math.ceil(window.innerHeight / ROW_HEIGHT) + VISIBLE_BUFFER * 2);
+  const visibleItems = filteredItems.slice(visibleStart, visibleEnd);
 
   const sortedPinnedItems = useMemo(() => {
     const sorted = [...pinnedItems];
@@ -1129,21 +1176,8 @@ function App() {
     });
     return sorted;
   }, [pinnedItems, sortKey, sortAscending]);
-  const appSections = useMemo(
-    () => (activeTab === "applications" ? groupItemsByApp(items) : []),
-    [items, activeTab]
-  );
-  const [collapsedApps, setCollapsedApps] = useState<Set<string>>(new Set());
-  const toggleAppGroup = (app: string) => {
-    setCollapsedApps((prev) => {
-      const next = new Set(prev);
-      if (next.has(app)) next.delete(app);
-      else next.add(app);
-      return next;
-    });
-  };
   const topSpacerHeight = visibleStart * ROW_HEIGHT;
-  const bottomSpacerHeight = (items.length - visibleEnd) * ROW_HEIGHT;
+  const bottomSpacerHeight = (filteredItems.length - visibleEnd) * ROW_HEIGHT;
 
   const clearOpenWithCloseTimer = () => {
     if (openWithCloseTimerRef.current !== null) {
@@ -2618,6 +2652,14 @@ function App() {
     };
   }, [activeView, contextMenu, selectedPathsInOrder]);
 
+  const appFilterOptions = useMemo(() => {
+    const apps = new Set<string>();
+    for (const item of items) {
+      if (!item.isDir) apps.add(appForExt(extensionOf(item.name)));
+    }
+    return Array.from(apps).sort();
+  }, [items]);
+
   const settingsThemeOptions: Array<{ mode: ThemeMode; title: string; description: string }> = [
     { mode: "system", title: t.themeSystemTitle, description: t.themeSystemDesc },
     { mode: "light", title: t.themeLightTitle, description: t.themeLightDesc },
@@ -2630,7 +2672,7 @@ function App() {
   ];
 
   const TAB_ICONS: Record<TabId, string> = {
-    all: "\u229E", files: "\u25A3", folders: "\u25A4", documents: "\u2261", images: "\u25C9", media: "\u266A", code: "\u2329\u232A", archives: "\u25A0", applications: "\u2606"
+    all: "\u229E", files: "\u25A3", folders: "\u25A4", documents: "\u2261", images: "\u25C9", media: "\u266A", code: "\u2329\u232A", archives: "\u25A0"
   };
 
   const scrollTimers = useRef(new Map<HTMLElement, ReturnType<typeof setTimeout>>());
@@ -2841,78 +2883,41 @@ function App() {
               >
                 Aa
               </button>
+
+              <span className="toolbar-sep" />
+
+              {/* Time filter */}
+              <select className="filter-select" value={timeFilter} onChange={(e) => setTimeFilter(e.target.value)}>
+                <option value="all">{t.timeAll}</option>
+                <option value="today">{t.timeToday}</option>
+                <option value="week">{t.timeWeek}</option>
+                <option value="month">{t.timeMonth}</option>
+                <option value="year">{t.timeYear}</option>
+              </select>
+
+              {/* Size filter */}
+              <select className="filter-select" value={sizeFilter} onChange={(e) => setSizeFilter(e.target.value)}>
+                <option value="all">{t.sizeAll}</option>
+                <option value="kb">{t.sizeKB}</option>
+                <option value="mb">{t.sizeMB}</option>
+                <option value="gb">{t.sizeGB}</option>
+              </select>
+
+              {/* App filter */}
+              <select className="filter-select" value={appFilter} onChange={(e) => setAppFilter(e.target.value)}>
+                <option value="">{t.appFilterAll}</option>
+                {appFilterOptions.map((app) => (
+                  <option key={app} value={app}>{app}</option>
+                ))}
+              </select>
             </div>
 
             <div className="results-area" ref={tableShellRef}>
-              {items.length === 0 && activeTab !== "applications" ? (
+              {filteredItems.length === 0 ? (
                 <div className="empty-state">
                   {query.trim().length === 0
                     ? t.emptyTypeHint
                     : t.emptyNoMatch}
-                </div>
-              ) : activeTab === "applications" && appSections.length === 0 ? (
-                <div className="empty-state">
-                  {query.trim().length === 0
-                    ? t.emptyTypeHint
-                    : t.emptyNoMatch}
-                </div>
-              ) : activeTab === "applications" ? (
-                <div className="table-body custom-scrollbar app-grouped-view" ref={tableBodyRef}
-                  onScroll={(e) => { setScrollTop((e.target as HTMLDivElement).scrollTop); handleScrollbarScroll(e); }}>
-                  {appSections.map((section) => {
-                    const collapsed = collapsedApps.has(section.app);
-                    return (
-                      <div key={section.app} className="app-group">
-                        <button
-                          className="app-group-header"
-                          onClick={() => toggleAppGroup(section.app)}
-                        >
-                          <span className="app-group-caret">{collapsed ? "\u25B6" : "\u25BC"}</span>
-                          <span className="app-group-name">{section.app}</span>
-                          <span className="app-group-count">{section.items.length} 项</span>
-                        </button>
-                        {!collapsed && section.items.map((item) => {
-                          const token = iconToken(item);
-                          return (
-                            <article
-                              key={item.path}
-                              ref={(element) => {
-                                if (element) rowRefs.current.set(item.path, element);
-                                else rowRefs.current.delete(item.path);
-                              }}
-                              className={selectedItemPathSet.has(item.path) ? "result-row selected" : "result-row"}
-                              style={{ gridTemplateColumns }}
-                              onMouseDown={(event) => { if (event.button === 0) blurActiveEditable(); }}
-                              onClick={(event) => handleRowClick(event, item, -1)}
-                              onDoubleClick={() => void openResult(item.path)}
-                              onContextMenu={(event) => openResultContextMenu(event, item)}
-                            >
-                              <div className="cell name-cell">
-                                <span className={`file-icon ${token}`}>{iconGlyph(token)}</span>
-                                <span className="name-text"
-                                  onMouseEnter={(event) => setCellPreviewTooltip(event, item.name)}
-                                  onMouseLeave={(event) => event.currentTarget.removeAttribute("title")}
-                                >{item.name}</span>
-                              </div>
-                              <div className="cell path-cell"
-                                onMouseEnter={(event) => setCellPreviewTooltip(event, item.parent)}
-                                onMouseLeave={(event) => event.currentTarget.removeAttribute("title")}
-                              >{item.parent}</div>
-                              <div className="cell type-cell">{typeLabel(item, t.typeFolder, t.typeFile)}</div>
-                              <div className="cell size-cell">{formatBytes(item.sizeBytes)}</div>
-                              <div className="cell date-cell">{formatDate(item.modifiedUnixMs)}</div>
-                              <button className="term-btn" onClick={(e) => { e.stopPropagation(); void invoke("open_in_default_terminal", { path: item.path }); }} title={t.openInDefaultTerminal}
-                              >&gt;_</button>
-                              <button className={`pin-btn ${isPinned(item.path) ? "pinned" : ""}`}
-                                onClick={(e) => { e.stopPropagation(); togglePin(item); }}
-                                title={isPinned(item.path) ? t.menuUnpin : t.menuPin}
-                              >{isPinned(item.path) ? "★" : "☆"}</button>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
                 </div>
               ) : (
                 <>
