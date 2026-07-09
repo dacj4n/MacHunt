@@ -1616,13 +1616,14 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!isPathDropdownOpen) {
+      return;
+    }
     let mounted = true;
     const loadPathSuggestions = async () => {
       try {
         const suggestions = await invoke<string[]>("list_path_suggestions");
-        if (!mounted) {
-          return;
-        }
+        if (!mounted) return;
         setPathSuggestions(suggestions);
       } catch {
         // Keep path filter usable even if suggestion load fails.
@@ -1632,7 +1633,7 @@ function App() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [isPathDropdownOpen]);
 
   const fitColumnsToContainer = useCallback(() => {
     const body = tableBodyRef.current;
