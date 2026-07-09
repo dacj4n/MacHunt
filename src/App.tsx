@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
-type TabId = "all" | "files" | "folders" | "documents" | "images" | "media" | "code" | "archives";
+type TabId = "all" | "files" | "folders" | "documents" | "images" | "media" | "code" | "archives" | "applications";
 type SortKey = "name" | "path" | "type" | "size" | "modified";
 type ColumnKey = "name" | "path" | "type" | "size" | "modified";
 type ThemeMode = "system" | "light" | "dark";
@@ -39,7 +39,7 @@ const CASE_SENSITIVE_STORAGE_KEY = "machunt.search.case_sensitive";
 const PINNED_STORAGE_KEY = "machunt.pinned.items";
 const EVENT_OPEN_SETTINGS = "app://open-settings";
 const EVENT_FOCUS_SEARCH = "app://focus-search";
-const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives"];
+const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives", "applications"];
 
 const TAB_EXTENSIONS: Record<TabId, string[] | null> = {
   all: null,
@@ -50,6 +50,7 @@ const TAB_EXTENSIONS: Record<TabId, string[] | null> = {
   media: ["mp3", "m4a", "wav", "flac", "aac", "mp4", "mov", "avi", "mkv"],
   code: ["rs", "ts", "tsx", "js", "jsx", "json", "toml", "yaml", "yml", "py", "go", "java", "c", "cpp", "h", "hpp", "html", "css"],
   archives: ["zip", "rar", "7z", "tar", "gz", "bz2", "xz"],
+  applications: null,
 };
 
 const I18N = {
@@ -92,6 +93,10 @@ const I18N = {
     tab_media: "音视频",
     tab_code: "代码",
     tab_archives: "压缩包",
+    tab_applications: "应用程序",
+    appGroup: "按应用程序分组",
+    appGroupDesc: "文件将按默认打开应用程序分组显示。",
+    appGroupOther: "其他",
     sort: "排序",
     sort_name: "名称",
     sort_size: "大小",
@@ -241,6 +246,10 @@ const I18N = {
     tab_media: "Media",
     tab_code: "Code",
     tab_archives: "Archives",
+    tab_applications: "Applications",
+    appGroup: "Group by Application",
+    appGroupDesc: "Files are grouped by their default opening application.",
+    appGroupOther: "Other",
     sort: "Sort",
     sort_name: "Name",
     sort_size: "Size",
@@ -518,6 +527,78 @@ function formatDate(ms?: number): string {
   return new Date(ms).toLocaleString();
 }
 
+// ── Extension → Application name mapping (frontend-side, matches Rust src/apps.rs) ──
+const EXT_APP_MAP: Record<string, string> = {
+  // Adobe
+  ai: "Adobe Illustrator", ait: "Adobe Illustrator",
+  psd: "Adobe Photoshop", psb: "Adobe Photoshop", psp: "Adobe Photoshop", aco: "Adobe Photoshop", abr: "Adobe Photoshop", pat: "Adobe Photoshop", csh: "Adobe Photoshop", grd: "Adobe Photoshop",
+  indd: "Adobe InDesign", indt: "Adobe InDesign", idml: "Adobe InDesign",
+  aep: "Adobe After Effects", aet: "Adobe After Effects",
+  prproj: "Adobe Premiere Pro", lrcat: "Adobe Lightroom", xmp: "Adobe Lightroom", dng: "Adobe Lightroom",
+  fla: "Adobe Animate", swf: "Flash",
+  xd: "Adobe XD",
+  // Sketch / Figma
+  sketch: "Sketch", fig: "Figma", jam: "Figma",
+  // Affinity
+  afdesign: "Affinity Designer", afphoto: "Affinity Photo", afpub: "Affinity Publisher",
+  // Corel
+  cdr: "CorelDRAW", cdt: "CorelDRAW",
+  // Pixelmator
+  pxm: "Pixelmator Pro",
+  // 3D
+  blend: "Blender", c4d: "Cinema 4D", skp: "SketchUp",
+  max: "3ds Max", "3ds": "3ds Max", ma: "Maya", mb: "Maya",
+  obj: "Preview", fbx: "Preview", stl: "Preview", glb: "Preview", usdz: "Preview",
+  // Font
+  ttf: "Font Book", otf: "Font Book", woff: "Font Book", woff2: "Font Book",
+  // Common image
+  jpg: "Preview", jpeg: "Preview", png: "Preview", gif: "Preview", webp: "Preview",
+  bmp: "Preview", heic: "Preview", tif: "Preview", tiff: "Preview", ico: "Preview", icns: "Preview",
+  eps: "Preview", svg: "Preview", svgz: "Preview",
+  raw: "Preview", cr2: "Preview", cr3: "Preview", nef: "Preview",
+  arw: "Preview", orf: "Preview", avif: "Preview", hdr: "Preview", exr: "Preview",
+  // Audio/Video
+  mp4: "QuickTime Player", m4v: "QuickTime Player", mov: "QuickTime Player",
+  avi: "QuickTime Player", mkv: "QuickTime Player", webm: "QuickTime Player",
+  mp3: "Music", m4a: "Music", wav: "Music", aiff: "Music", flac: "Music", aac: "Music", ogg: "Music",
+  // Documents
+  pdf: "Preview", doc: "Microsoft Word", docx: "Microsoft Word",
+  xls: "Microsoft Excel", xlsx: "Microsoft Excel", csv: "Microsoft Excel",
+  ppt: "Microsoft PowerPoint", pptx: "Microsoft PowerPoint",
+  txt: "TextEdit", md: "TextEdit", rtf: "TextEdit",
+  pages: "Pages", numbers: "Numbers", key: "Keynote",
+  // Code / Web
+  html: "Safari", htm: "Safari", css: "Safari", xml: "Safari",
+  rs: "Xcode", swift: "Xcode", c: "Xcode", cpp: "Xcode", h: "Xcode", hpp: "Xcode", m: "Xcode", mm: "Xcode",
+  ts: "VS Code", tsx: "VS Code", js: "VS Code", jsx: "VS Code", json: "VS Code", toml: "VS Code",
+  yaml: "VS Code", yml: "VS Code", py: "VS Code", go: "VS Code", java: "VS Code",
+  sh: "Terminal", bash: "Terminal", zsh: "Terminal",
+  // Archives
+  zip: "Archive Utility", rar: "Archive Utility", "7z": "Archive Utility",
+  tar: "Archive Utility", gz: "Archive Utility", bz2: "Archive Utility", xz: "Archive Utility",
+  dmg: "Disk Utility",
+};
+
+function appForExt(ext: string): string {
+  if (!ext) return "Other";
+  return EXT_APP_MAP[ext.toLowerCase()] || "Other";
+}
+
+type AppSection = { app: string; items: SearchResultItem[] };
+function groupItemsByApp(items: SearchResultItem[]): AppSection[] {
+  const map = new Map<string, SearchResultItem[]>();
+  for (const item of items) {
+    if (item.isDir) continue;
+    const ext = extensionOf(item.name);
+    const app = appForExt(ext);
+    if (!map.has(app)) map.set(app, []);
+    map.get(app)!.push(item);
+  }
+  // Sort alphabetically, then by count descending
+  return Array.from(map.entries(), ([app, appItems]) => ({ app, items: appItems }))
+    .sort((a, b) => b.items.length - a.items.length || a.app.localeCompare(b.app));
+}
+
 function iconToken(item: SearchResultItem): string {
   if (item.isDir) {
     return "folder";
@@ -624,7 +705,7 @@ function buildSearchRequest(
   sortAscending: boolean
 ) {
   const includeFiles = tab !== "folders";
-  const includeDirs = tab === "all" || tab === "folders";
+  const includeDirs = tab === "all" || tab === "folders" || tab === "applications";
   const extensions = TAB_EXTENSIONS[tab];
   return {
     request: {
@@ -1032,6 +1113,19 @@ function App() {
     });
     return sorted;
   }, [pinnedItems, sortKey, sortAscending]);
+  const appSections = useMemo(
+    () => (activeTab === "applications" ? groupItemsByApp(items) : []),
+    [items, activeTab]
+  );
+  const [collapsedApps, setCollapsedApps] = useState<Set<string>>(new Set());
+  const toggleAppGroup = (app: string) => {
+    setCollapsedApps((prev) => {
+      const next = new Set(prev);
+      if (next.has(app)) next.delete(app);
+      else next.add(app);
+      return next;
+    });
+  };
   const topSpacerHeight = visibleStart * ROW_HEIGHT;
   const bottomSpacerHeight = (items.length - visibleEnd) * ROW_HEIGHT;
 
@@ -2515,7 +2609,7 @@ function App() {
   ];
 
   const TAB_ICONS: Record<TabId, string> = {
-    all: "\u229E", files: "\u25A3", folders: "\u25A4", documents: "\u2261", images: "\u25C9", media: "\u266A", code: "\u2329\u232A", archives: "\u25A0"
+    all: "\u229E", files: "\u25A3", folders: "\u25A4", documents: "\u2261", images: "\u25C9", media: "\u266A", code: "\u2329\u232A", archives: "\u25A0", applications: "\u2606"
   };
 
   const scrollTimers = useRef(new Map<HTMLElement, ReturnType<typeof setTimeout>>());
@@ -2716,11 +2810,75 @@ function App() {
             </div>
 
             <div className="results-area" ref={tableShellRef}>
-              {items.length === 0 ? (
+              {items.length === 0 && activeTab !== "applications" ? (
                 <div className="empty-state">
                   {query.trim().length === 0
                     ? t.emptyTypeHint
                     : t.emptyNoMatch}
+                </div>
+              ) : activeTab === "applications" && appSections.length === 0 ? (
+                <div className="empty-state">
+                  {query.trim().length === 0
+                    ? t.emptyTypeHint
+                    : t.emptyNoMatch}
+                </div>
+              ) : activeTab === "applications" ? (
+                <div className="table-body custom-scrollbar app-grouped-view" ref={tableBodyRef}
+                  onScroll={(e) => { setScrollTop((e.target as HTMLDivElement).scrollTop); handleScrollbarScroll(e); }}>
+                  {appSections.map((section) => {
+                    const collapsed = collapsedApps.has(section.app);
+                    return (
+                      <div key={section.app} className="app-group">
+                        <button
+                          className="app-group-header"
+                          onClick={() => toggleAppGroup(section.app)}
+                        >
+                          <span className="app-group-caret">{collapsed ? "\u25B6" : "\u25BC"}</span>
+                          <span className="app-group-name">{section.app}</span>
+                          <span className="app-group-count">{section.items.length} 项</span>
+                        </button>
+                        {!collapsed && section.items.map((item) => {
+                          const token = iconToken(item);
+                          return (
+                            <article
+                              key={item.path}
+                              ref={(element) => {
+                                if (element) rowRefs.current.set(item.path, element);
+                                else rowRefs.current.delete(item.path);
+                              }}
+                              className={selectedItemPathSet.has(item.path) ? "result-row selected" : "result-row"}
+                              style={{ gridTemplateColumns }}
+                              onMouseDown={(event) => { if (event.button === 0) blurActiveEditable(); }}
+                              onClick={(event) => handleRowClick(event, item, -1)}
+                              onDoubleClick={() => void openResult(item.path)}
+                              onContextMenu={(event) => openResultContextMenu(event, item)}
+                            >
+                              <div className="cell name-cell">
+                                <span className={`file-icon ${token}`}>{iconGlyph(token)}</span>
+                                <span className="name-text"
+                                  onMouseEnter={(event) => setCellPreviewTooltip(event, item.name)}
+                                  onMouseLeave={(event) => event.currentTarget.removeAttribute("title")}
+                                >{item.name}</span>
+                              </div>
+                              <div className="cell path-cell"
+                                onMouseEnter={(event) => setCellPreviewTooltip(event, item.parent)}
+                                onMouseLeave={(event) => event.currentTarget.removeAttribute("title")}
+                              >{item.parent}</div>
+                              <div className="cell type-cell">{typeLabel(item, t.typeFolder, t.typeFile)}</div>
+                              <div className="cell size-cell">{formatBytes(item.sizeBytes)}</div>
+                              <div className="cell date-cell">{formatDate(item.modifiedUnixMs)}</div>
+                              <button className="term-btn" onClick={(e) => { e.stopPropagation(); void invoke("open_in_default_terminal", { path: item.path }); }} title={t.openInDefaultTerminal}
+                              >&gt;_</button>
+                              <button className={`pin-btn ${isPinned(item.path) ? "pinned" : ""}`}
+                                onClick={(e) => { e.stopPropagation(); togglePin(item); }}
+                                title={isPinned(item.path) ? t.menuUnpin : t.menuPin}
+                              >{isPinned(item.path) ? "★" : "☆"}</button>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <>

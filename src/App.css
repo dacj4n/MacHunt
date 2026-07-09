@@ -1932,3 +1932,61 @@ body {
     display: none;
   }
 }
+
+/* ===== Application Group View ===== */
+.app-grouped-view {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-group {
+  margin-bottom: 4px;
+}
+
+.app-group-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 16px;
+  background: var(--pn-surface-container);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.925rem;
+  color: var(--pn-on-surface);
+  transition: background var(--t-speed) var(--t-ease);
+  text-align: left;
+}
+
+.app-group-header:hover {
+  background: var(--pn-surface-container-high);
+}
+
+.app-group-caret {
+  font-size: 0.65rem;
+  width: 14px;
+  text-align: center;
+  color: var(--pn-on-surface-variant);
+  flex-shrink: 0;
+}
+
+.app-group-name {
+  font-weight: 600;
+  flex: 1;
+}
+
+.app-group-count {
+  font-size: 0.8rem;
+  color: var(--pn-on-surface-variant);
+  background: var(--pn-surface-container-highest);
+  padding: 2px 10px;
+  border-radius: 9999px;
+}
+
+.app-group .result-row {
+  margin-left: 8px;
+  margin-right: 8px;
+  border-radius: 6px;
+}

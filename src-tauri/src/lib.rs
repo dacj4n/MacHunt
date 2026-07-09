@@ -1,4 +1,4 @@
-use machunt::{Engine, SearchMode, SearchOptions, SortKey};
+use machunt::{app_for_extension, app_for_extension_en, extension_of, group_by_app, group_by_app_en, Engine, SearchMode, SearchOptions, SortKey};
 #[cfg(target_os = "macos")]
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use serde::{Deserialize, Serialize};
@@ -2102,6 +2102,97 @@ fn settings_menu_text() -> &'static str {
     "Preferences"
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppGroupItem {
+    app_name: String,
+    count: usize,
+    extensions: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppGroupResponse {
+    groups: Vec<AppGroupItem>,
+}
+
+/// Return a list of app groups based on the indexed files' extensions.
+/// Groups distinct extensions by their default application, sorted by count.
+#[tauri::command]
+async fn list_app_groups(state: tauri::State<'_, AppState>, language: Option<String>) -> Result<AppGroupResponse, String> {
+    use std::collections::HashMap;
+    let engine = state.engine.clone();
+    let paths = tauri::async_runtime::spawn_blocking(move || {
+        engine.search(SearchOptions {
+            query: String::new(),
+            mode: SearchMode::Substring,
+            case_sensitive: false,
+            path_prefix: None,
+            include_files: true,
+            include_dirs: false,
+            limit: Some(50000),
+            extensions: None,
+            sort_key: SortKey::Name,
+            sort_ascending: true,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let is_en = language.as_deref() == Some("en");
+    let mut groups: HashMap<String, (usize, Vec<String>)> = HashMap::new();
+    for path in &paths {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        let ext = extension_of(name);
+        if ext.is_empty() {
+            continue;
+        }
+        let app = if is_en {
+            app_for_extension_en(&ext)
+        } else {
+            app_for_extension(&ext)
+        };
+        let entry = groups.entry(app).or_default();
+        entry.0 += 1;
+        if !entry.1.contains(&ext) {
+            entry.1.push(ext);
+        }
+    }
+
+    let mut group_vec: Vec<AppGroupItem> = groups
+        .into_iter()
+        .map(|(app_name, (count, exts))| {
+            let mut sorted_exts = exts;
+            sorted_exts.sort();
+            AppGroupItem {
+                app_name,
+                count,
+                extensions: sorted_exts,
+            }
+        })
+        .collect();
+    group_vec.sort_by(|a, b| b.count.cmp(&a.count));
+
+    Ok(AppGroupResponse { groups: group_vec })
+}
+
+/// Group search result paths by their default application.
+#[tauri::command]
+fn group_results_by_app(
+    paths: Vec<String>,
+    language: Option<String>,
+) -> Result<Vec<(String, Vec<String>)>, String> {
+    let is_en = language.as_deref() == Some("en");
+    if is_en {
+        Ok(group_by_app_en(&paths))
+    } else {
+        Ok(group_by_app(&paths))
+    }
+}
+
 #[tauri::command]
 fn set_menu_language(_language: String, app: tauri::AppHandle) -> Result<(), String> {
     if let Some(menu) = app.menu() {
@@ -2350,7 +2441,9 @@ pub fn run() {
             get_file_manager_settings,
             set_file_manager_settings,
             toggle_main_window,
-            get_version
+            get_version,
+            list_app_groups,
+            group_results_by_app,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Tauri application");
