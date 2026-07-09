@@ -1144,7 +1144,7 @@ impl Db {
     /// Levenshtein in engine.rs does the actual fuzzy scoring.
     pub fn search_fuzzy_candidates(
         &self,
-        query_lower: &str,
+        tokens: &[String],
         path_prefix: Option<&str>,
         extensions: Option<&[String]>,
         limit: usize,
@@ -1152,40 +1152,40 @@ impl Db {
         include_dirs: bool,
     ) -> Vec<(String, String)> {
         let conn = self.conn.lock();
-        let q_len = query_lower.chars().count();
-        if q_len == 0 || limit == 0 {
+        if tokens.is_empty() || limit == 0 {
             return Vec::new();
         }
         let (path_clause, path_param) = Self::path_prefix_clause(path_prefix);
         let ext_clause = Self::extension_sql(extensions);
         let type_clause = Self::is_dir_sql(include_files, include_dirs);
-        let prefix: String = query_lower.chars().take(2).collect();
         let lim = if limit >= i64::MAX as usize {
             i64::MAX
         } else {
             limit as i64
         };
-        // Drop the LENGTH() SQL filter — Chinese filenames routinely exceed
-        // any reasonable hard-coded bound (e.g. q_len=2 but files have 20+ chars).
-        // Length + Levenshtein filtering stays in Rust engine.rs.
+
+        // Build LIKE conditions for every token — all must appear as substrings.
+        let like_conditions: Vec<String> = tokens
+            .iter()
+            .map(|t| format!("f.name_lower LIKE '%{}%'", t.replace('\'', "''")))
+            .collect();
+        let like_clause = like_conditions.join(" AND ");
+
         let sql = format!(
             "SELECT d.path, f.name FROM files f
              JOIN dirs d ON d.id = f.dir_id
-             WHERE f.name_lower LIKE ?{}{}{} LIMIT ?",
-            path_clause, ext_clause, type_clause
+             WHERE {}{}{}{} LIMIT ?",
+            like_clause, path_clause, ext_clause, type_clause
         );
         let mut stmt = conn.prepare(&sql).unwrap();
-        // Use %prefix% (substring) instead of prefix% to catch files where
-        // the query appears mid-name (e.g. query="账号" matches "用户账号.xlsx").
-        let like_pat = format!("%{}%", prefix);
         if let Some(ref pp) = path_param {
             stmt.query_map(
-                params![like_pat, pp, lim],
+                params![pp, lim],
                 Self::map_row as fn(&rusqlite::Row) -> _,
             )
         } else {
             stmt.query_map(
-                params![like_pat, lim],
+                params![lim],
                 Self::map_row as fn(&rusqlite::Row) -> _,
             )
         }

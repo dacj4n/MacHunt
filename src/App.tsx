@@ -791,8 +791,8 @@ function buildSearchRequest(
       includeDirs,
       limit: 1000,
       extensions,
-      sortKey: fuzzyEnabled ? "name" : sortKey,
-      sortAscending: fuzzyEnabled ? false : sortAscending,
+      sortKey,
+      sortAscending,
     }
   };
 }

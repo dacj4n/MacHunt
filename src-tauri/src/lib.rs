@@ -1492,7 +1492,7 @@ async fn search(
 
     let started = Instant::now();
     let mut items = tauri::async_runtime::spawn_blocking(move || {
-        if regex_enabled {
+        if regex_enabled && request.mode == SearchMode::Pattern {
             let substring_options = to_search_options(&request, SearchMode::Substring, query_limit);
             let regex_options = to_search_options(&request, SearchMode::Pattern, query_limit);
 

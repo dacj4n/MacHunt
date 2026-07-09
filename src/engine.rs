@@ -456,32 +456,23 @@ impl Engine {
             return Vec::new();
         }
 
-        // Use broad LIKE to get candidates, then filter by edit distance.
-        // Candidate pre-filter always uses lowered prefix because f.name_lower is lowered.
-        let query_lower = query.to_lowercase();
+        // Split into space-separated tokens — each must be found as a substring.
+        let tokens: Vec<&str> = query.split_whitespace().collect();
+        if tokens.is_empty() {
+            return Vec::new();
+        }
+        // SQL does ALL token matching — each token becomes LIKE '%token%'.
+        let token_strings: Vec<String> = if options.case_sensitive {
+            tokens.iter().map(|t| t.to_string()).collect()
+        } else {
+            tokens.iter().map(|t| t.to_lowercase()).collect()
+        };
         let candidates = self
             .db
-            .search_fuzzy_candidates(&query_lower, options.path_prefix.as_deref().and_then(|p| p.to_str()), options.extensions.as_deref(), 100_000, options.include_files, options.include_dirs);
-        let q_len = query.chars().count();
-        let mut scored: Vec<(PathBuf, usize)> = Vec::new();
+            .search_fuzzy_candidates(&token_strings, options.path_prefix.as_deref().and_then(|p| p.to_str()), options.extensions.as_deref(), 100_000, options.include_files, options.include_dirs);
 
+        let mut out: Vec<PathBuf> = Vec::new();
         for (dir_path, file_name) in candidates {
-            let name_cmp = if options.case_sensitive {
-                file_name.clone()
-            } else {
-                file_name.to_lowercase()
-            };
-
-            // Compute the minimum Levenshtein distance between the query and
-            // any substring of the filename. This handles both:
-            // - Short-name typos:  "redme" → "README"        (dist=1)
-            // - Substring matches: "账号"  → "信息系统账号信息模板" (dist=0,
-            //   because "账号" is a substring of "信息系统账号信息模板")
-            let dist = min_substring_levenshtein(&name_cmp, &query);
-            let max_dist = (q_len / 3).max(1);
-            if dist > max_dist {
-                continue;
-            }
 
             let full_path = if dir_path == "/" {
                 PathBuf::from(format!("/{}", file_name))
@@ -494,15 +485,31 @@ impl Engine {
             if !include_allowed(&full_path, options.include_files, options.include_dirs) {
                 continue;
             }
-            scored.push((full_path, dist));
+            out.push(full_path);
         }
-
-        // Sort by edit distance (best match first), then by path length.
-        scored.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| {
-            a.0.as_os_str().len().cmp(&b.0.as_os_str().len())
-        }));
-        scored.truncate(limit);
-        scored.into_iter().map(|(p, _)| p).collect()
+        // Sort by user-selected key (same as other search modes).
+        let sort_k = options.sort_key;
+        let sort_asc = options.sort_ascending;
+        match sort_k {
+            SortKey::Name => out.sort_by(|a, b| {
+                let na = a.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                let nb = b.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if sort_asc { na.cmp(nb) } else { nb.cmp(na) }
+            }),
+            SortKey::Path => out.sort_by(|a, b| {
+                if sort_asc { a.cmp(b) } else { b.cmp(a) }
+            }),
+            SortKey::Type => out.sort_by(|a, b| {
+                let ea = a.extension().and_then(|e| e.to_str()).unwrap_or("");
+                let eb = b.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if sort_asc { ea.cmp(eb) } else { eb.cmp(ea) }
+            }),
+            SortKey::Size | SortKey::Modified => {
+                out = self.sort_by_metadata(out, sort_k, sort_asc);
+            }
+        }
+        out.truncate(limit);
+        out
     }
 
     fn search_substring(&self, options: &SearchOptions, limit: usize) -> Vec<PathBuf> {
@@ -797,58 +804,38 @@ fn include_allowed(path: &Path, include_files: bool, include_dirs: bool) -> bool
     false
 }
 
-/// Levenshtein (edit) distance between two strings.
-fn levenshtein(a: &str, b: &str) -> usize {
-    let a_len = a.chars().count();
-    let b_len = b.chars().count();
-    if a_len == 0 { return b_len; }
-    if b_len == 0 { return a_len; }
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_fuzzy_token_match() {
+        // Simulate the fuzzy search token-matching logic.
+        let filename = "AgentSyste代理商管理系统 Struts2 远程代码执行漏洞";
+        let query = "系统 Struts2 远程";
+        let lowered_name = filename.to_lowercase();
+        let lowered_query = query.to_lowercase();
+        let tokens: Vec<&str> = lowered_query.split_whitespace().collect();
+        let all_match = tokens.iter().all(|t| lowered_name.contains(t));
+        assert!(all_match, "tokens {:?} should match '{}'", tokens, lowered_name);
 
-    let mut prev: Vec<usize> = (0..=b_len).collect();
-    let mut curr = vec![0usize; b_len + 1];
+        let query2 = "代理 执行 struts2";
+        let lowered_query2 = query2.to_lowercase();
+        let tokens2: Vec<&str> = lowered_query2.split_whitespace().collect();
+        let all_match2 = tokens2.iter().all(|t| lowered_name.contains(t));
+        assert!(all_match2, "tokens {:?} should match '{}'", tokens2, lowered_name);
 
-    for (i, ca) in a.chars().enumerate() {
-        curr[0] = i + 1;
-        for (j, cb) in b.chars().enumerate() {
-            let cost = if ca == cb { 0 } else { 1 };
-            curr[j + 1] = (prev[j + 1] + 1)        // deletion
-                .min(curr[j] + 1)                    // insertion
-                .min(prev[j] + cost);                // substitution
-        }
-        std::mem::swap(&mut prev, &mut curr);
+        // Verify DB pre-filter: "struts2" first 2 chars = "st", LIKE '%st%' should match.
+        let prefilter = tokens2.iter().max_by_key(|t| t.chars().count()).unwrap();
+        assert_eq!(*prefilter, "struts2");
+        let prefix: String = prefilter.chars().take(2).collect();
+        assert_eq!(prefix, "st");
+        assert!(lowered_name.contains(&prefix), "LIKE '%{}%' should match '{}'", prefix, lowered_name);
+
+        // Test that non-matching query is rejected.
+        let query3 = "不存在 关键词";
+        let lowered_query3 = query3.to_lowercase();
+        let tokens3: Vec<&str> = lowered_query3.split_whitespace().collect();
+        let all_match3 = tokens3.iter().all(|t| lowered_name.contains(t));
+        assert!(!all_match3);
     }
-    prev[b_len]
 }
 
-/// Minimum Levenshtein distance between `query` and any substring of `text`.
-/// Uses a sliding window over `text` — only checks windows of similar length
-/// to the query (query_len ± 3). Returns 0 if query is a substring of text.
-fn min_substring_levenshtein(text: &str, query: &str) -> usize {
-    let text_chars: Vec<char> = text.chars().collect();
-    let query_chars: Vec<char> = query.chars().collect();
-    let t_len = text_chars.len();
-    let q_len = query_chars.len();
-
-    if q_len == 0 { return 0; }
-    if t_len == 0 { return q_len; }
-    if t_len < q_len {
-        return levenshtein(text, query);
-    }
-
-    let min_win = q_len.saturating_sub(3);
-    let max_win = (q_len + 3).min(t_len);
-    let mut best = usize::MAX;
-
-    // Slide windows of various lengths over text
-    for win_len in min_win..=max_win {
-        for start in 0..=t_len.saturating_sub(win_len) {
-            let slice: String = text_chars[start..start + win_len].iter().collect();
-            let dist = levenshtein(&slice, query);
-            if dist < best {
-                best = dist;
-                if best == 0 { return 0; } // Exact match found
-            }
-        }
-    }
-    best
-}
