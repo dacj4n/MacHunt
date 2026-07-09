@@ -2394,6 +2394,21 @@ pub fn run() {
                 .unwrap_or(false);
             let _ = apply_launch_settings(launch_at_login);
 
+            // Set up volume event channel: engine → Tauri → frontend.
+            // The volume poller sends mount/unmount/index-complete events
+            // which are forwarded to the frontend for status bar updates.
+            {
+                let (tx, rx) = crossbeam::channel::unbounded::<machunt::VolumeEvent>();
+                let state = app.state::<AppState>();
+                state.engine.set_volume_event_tx(tx);
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    for event in rx {
+                        let _ = app_handle.emit("volume://event", &event);
+                    }
+                });
+            }
+
             if !silent_start {
                 // Window was created with visible=false; show it now that
                 // the correct activation policy is in place.

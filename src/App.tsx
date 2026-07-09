@@ -9,6 +9,9 @@ type SortKey = "name" | "path" | "type" | "size" | "modified";
 type ColumnKey = "name" | "path" | "type" | "size" | "modified";
 type ThemeMode = "system" | "light" | "dark";
 type ViewMode = "search" | "pinned" | "settings";
+type VolumeEventType = { type: "MountDetected"; path: string; name: string }
+  | { type: "IndexComplete"; path: string; fileCount: number; totalIndexed: number }
+  | { type: "VolumeRemoved"; path: string; name: string; totalIndexed: number };
 type Language = "zh" | "en";
 type ExcludeRuleType = "exact" | "pattern";
 
@@ -88,6 +91,10 @@ const I18N = {
     sizeGB: "大于 100 MB",
     appFilter: "应用",
     appFilterAll: "所有应用",
+    volumeDetected: "检测到新卷 {name}，正在索引...",
+    volumeIndexing: "正在索引 {name}...",
+    volumeIndexed: "{name} 索引完成，{count} 个文件",
+    volumeRemoved: "{name} 已断开，索引已清理",
     build: "构建",
     rebuild: "重建",
     buildStatusBuilding: "正在构建索引...",
@@ -252,6 +259,10 @@ const I18N = {
     sizeGB: "Over 100 MB",
     appFilter: "App",
     appFilterAll: "Any App",
+    volumeDetected: "New volume {name} detected, indexing...",
+    volumeIndexing: "Indexing {name}...",
+    volumeIndexed: "{name} indexed, {count} files",
+    volumeRemoved: "{name} disconnected, index removed",
     build: "Build",
     rebuild: "Rebuild",
     buildStatusBuilding: "Building index...",
@@ -1898,6 +1909,33 @@ function App() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<VolumeEventType>("volume://event", (event) => {
+      const e = event.payload;
+      if (e.type === "MountDetected") {
+        setBuildStatus(t.volumeDetected.replace("{name}", e.name));
+      } else if (e.type === "IndexComplete") {
+        setIndexed(e.totalIndexed);
+        setBuildStatus(t.volumeIndexed.replace("{name}", volNameFromPath(e.path)).replace("{count}", String(e.fileCount)));
+        // Clear status after 5 seconds
+        setTimeout(() => setBuildStatus(""), 5000);
+      } else if (e.type === "VolumeRemoved") {
+        setIndexed(e.totalIndexed);
+        setBuildStatus(t.volumeRemoved.replace("{name}", e.name));
+        setTimeout(() => setBuildStatus(""), 5000);
+      }
+    })
+      .then((dispose) => { unlisten = dispose; })
+      .catch(() => {});
+    return () => { if (unlisten) unlisten(); };
+  }, [t]);
+
+  function volNameFromPath(path: string): string {
+    const parts = path.split("/");
+    return parts[parts.length - 1] || path;
+  }
 
   useEffect(() => {
     const persist = () => {

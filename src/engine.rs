@@ -3,10 +3,11 @@ use crate::db::Db;
 use crate::filters::{
     compile_exclude_rules, sanitize_owned_rules, sanitize_roots, validate_pattern_rules,
 };
-use crate::model::{SearchMode, SearchOptions, SortKey};
+use crate::model::{SearchMode, SearchOptions, SortKey, VolumeEvent};
 use crate::search;
 use crate::utils::{get_root_directories, Logger};
 use crate::watcher;
+use crossbeam::channel::Sender;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,6 +24,7 @@ pub struct Engine {
     exclude_pattern_dirs: Arc<Mutex<Vec<String>>>,
     watch_roots: Arc<Mutex<Vec<String>>>,
     cleanup_running: Arc<AtomicBool>,
+    volume_event_tx: Arc<Mutex<Option<Sender<VolumeEvent>>>>,
 }
 
 impl Engine {
@@ -54,6 +56,7 @@ impl Engine {
             exclude_pattern_dirs,
             watch_roots: Arc::new(Mutex::new(watch_roots)),
             cleanup_running: Arc::new(AtomicBool::new(false)),
+            volume_event_tx: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -62,6 +65,12 @@ impl Engine {
             return 0;
         }
         self.db.count_files()
+    }
+
+    /// Set the channel for volume mount/unmount/indexing events.
+    /// These are forwarded to the Tauri frontend for status bar updates.
+    pub fn set_volume_event_tx(&self, tx: Sender<VolumeEvent>) {
+        *self.volume_event_tx.lock().unwrap() = Some(tx);
     }
 
     pub fn get_include_dirs(&self) -> bool {
@@ -295,6 +304,12 @@ impl Engine {
         let engine = self.clone();
         let db = self.db.clone();
         let include_dirs = self.include_dirs.clone();
+        let event_tx = self.volume_event_tx.clone();
+
+        // Helper to get a clone of the sender (if set).
+        fn get_tx(tx_arc: &Arc<Mutex<Option<Sender<VolumeEvent>>>>) -> Option<Sender<VolumeEvent>> {
+            tx_arc.lock().unwrap().clone()
+        }
 
         thread::spawn(move || {
             use std::collections::HashSet;
@@ -311,7 +326,7 @@ impl Engine {
                 }
             }
 
-            // Poll every 15 seconds — fast enough to catch remounts,
+            // Poll every 10 seconds — fast enough to catch remounts,
             // slow enough to avoid I/O overhead.
             let is_external = |v: &String| -> bool {
                 let p = std::path::Path::new(v);
@@ -320,8 +335,16 @@ impl Engine {
                     && !p.to_string_lossy().contains("/.timemachine")
             };
 
+            let vol_name = |path: &str| -> String {
+                std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path)
+                    .to_string()
+            };
+
             loop {
-                thread::sleep(std::time::Duration::from_secs(15));
+                thread::sleep(std::time::Duration::from_secs(10));
 
                 if !watcher::is_watch_running() {
                     break;
@@ -345,15 +368,32 @@ impl Engine {
                     .collect();
 
                 for vol_path in &new_volumes {
+                    let name = vol_name(vol_path);
+                    if let Some(tx) = get_tx(&event_tx) {
+                        let _ = tx.send(VolumeEvent::MountDetected {
+                            path: vol_path.clone(),
+                            name: name.clone(),
+                        });
+                    }
                     println!(
                         "[VolumePoller] detected new mount: {} — starting background index",
                         vol_path
                     );
                     let engine_bg = engine.clone();
+                    let db_bg = db.clone();
                     let vol = vol_path.clone();
                     let inc_dirs = include_dirs.load(Ordering::Relaxed);
+                    let tx_bg = get_tx(&event_tx);
                     thread::spawn(move || {
-                        engine_bg.build_index(Some(vol), false, inc_dirs, false);
+                        let count = engine_bg.build_index(Some(vol.clone()), false, inc_dirs, false);
+                        let total = db_bg.count_files();
+                        if let Some(tx) = tx_bg {
+                            let _ = tx.send(VolumeEvent::IndexComplete {
+                                path: vol,
+                                file_count: count,
+                                total_indexed: total,
+                            });
+                        }
                     });
                 }
 
@@ -370,6 +410,14 @@ impl Engine {
                         vol_path
                     );
                     db.delete_under_root(std::path::Path::new(vol_path));
+                    let total = db.count_files();
+                    if let Some(tx) = get_tx(&event_tx) {
+                        let _ = tx.send(VolumeEvent::VolumeRemoved {
+                            path: vol_path.clone(),
+                            name: vol_name(vol_path),
+                            total_indexed: total,
+                        });
+                    }
                 }
 
                 known = current;

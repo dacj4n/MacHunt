@@ -1,6 +1,30 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Events emitted by the volume poller thread for frontend status updates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum VolumeEvent {
+    /// A new volume was detected — indexing is about to start.
+    MountDetected {
+        path: String,
+        name: String,
+    },
+    /// Indexing of a volume has completed.
+    IndexComplete {
+        path: String,
+        file_count: usize,
+        /// Total files indexed across all volumes.
+        total_indexed: usize,
+    },
+    /// A volume was unmounted — index entries are being removed.
+    VolumeRemoved {
+        path: String,
+        name: String,
+        total_indexed: usize,
+    },
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SearchMode {
     Substring,
