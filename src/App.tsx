@@ -110,7 +110,7 @@ const I18N = {
     tab_media: "音视频",
     tab_code: "代码",
     tab_archives: "压缩包",
-    appGroupDesc: "文件将按默认打开应用程序分组显示。",
+
     sort: "排序",
     sort_name: "名称",
     sort_size: "大小",
@@ -275,7 +275,7 @@ const I18N = {
     tab_code: "Code",
     tab_archives: "Archives",
     tab_applications: "Applications",
-    appGroupDesc: "Files are grouped by their default opening application.",
+
     sort: "Sort",
     sort_name: "Name",
     sort_size: "Size",
@@ -1913,12 +1913,10 @@ function App() {
         const name = volNameFromPath(e.path);
         setBuildStatus(isZh ? `检测到新卷 ${name}，正在索引...` : `New volume ${name} detected, indexing...`);
       } else if (e.type === "indexComplete") {
-        setIndexed(e.totalIndexed);
         const name = volNameFromPath(e.path);
         setBuildStatus(isZh ? `${name} 索引完成，${e.fileCount} 个文件` : `${name} indexed, ${e.fileCount} files`);
         volumeMsgTimer.current = setTimeout(() => setBuildStatus(""), 5000);
       } else if (e.type === "volumeRemoved") {
-        setIndexed(e.totalIndexed);
         const name = volNameFromPath(e.path);
         setBuildStatus(isZh ? `${name} 已断开，索引已清理` : `${name} disconnected, index removed`);
         volumeMsgTimer.current = setTimeout(() => setBuildStatus(""), 5000);
@@ -1930,7 +1928,8 @@ function App() {
       if (unlisten) unlisten();
       if (volumeMsgTimer.current) clearTimeout(volumeMsgTimer.current);
     };
-  }, [language]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function volNameFromPath(path: string): string {
     const parts = path.split("/");
