@@ -91,10 +91,6 @@ const I18N = {
     sizeGB: "大于 100 MB",
     appFilter: "应用",
     appFilterAll: "所有应用",
-    volumeDetected: "检测到新卷 {name}，正在索引...",
-    volumeIndexing: "正在索引 {name}...",
-    volumeIndexed: "{name} 索引完成，{count} 个文件",
-    volumeRemoved: "{name} 已断开，索引已清理",
     build: "构建",
     rebuild: "重建",
     buildStatusBuilding: "正在构建索引...",
@@ -259,10 +255,6 @@ const I18N = {
     sizeGB: "Over 100 MB",
     appFilter: "App",
     appFilterAll: "Any App",
-    volumeDetected: "New volume {name} detected, indexing...",
-    volumeIndexing: "Indexing {name}...",
-    volumeIndexed: "{name} indexed, {count} files",
-    volumeRemoved: "{name} disconnected, index removed",
     build: "Build",
     rebuild: "Rebuild",
     buildStatusBuilding: "Building index...",
@@ -1910,26 +1902,35 @@ function App() {
     };
   }, []);
 
+  const volumeMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    const isZh = language === "zh";
     void listen<VolumeEventType>("volume://event", (event) => {
       const e = event.payload;
+      if (volumeMsgTimer.current) { clearTimeout(volumeMsgTimer.current); }
       if (e.type === "mountDetected") {
-        setBuildStatus(t.volumeDetected.replace("{name}", e.name));
+        const name = volNameFromPath(e.path);
+        setBuildStatus(isZh ? `检测到新卷 ${name}，正在索引...` : `New volume ${name} detected, indexing...`);
       } else if (e.type === "indexComplete") {
         setIndexed(e.totalIndexed);
-        setBuildStatus(t.volumeIndexed.replace("{name}", volNameFromPath(e.path)).replace("{count}", String(e.fileCount)));
-        setTimeout(() => setBuildStatus(""), 5000);
+        const name = volNameFromPath(e.path);
+        setBuildStatus(isZh ? `${name} 索引完成，${e.fileCount} 个文件` : `${name} indexed, ${e.fileCount} files`);
+        volumeMsgTimer.current = setTimeout(() => setBuildStatus(""), 5000);
       } else if (e.type === "volumeRemoved") {
         setIndexed(e.totalIndexed);
-        setBuildStatus(t.volumeRemoved.replace("{name}", e.name));
-        setTimeout(() => setBuildStatus(""), 5000);
+        const name = volNameFromPath(e.path);
+        setBuildStatus(isZh ? `${name} 已断开，索引已清理` : `${name} disconnected, index removed`);
+        volumeMsgTimer.current = setTimeout(() => setBuildStatus(""), 5000);
       }
     })
       .then((dispose) => { unlisten = dispose; })
       .catch(() => {});
-    return () => { if (unlisten) unlisten(); };
-  }, [t]);
+    return () => {
+      if (unlisten) unlisten();
+      if (volumeMsgTimer.current) clearTimeout(volumeMsgTimer.current);
+    };
+  }, [language]);
 
   function volNameFromPath(path: string): string {
     const parts = path.split("/");
@@ -3086,8 +3087,11 @@ function App() {
 
           <footer className="status-bar">
             <div className="status-left">
-              <span className="status-highlight">{formatIndexedItems(indexed)}</span>
-              <span>{buildStatus}</span>
+              {buildStatus ? (
+                <span className="status-highlight">{buildStatus}</span>
+              ) : (
+                <span className="status-highlight">{formatIndexedItems(indexed)}</span>
+              )}
             </div>
             <div className="status-right">
               <span className="status-highlight">{formatShownItems(filteredItems.length)}</span>
