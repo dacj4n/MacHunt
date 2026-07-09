@@ -931,10 +931,10 @@ impl Db {
         let lim = limit as i64;
 
         // Fall back to LIKE/GLOB when FTS5 trigram is unreliable:
-        // - Fewer than 3 characters (chars, not bytes — 2 CJK chars = 0 trigrams)
+        // - 3 or fewer characters (2 CJK chars = 0 trigrams; 3-char "png" may miss tokenized extensions)
         // - Non-ASCII (CJK, etc. — trigram tokenizer may not handle well)
         // - ASCII with special characters (dots, hyphens — tokenizer splits on these)
-        if q.chars().count() < 3 || !q.is_ascii() || !q.chars().all(|c| c.is_alphanumeric()) {
+        if q.chars().count() <= 3 || !q.is_ascii() || !q.chars().all(|c| c.is_alphanumeric()) {
             if case_sensitive {
                 let sql = format!(
                     "SELECT d.path, f.name FROM files f
