@@ -288,6 +288,7 @@ impl Engine {
     /// monitor SMB/WebDAV volumes, so this poller fills the gap.
     fn start_volume_poller(&self) {
         let engine = self.clone();
+        let db = self.db.clone();
         let include_dirs = self.include_dirs.clone();
 
         thread::spawn(move || {
@@ -307,6 +308,13 @@ impl Engine {
 
             // Poll every 15 seconds — fast enough to catch remounts,
             // slow enough to avoid I/O overhead.
+            let is_external = |v: &String| -> bool {
+                let p = std::path::Path::new(v);
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                name != "Macintosh HD" && name != "System"
+                    && !p.to_string_lossy().contains("/.timemachine")
+            };
+
             loop {
                 thread::sleep(std::time::Duration::from_secs(15));
 
@@ -324,32 +332,39 @@ impl Engine {
                     }
                 }
 
-                // Find newly mounted volumes
+                // ── New mounts → auto-index ──
                 let new_volumes: Vec<String> = current
                     .difference(&known)
                     .cloned()
-                    .filter(|v| {
-                        // Skip system volumes and internal symlinks
-                        let p = std::path::Path::new(v);
-                        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                        name != "Macintosh HD" && name != "System"
-                            && !p.to_string_lossy().contains("/.timemachine")
-                    })
+                    .filter(is_external)
                     .collect();
 
-                if !new_volumes.is_empty() {
-                    for vol_path in &new_volumes {
-                        println!(
-                            "[VolumePoller] detected new mount: {} — starting background index",
-                            vol_path
-                        );
-                        let engine_bg = engine.clone();
-                        let vol = vol_path.clone();
-                        let inc_dirs = include_dirs.load(Ordering::Relaxed);
-                        thread::spawn(move || {
-                            engine_bg.build_index(Some(vol), false, inc_dirs, false);
-                        });
-                    }
+                for vol_path in &new_volumes {
+                    println!(
+                        "[VolumePoller] detected new mount: {} — starting background index",
+                        vol_path
+                    );
+                    let engine_bg = engine.clone();
+                    let vol = vol_path.clone();
+                    let inc_dirs = include_dirs.load(Ordering::Relaxed);
+                    thread::spawn(move || {
+                        engine_bg.build_index(Some(vol), false, inc_dirs, false);
+                    });
+                }
+
+                // ── Unmounted volumes → delete index immediately ──
+                let removed_volumes: Vec<String> = known
+                    .difference(&current)
+                    .cloned()
+                    .filter(is_external)
+                    .collect();
+
+                for vol_path in &removed_volumes {
+                    println!(
+                        "[VolumePoller] volume unmounted: {} — removing from index",
+                        vol_path
+                    );
+                    db.delete_under_root(std::path::Path::new(vol_path));
                 }
 
                 known = current;
