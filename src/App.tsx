@@ -3053,7 +3053,7 @@ function App() {
               <span>{buildStatus}</span>
             </div>
             <div className="status-right">
-              <span className="status-highlight">{formatShownItems(totalFound)}</span>
+              <span className="status-highlight">{formatShownItems(filteredItems.length)}</span>
               <span>{isSearching ? t.searching : `${tookMs} ms`}</span>
             </div>
           </footer>

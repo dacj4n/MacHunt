@@ -755,8 +755,7 @@ body {
 }
 
 .filter-select:focus-visible {
-  outline: 2px solid var(--pn-primary);
-  outline-offset: 1px;
+  outline: none;
 }
 
 /* Even tab widths */
