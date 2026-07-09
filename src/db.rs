@@ -554,6 +554,15 @@ impl Db {
 
         tx.commit().unwrap();
         let _ = conn.execute_batch("PRAGMA synchronous=NORMAL;");
+
+        // Sync FTS: insert any files missing from FTS index (LEFT JOIN for speed).
+        let _ = conn.execute_batch(
+            "INSERT OR IGNORE INTO files_fts(rowid, name_lower)
+             SELECT f.id, f.name_lower
+             FROM files f LEFT JOIN files_fts ft ON f.id = ft.rowid
+             WHERE ft.rowid IS NULL
+             LIMIT 100000;",
+        );
     }
 
     pub fn count_files(&self) -> usize {
@@ -805,6 +814,43 @@ impl Db {
         let _ = conn.execute_batch(
             "INSERT INTO files_fts(rowid, name_lower) SELECT id, name_lower FROM files;",
         );
+    }
+
+    /// Incrementally sync FTS: insert into files_fts for any files not yet indexed.
+    /// Uses LEFT JOIN instead of NOT IN for O(n) complexity on large tables.
+    pub fn sync_fts(&self) {
+        let conn = self.conn.lock();
+        let _ = conn.execute_batch(
+            "INSERT OR IGNORE INTO files_fts(rowid, name_lower)
+             SELECT f.id, f.name_lower
+             FROM files f LEFT JOIN files_fts ft ON f.id = ft.rowid
+             WHERE ft.rowid IS NULL;",
+        );
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    }
+
+    /// Sync FTS in batches to avoid long-lived locks on huge tables.
+    pub fn sync_fts_batched(&self, batch_size: usize) -> usize {
+        let conn = self.conn.lock();
+        let batch = batch_size as i64;
+        let mut total = 0usize;
+        loop {
+            let n = conn
+                .execute(
+                    "INSERT OR IGNORE INTO files_fts(rowid, name_lower)
+                     SELECT f.id, f.name_lower
+                     FROM files f LEFT JOIN files_fts ft ON f.id = ft.rowid
+                     WHERE ft.rowid IS NULL
+                     LIMIT ?",
+                    rusqlite::params![batch],
+                )
+                .unwrap_or(0);
+            total += n;
+            if n == 0 {
+                break;
+            }
+        }
+        total
     }
 
     fn map_row(row: &rusqlite::Row) -> rusqlite::Result<(String, String)> {

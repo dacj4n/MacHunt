@@ -28,6 +28,11 @@ pub struct Engine {
 impl Engine {
     pub fn new(logs_enabled: bool) -> Self {
         let db = Db::init_default();
+        // Ensure FTS5 index is in sync. Batch-mode avoids long locks.
+        let synced = db.sync_fts_batched(50_000);
+        if synced > 0 {
+            println!("[sync_fts] indexed {} new rows", synced);
+        }
         let logger = Logger::new(logs_enabled);
         let last_event_id = Arc::new(AtomicU64::new(0));
         let include_dirs = Arc::new(AtomicBool::new(db.load_include_dirs().unwrap_or(true)));
