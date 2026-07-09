@@ -119,8 +119,8 @@ machunt search "budget"
 # Wildcard pattern
 machunt search -p "*.rs"
 
-# Fuzzy/typo-tolerant
-machunt search -F "redme"
+# Fuzzy search (space-separated, multi-token substring AND matching)
+machunt search -F "sys remote"
 
 # Case-sensitive
 machunt search -c "Makefile"
@@ -147,7 +147,7 @@ machunt search [OPTIONS] <QUERY>
 | Option | Description |
 |--------|-------------|
 | `-p, --pattern` | Wildcard/regex mode (e.g. `*.rs`, `test?.txt`) |
-| `-F, --fuzzy` | Fuzzy/typo-tolerant search (Levenshtein edit distance) |
+| `-F, --fuzzy` | Multi-token fuzzy search (space-separated, AND matching) |
 | `-c, --case-sensitive` | Case-sensitive matching |
 | `-n, --limit <N>` | Max results (default 100) |
 | `-P, --path <PATH>` | Path prefix filter |
@@ -204,7 +204,7 @@ Runs WAL checkpoint (always). Optional `--vacuum` reclaims DB file space.
 ```
 
 - **Build**: `WalkDir` traverses the filesystem, inserting `(name_lower, path)` into SQLite FTS5 with the trigram tokenizer. Handled in parallel via crossbeam channels.
-- **Search**: FTS5 trigram MATCH completes in <5ms (CLI). Case-sensitive queries use a GLOB post-filter (SQLite LIKE is ASCII-case-insensitive by default). Short queries (<3 chars) fall back to LIKE. Fuzzy mode uses Levenshtein distance over LIKE candidates.
+- **Search**: FTS5 trigram MATCH completes in <5ms (CLI). Case-sensitive queries use a GLOB post-filter (SQLite LIKE is ASCII-case-insensitive by default). Short queries (<3 chars) fall back to LIKE. Fuzzy mode uses space-separated multi-token substring AND matching over LIKE candidates.
 - **Watch**: Raw FSEvents FFI (CoreServices) streams file creation, modification, deletion, and rename events. Inserts/updates/deletes from the DB incrementally. Resumes from the last persisted EventID across restarts.
 
 ## GUI
@@ -217,6 +217,8 @@ The native macOS GUI is built with Tauri 2 and React. It communicates with the s
 - Navigation tabs: Search / Pinned / Settings (`Cmd+1/2/3`)
 - Regex toggle + case-sensitive toggle
 - Path filter with suggestion dropdown and Finder picker
+- Filters: App (180+ extension mappings), Time (calendar date range), Size (custom value + unit)
+- Fuzzy search toggle (space-separated, multi-token AND matching)
 - Category tabs: All / Files / Folders / Documents / Images / Media / Code / Archives
 - Sortable columns: name, path, type, size, modified
 - Draggable column splitters with persisted widths
@@ -248,9 +250,11 @@ Star any search result to pin it. Pinned items persist in localStorage and survi
 
 | Category | Capability |
 |----------|------------|
-| Search modes | Substring, wildcard/regex, fuzzy (Levenshtein) |
+| Search modes | Substring, wildcard/regex, fuzzy (multi-token) |
 | Case sensitivity | Toggleable in both CLI and GUI |
 | Path filter | Prefix, suggestion dropdown, Finder picker |
+| App filter | 180+ extension → default app mappings |
+| Time/Size filters | Custom calendar range / value + unit |
 | Live updates | FSEvents watcher, persists EventID across restarts |
 | File types | 8 category tabs via extension classification |
 | Pinned items | Star button, persistent favorites page, localStorage |
@@ -270,7 +274,7 @@ Star any search result to pin it. Pinned items persist in localStorage and survi
 | **Search latency** | <5ms (CLI, FTS5 trigram) | 50–200ms+ | Varies | Varies |
 | **Index format** | SQLite FTS5 (open) | Proprietary | Proprietary | N/A |
 | **CLI** | Yes | Yes (`mdfind`) | No | No |
-| **Fuzzy search** | Yes (Levenshtein) | Partial | No | No |
+| **Fuzzy search** | Yes (multi-token) | Partial | No | No |
 | **Incremental update** | FSEvents | FSEvents | Varies | N/A |
 | **Open source** | Yes | No | No | Partially |
 

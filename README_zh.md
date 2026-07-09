@@ -119,8 +119,8 @@ machunt search "预算"
 # 通配符模式
 machunt search -p "*.rs"
 
-# 模糊/容错搜索
-machunt search -F "redme"   # 可找到 README
+# 模糊搜索（空格分词，多 token 子串 AND 匹配）
+machunt search -F "系统 远程"   # 分词后全部匹配
 
 # 区分大小写
 machunt search -c "Makefile"
@@ -147,7 +147,7 @@ machunt search [OPTIONS] <QUERY>
 | 选项 | 说明 |
 |------|------|
 | `-p, --pattern` | 通配符/正则模式（如 `*.rs`、`test?.txt`） |
-| `-F, --fuzzy` | 模糊/容错搜索（Levenshtein 编辑距离） |
+| `-F, --fuzzy` | 多 token 子串模糊搜索（空格分词，全部 AND 匹配） |
 | `-c, --case-sensitive` | 区分大小写 |
 | `-n, --limit <N>` | 最大结果数（默认 100） |
 | `-P, --path <PATH>` | 路径前缀过滤 |
@@ -204,7 +204,7 @@ machunt optimize [--vacuum]
 ```
 
 - **构建**：`WalkDir` 遍历文件系统，将 `(name_lower, path)` 写入 SQLite FTS5（trigram 分词器）。通过 crossbeam 通道并行处理。
-- **搜索**：FTS5 trigram MATCH，CLI 耗时 <5ms。区分大小写时，FTS5 候选结果再经 GLOB 后过滤（SQLite 的 LIKE 对 ASCII 不区分大小写）。短查询（<3 字符）回退到 LIKE。模糊搜索基于 Levenshtein 编辑距离。
+- **搜索**：FTS5 trigram MATCH，CLI 耗时 <5ms。区分大小写时，FTS5 候选结果再经 GLOB 后过滤（SQLite 的 LIKE 对 ASCII 不区分大小写）。短查询（<3 字符）回退到 LIKE。模糊搜索基于空格分词 + 多 token 子串 AND 匹配。
 - **监听**：通过 CoreServices FFI 直调 FSEvents，监听文件的创建、修改、删除、重命名事件，增量更新索引，重启后从持久化的 EventID 续跑。
 
 ## GUI
@@ -217,6 +217,8 @@ machunt optimize [--vacuum]
 - 标签导航：搜索 / 收藏 / 设置（`Cmd+1/2/3`）
 - 正则开关 + 区分大小写开关
 - 路径过滤（手动输入 + 下拉建议 + Finder 选取）
+- 筛选器：应用（180+ 扩展名映射）、时间（日历组件自定义范围）、大小（自定义数值 + 单位）
+- 模糊搜索按钮（空格分词，多 token 子串 AND 匹配）
 - 分类标签：全部 / 文件 / 文件夹 / 文档 / 图片 / 音视频 / 代码 / 压缩包
 - 表头排序：名称、路径、类型、大小、修改时间
 - 列宽拖拽，宽度记忆持久化
@@ -248,9 +250,11 @@ machunt optimize [--vacuum]
 
 | 分类 | 能力 |
 |------|------|
-| 搜索模式 | 子串、通配符/正则、模糊（Levenshtein） |
+| 搜索模式 | 子串、通配符/正则、模糊（多 token 子串） |
 | 大小写 | CLI 和 GUI 均可切换 |
 | 路径过滤 | 前缀、下拉建议、Finder 选取 |
+| 应用筛选 | 180+ 扩展名 → 默认应用映射 |
+| 时间/大小筛选 | 自定义日历范围 / 数值 + 单位 |
 | 实时更新 | FSEvents 监听，EventID 持久化 |
 | 文件分类 | 8 个分类标签（扩展名自动归类） |
 | 收藏 | 星标按钮，专属收藏页，localStorage 持久化 |
@@ -270,7 +274,7 @@ machunt optimize [--vacuum]
 | **搜索延迟** | <5ms（CLI，FTS5 trigram） | 50–200ms+ | 视插件 | 视插件 |
 | **索引格式** | SQLite FTS5（开放） | 私有 | 私有 | N/A |
 | **CLI** | 是 | 是（`mdfind`） | 否 | 否 |
-| **模糊搜索** | 是（Levenshtein） | 部分 | 否 | 否 |
+| **模糊搜索** | 是（多 token 子串） | 部分 | 否 | 否 |
 | **增量更新** | FSEvents | FSEvents | 视情况 | N/A |
 | **开源** | 是 | 否 | 否 | 部分 |
 
