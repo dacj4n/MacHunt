@@ -132,8 +132,11 @@ pub fn build_index(
         db.insert_batch(&db_batch);
     }
 
-    // Sync FTS after all batches to catch any files missing from the index.
-    db.sync_fts();
+    // Incremental build: sync FTS for newly inserted files.
+    // Full rebuild (swap-rebuild) handles FTS via rebuild_fts() in engine.rs.
+    if !rebuild {
+        db.sync_fts();
+    }
 
     for h in handles {
         let _ = h.join();

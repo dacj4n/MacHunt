@@ -2351,6 +2351,7 @@ name = "machunt-gui"
 version = "0.5.4"
 dependencies = [
  "cc",
+ "crossbeam",
  "machunt",
  "objc2-service-management",
  "reqwest 0.12.28",
