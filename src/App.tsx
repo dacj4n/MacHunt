@@ -9,9 +9,9 @@ type SortKey = "name" | "path" | "type" | "size" | "modified";
 type ColumnKey = "name" | "path" | "type" | "size" | "modified";
 type ThemeMode = "system" | "light" | "dark";
 type ViewMode = "search" | "pinned" | "settings";
-type VolumeEventType = { type: "MountDetected"; path: string; name: string }
-  | { type: "IndexComplete"; path: string; fileCount: number; totalIndexed: number }
-  | { type: "VolumeRemoved"; path: string; name: string; totalIndexed: number };
+type VolumeEventType = { type: "mountDetected"; path: string; name: string }
+  | { type: "indexComplete"; path: string; fileCount: number; totalIndexed: number }
+  | { type: "volumeRemoved"; path: string; name: string; totalIndexed: number };
 type Language = "zh" | "en";
 type ExcludeRuleType = "exact" | "pattern";
 
@@ -1914,14 +1914,13 @@ function App() {
     let unlisten: (() => void) | undefined;
     void listen<VolumeEventType>("volume://event", (event) => {
       const e = event.payload;
-      if (e.type === "MountDetected") {
+      if (e.type === "mountDetected") {
         setBuildStatus(t.volumeDetected.replace("{name}", e.name));
-      } else if (e.type === "IndexComplete") {
+      } else if (e.type === "indexComplete") {
         setIndexed(e.totalIndexed);
         setBuildStatus(t.volumeIndexed.replace("{name}", volNameFromPath(e.path)).replace("{count}", String(e.fileCount)));
-        // Clear status after 5 seconds
         setTimeout(() => setBuildStatus(""), 5000);
-      } else if (e.type === "VolumeRemoved") {
+      } else if (e.type === "volumeRemoved") {
         setIndexed(e.totalIndexed);
         setBuildStatus(t.volumeRemoved.replace("{name}", e.name));
         setTimeout(() => setBuildStatus(""), 5000);
