@@ -1059,8 +1059,6 @@ function App() {
   const [fuzzyEnabled, setFuzzyEnabled] = useState(() => loadStoredFuzzyEnabled() ?? false);
   const [activeTab, setActiveTab] = useState<TabId>("all");
   const [timeFilter, setTimeFilter] = useState("all"); // all | today | week | month | year | custom
-  const [customTimeFrom, setCustomTimeFrom] = useState("");  // YYYY-MM-DD
-  const [customTimeTo, setCustomTimeTo] = useState("");      // YYYY-MM-DD
   const [sizeFilter, setSizeFilter] = useState("all"); // all | kb | mb | gb | custom
   const [customSizeMin, setCustomSizeMinTemp] = useState("");
   const [customSizeMax, setCustomSizeMaxTemp] = useState("");
@@ -1070,14 +1068,48 @@ function App() {
   const [showSizePopover, setShowSizePopover] = useState(false);
   const timePopoverRef = useRef<HTMLDivElement | null>(null);
   const sizePopoverRef = useRef<HTMLDivElement | null>(null);
-  const timeSelectValue = timeFilter === "custom" || showTimePopover ? "custom" : timeFilter;
-  const sizeSelectValue = sizeFilter === "custom" || showSizePopover ? "custom" : sizeFilter;
-  // Applied custom values (separate from draft)
+  // Custom filter values (refs — not state — avoid re-render on every keystroke)
   const customSizeMinRef = useRef(0);
   const customSizeMaxRef = useRef(0);
   const customTimeFromRef = useRef(0);
   const customTimeToRef = useRef(0);
   const [filterVersion, setFilterVersion] = useState(0);
+
+  const customTimeLabel = useMemo(() => {
+    if (timeFilter !== "custom" || showTimePopover) return null;
+    const from = customTimeFromRef.current;
+    const to = customTimeToRef.current;
+    if (!from && !to) return null;
+    const fmt = (ts: number) => {
+      const d = new Date(ts);
+      return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
+    };
+    let label = "";
+    if (from) label += fmt(from);
+    label += " ~ ";
+    if (to) label += fmt(to - 86399999);
+    return label;
+  }, [timeFilter, showTimePopover, filterVersion]);
+  const customSizeLabel = useMemo(() => {
+    if (sizeFilter !== "custom" || showSizePopover) return null;
+    const min = customSizeMinRef.current;
+    const max = customSizeMaxRef.current;
+    if (!min && !max) return null;
+    const fmt = (b: number) => {
+      if (b >= 1073741824) return `${(b/1073741824).toFixed(1)} GB`;
+      if (b >= 1048576) return `${(b/1048576).toFixed(1)} MB`;
+      if (b >= 1024) return `${(b/1024).toFixed(1)} KB`;
+      return `${b} B`;
+    };
+    let label = "";
+    if (min) label += fmt(min);
+    label += " ~ ";
+    if (max) label += fmt(max);
+    return label;
+  }, [sizeFilter, showSizePopover, filterVersion]);
+
+  const timeSelectValue = timeFilter === "custom" || showTimePopover ? "custom" : timeFilter;
+  const sizeSelectValue = sizeFilter === "custom" || showSizePopover ? "custom" : sizeFilter;
   // Calendar state
   const [calMonth, setCalMonth] = useState(() => new Date().getMonth());
   const [calYear, setCalYear] = useState(() => new Date().getFullYear());
@@ -3044,10 +3076,18 @@ function App() {
               <span className="toolbar-sep" />
 
               {/* Time filter */}
-              <div style={{ position: "relative" }}>
-                <select className="filter-select" value={timeSelectValue} onChange={(e) => {
+              <div style={{ position: "relative", flex: "1 1 0", minWidth: 0 }}>
+                <select className="filter-select" style={{ width: "100%" }} value={timeSelectValue} onChange={(e) => {
                   const v = e.target.value;
                   if (v === "custom") {
+                    // Sync calendar state to current filter
+                    if (customTimeFromRef.current) {
+                      setCalFrom(new Date(customTimeFromRef.current).toISOString().slice(0, 10));
+                    } else { setCalFrom(""); }
+                    if (customTimeToRef.current) {
+                      setCalTo(new Date(customTimeToRef.current - 86399999).toISOString().slice(0, 10));
+                    } else { setCalTo(""); }
+                    setCalSelecting("from");
                     setShowTimePopover(true); setShowSizePopover(false);
                   } else {
                     setShowTimePopover(false);
@@ -3060,7 +3100,7 @@ function App() {
                   <option value="week">{t.timeWeek}</option>
                   <option value="month">{t.timeMonth}</option>
                   <option value="year">{t.timeYear}</option>
-                  <option value="custom">{t.timeCustom}</option>
+                  <option value="custom">{customTimeLabel ?? t.timeCustom}</option>
                 </select>
                 {showTimePopover && (
                   <div className="filter-popover" ref={timePopoverRef} onClick={(e) => e.stopPropagation()}>
@@ -3128,8 +3168,8 @@ function App() {
               </div>
 
               {/* Size filter */}
-              <div style={{ position: "relative" }}>
-                <select className="filter-select" value={sizeSelectValue} onChange={(e) => {
+              <div style={{ position: "relative", flex: "1 1 0", minWidth: 0 }}>
+                <select className="filter-select" style={{ width: "100%" }} value={sizeSelectValue} onChange={(e) => {
                   const v = e.target.value;
                   if (v === "custom") {
                     setShowSizePopover(true); setShowTimePopover(false);
@@ -3143,7 +3183,7 @@ function App() {
                   <option value="kb">{t.sizeKB}</option>
                   <option value="mb">{t.sizeMB}</option>
                   <option value="gb">{t.sizeGB}</option>
-                  <option value="custom">{t.sizeCustom}</option>
+                  <option value="custom">{customSizeLabel ?? t.sizeCustom}</option>
                 </select>
                 {showSizePopover && (
                   <div className="filter-popover" ref={sizePopoverRef} onClick={(e) => e.stopPropagation()}>
@@ -3181,12 +3221,14 @@ function App() {
               </div>
 
               {/* App filter */}
-              <select className="filter-select" value={appFilter} onChange={(e) => setAppFilter(e.target.value)}>
+              <div style={{ flex: "1 1 0", minWidth: 0 }}>
+                <select className="filter-select" style={{ width: "100%" }} value={appFilter} onChange={(e) => setAppFilter(e.target.value)}>
                 <option value="">{t.appFilterAll}</option>
                 {appFilterOptions.map((app) => (
                   <option key={app} value={app}>{app}</option>
                 ))}
               </select>
+              </div>
             </div>
 
             <div className="results-area" ref={tableShellRef}>
