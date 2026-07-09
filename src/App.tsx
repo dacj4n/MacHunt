@@ -2738,6 +2738,14 @@ function App() {
     return Array.from(apps).sort();
   }, [items]);
 
+  // Reset app filter when current selection is no longer in the options
+  // (e.g. after a new search returns no files for that app).
+  useEffect(() => {
+    if (appFilter && !appFilterOptions.includes(appFilter)) {
+      setAppFilter("");
+    }
+  }, [appFilterOptions, appFilter]);
+
   const settingsThemeOptions: Array<{ mode: ThemeMode; title: string; description: string }> = [
     { mode: "system", title: t.themeSystemTitle, description: t.themeSystemDesc },
     { mode: "light", title: t.themeLightTitle, description: t.themeLightDesc },
