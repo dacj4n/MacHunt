@@ -405,7 +405,7 @@ impl Engine {
         let query_lower = query.to_lowercase();
         let candidates = self
             .db
-            .search_fuzzy_candidates(&query_lower, options.path_prefix.as_deref().and_then(|p| p.to_str()), options.extensions.as_deref(), usize::MAX, options.include_files, options.include_dirs);
+            .search_fuzzy_candidates(&query_lower, options.path_prefix.as_deref().and_then(|p| p.to_str()), options.extensions.as_deref(), 100_000, options.include_files, options.include_dirs);
         let q_len = query.chars().count();
         let mut scored: Vec<(PathBuf, usize)> = Vec::new();
 
@@ -416,16 +416,12 @@ impl Engine {
                 file_name.to_lowercase()
             };
 
-            // Fast length pre-filter: skip names too far from query length.
-            let n_len = name_cmp.chars().count();
-            if n_len.abs_diff(q_len) > 3 {
-                continue;
-            }
-
-            let dist = levenshtein(&name_cmp, &query);
-            // Use character count, not byte length, for distance tolerance.
-            // Byte length overestimates for UTF-8: 2-char "账号" = 6 bytes → max=2 (too wide).
-            // Char count:  2 → max_dist = max(0, 1) = 1 (correct: 1 typo for 2 chars).
+            // Compute the minimum Levenshtein distance between the query and
+            // any substring of the filename. This handles both:
+            // - Short-name typos:  "redme" → "README"        (dist=1)
+            // - Substring matches: "账号"  → "信息系统账号信息模板" (dist=0,
+            //   because "账号" is a substring of "信息系统账号信息模板")
+            let dist = min_substring_levenshtein(&name_cmp, &query);
             let max_dist = (q_len / 3).max(1);
             if dist > max_dist {
                 continue;
@@ -766,4 +762,37 @@ fn levenshtein(a: &str, b: &str) -> usize {
         std::mem::swap(&mut prev, &mut curr);
     }
     prev[b_len]
+}
+
+/// Minimum Levenshtein distance between `query` and any substring of `text`.
+/// Uses a sliding window over `text` — only checks windows of similar length
+/// to the query (query_len ± 3). Returns 0 if query is a substring of text.
+fn min_substring_levenshtein(text: &str, query: &str) -> usize {
+    let text_chars: Vec<char> = text.chars().collect();
+    let query_chars: Vec<char> = query.chars().collect();
+    let t_len = text_chars.len();
+    let q_len = query_chars.len();
+
+    if q_len == 0 { return 0; }
+    if t_len == 0 { return q_len; }
+    if t_len < q_len {
+        return levenshtein(text, query);
+    }
+
+    let min_win = q_len.saturating_sub(3);
+    let max_win = (q_len + 3).min(t_len);
+    let mut best = usize::MAX;
+
+    // Slide windows of various lengths over text
+    for win_len in min_win..=max_win {
+        for start in 0..=t_len.saturating_sub(win_len) {
+            let slice: String = text_chars[start..start + win_len].iter().collect();
+            let dist = levenshtein(&slice, query);
+            if dist < best {
+                best = dist;
+                if best == 0 { return 0; } // Exact match found
+            }
+        }
+    }
+    best
 }

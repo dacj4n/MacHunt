@@ -1121,16 +1121,18 @@ impl Db {
         let ext_clause = Self::extension_sql(extensions);
         let type_clause = Self::is_dir_sql(include_files, include_dirs);
         let prefix: String = query_lower.chars().take(2).collect();
-        let len_min = q_len.saturating_sub(3).max(1) as i64;
-        // Use wider upper bound for non-Latin queries (Chinese etc. have longer filenames).
-        // Cap at 3× query length, minimum q_len+10 to avoid over-filtering short queries.
-        let len_max = (q_len * 3).max(q_len + 10) as i64;
-        let lim = limit as i64;
+        let lim = if limit >= i64::MAX as usize {
+            i64::MAX
+        } else {
+            limit as i64
+        };
+        // Drop the LENGTH() SQL filter — Chinese filenames routinely exceed
+        // any reasonable hard-coded bound (e.g. q_len=2 but files have 20+ chars).
+        // Length + Levenshtein filtering stays in Rust engine.rs.
         let sql = format!(
             "SELECT d.path, f.name FROM files f
              JOIN dirs d ON d.id = f.dir_id
-             WHERE f.name_lower LIKE ?
-               AND LENGTH(f.name_lower) BETWEEN ? AND ?{}{}{} LIMIT ?",
+             WHERE f.name_lower LIKE ?{}{}{} LIMIT ?",
             path_clause, ext_clause, type_clause
         );
         let mut stmt = conn.prepare(&sql).unwrap();
@@ -1139,12 +1141,12 @@ impl Db {
         let like_pat = format!("%{}%", prefix);
         if let Some(ref pp) = path_param {
             stmt.query_map(
-                params![like_pat, len_min, len_max, pp, lim],
+                params![like_pat, pp, lim],
                 Self::map_row as fn(&rusqlite::Row) -> _,
             )
         } else {
             stmt.query_map(
-                params![like_pat, len_min, len_max, lim],
+                params![like_pat, lim],
                 Self::map_row as fn(&rusqlite::Row) -> _,
             )
         }
