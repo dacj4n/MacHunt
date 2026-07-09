@@ -604,8 +604,7 @@ body {
 .path-input:focus {
   box-shadow:
     var(--shadow-inset-dark),
-    var(--shadow-inset-light),
-    0 0 0 1px rgba(59, 130, 246, 0.3);
+    var(--shadow-inset-light);
 }
 
 .path-input:disabled {
@@ -686,6 +685,93 @@ body {
   text-overflow: ellipsis;
 }
 
+/* Custom select dropdowns (mimic path filter style) */
+.custom-select {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.custom-select-trigger {
+  width: 100%;
+  height: 32px;
+  border: none;
+  border-radius: var(--r-full);
+  background: var(--pn-surface-container-low);
+  color: var(--pn-on-surface);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  padding: 0 28px 0 10px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23777'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+  transition: box-shadow var(--ease);
+}
+
+.custom-select-trigger:hover {
+  background-color: var(--pn-surface-container);
+}
+
+.custom-select-trigger:focus-visible {
+  outline: none;
+}
+
+.custom-select-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 180;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--r-lg);
+  background: var(--pn-surface-container);
+  box-shadow:
+    4px 8px 24px rgba(0, 0, 0, 0.5),
+    var(--shadow-highlight);
+  padding: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.custom-select-item {
+  width: 100%;
+  border: none;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--pn-on-surface-variant);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  padding: 8px 10px;
+  cursor: pointer !important;
+  transition: background-color var(--ease);
+}
+
+.custom-select-item:hover,
+.custom-select-item.active {
+  background: var(--pn-surface-container-high);
+  color: var(--pn-on-surface);
+}
+
+.custom-select-check {
+  color: var(--pn-outline);
+  font-size: 11px;
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+}
+
 /* Toggle buttons (regex, case) */
 .toggle-btn {
   flex-shrink: 0;
@@ -730,45 +816,16 @@ body {
   flex-shrink: 0;
 }
 
-.filter-select {
-  height: 32px;
-  padding: 0 28px 0 10px;
-  border: none;
-  border-radius: 8px;
-  background: var(--pn-surface-container);
-  color: var(--pn-on-surface);
-  font-family: inherit;
-  font-size: 0.8125rem;
-  cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  box-shadow: var(--shadow-depth), var(--shadow-highlight);
-  transition: all var(--t-speed) var(--t-ease);
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.filter-select:hover {
-  background-color: var(--pn-surface-container-high);
-}
-
-.filter-select:focus-visible {
-  outline: none;
-}
-
 .filter-input {
   height: 32px;
-  padding: 0 8px;
+  padding: 0 12px;
   border: none;
-  border-radius: 8px;
-  background: var(--pn-surface-container);
+  border-radius: var(--r-full);
+  background: var(--pn-surface-container-low);
   color: var(--pn-on-surface);
   font-family: inherit;
   font-size: 0.8125rem;
-  box-shadow: var(--shadow-depth), var(--shadow-highlight);
+  box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
   flex-shrink: 0;
   width: 90px;
 }
@@ -780,7 +837,6 @@ body {
 
 .filter-input:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 1px var(--pn-primary), var(--shadow-depth), var(--shadow-highlight);
 }
 
 /* ===== Filter Popover ===== */
@@ -789,10 +845,13 @@ body {
   top: 40px;
   right: 0;
   z-index: 100;
-  background: var(--pn-surface-container-highest);
-  border-radius: 16px;
-  padding: 18px;
-  box-shadow: 0 12px 48px rgba(0,0,0,0.5), 0 0 0 0.5px rgba(255,255,255,0.08);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--r-lg);
+  background: var(--pn-surface-container);
+  padding: 12px;
+  box-shadow:
+    4px 8px 24px rgba(0, 0, 0, 0.5),
+    var(--shadow-highlight);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -812,10 +871,7 @@ body {
 }
 
 .filter-popover-row .filter-input {
-  flex: 1; min-width: 0; height: 32px; font-size: 0.85rem; padding: 0 8px;
-}
-.filter-popover-row .filter-select {
-  flex: 1; min-width: 0; height: 32px; font-size: 0.85rem;
+  flex: 1; min-width: 0; height: 32px; font-size: 0.85rem; padding: 0 12px;
 }
 
 .filter-popover-actions {
@@ -1766,8 +1822,7 @@ body {
 .form-input:focus {
   box-shadow:
     var(--shadow-inset-dark),
-    var(--shadow-inset-light),
-    0 0 0 2px rgba(59, 130, 246, 0.2);
+    var(--shadow-inset-light);
 }
 
 .form-input:disabled {
@@ -1781,13 +1836,36 @@ body {
   border: none;
   border-radius: var(--r-full);
   background: var(--pn-surface-container-low);
-  padding: 0 16px;
+  padding: 0 36px 0 16px;
   font-family: var(--font-primary);
   font-size: 13px;
   color: var(--pn-on-surface);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   outline: none;
   cursor: pointer !important;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23777'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
+  transition: box-shadow var(--ease);
+}
+
+.form-select:hover {
+  background-color: var(--pn-surface-container);
+}
+
+.form-select:focus-visible {
+  outline: none;
+}
+
+.form-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed !important;
 }
 
 .form-row {

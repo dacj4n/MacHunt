@@ -1017,6 +1017,85 @@ function savePinnedItems(items: SearchResultItem[]) {
   window.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(items));
 }
 
+function CustomSelect<T extends string>({
+  value,
+  options,
+  onChange,
+  title,
+  disabled,
+  triggerClassName = "custom-select-trigger",
+  style,
+}: {
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void | Promise<void>;
+  title?: string;
+  disabled?: boolean;
+  triggerClassName?: string;
+  style?: React.CSSProperties;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        panelRef.current?.contains(target) ||
+        triggerRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setIsOpen(false);
+    };
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, [isOpen]);
+
+  const selectedLabel =
+    options.find((o) => o.value === value)?.label ?? "";
+
+  return (
+    <div className="custom-select" style={style}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={triggerClassName}
+        title={title}
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return;
+          setIsOpen((prev) => !prev);
+        }}
+      >
+        {selectedLabel}
+      </button>
+      {isOpen && !disabled && (
+        <div className="custom-select-panel" ref={panelRef}>
+          {options.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              className={`custom-select-item ${opt.value === value ? "active" : ""}`}
+              onClick={() => {
+                void onChange(opt.value);
+                setIsOpen(false);
+              }}
+            >
+              <span className="custom-select-check">
+                {opt.value === value ? "✓" : ""}
+              </span>
+              <span>{opt.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [activeView, setActiveView] = useState<ViewMode>("search");
   const [themeMode, setThemeMode] = useState<ThemeMode>(loadStoredTheme);
@@ -1109,8 +1188,7 @@ function App() {
     return label;
   }, [sizeFilter, showSizePopover, filterVersion]);
 
-  const timeSelectValue = timeFilter === "custom" || showTimePopover ? "custom" : timeFilter;
-  const sizeSelectValue = sizeFilter === "custom" || showSizePopover ? "custom" : sizeFilter;
+
   // Calendar state
   const [calMonth, setCalMonth] = useState(() => new Date().getMonth());
   const [calYear, setCalYear] = useState(() => new Date().getFullYear());
@@ -3078,36 +3156,35 @@ function App() {
 
               {/* Time filter */}
               <div style={{ position: "relative", flex: "1 1 0", minWidth: 0 }}>
-                <select className="filter-select" style={{ width: "100%" }} title={timeFilter === "custom" ? (customTimeLabel ?? t.timeCustom) : ({ all: t.timeAll, today: t.timeToday, week: t.timeWeek, month: t.timeMonth, year: t.timeYear } as Record<string, string>)[timeFilter]} value={timeSelectValue} onMouseDown={(e) => {
-                  // Allow re-selecting "custom" when already on custom with popover closed
-                  if (timeFilter === "custom" && !showTimePopover) {
-                    (e.currentTarget as HTMLSelectElement).value = "";
-                  }
-                }} onChange={(e) => {
-                  const v = e.target.value;
-                  if (v === "custom") {
-                    // Sync calendar state to current filter
-                    if (customTimeFromRef.current) {
-                      setCalFrom(new Date(customTimeFromRef.current).toISOString().slice(0, 10));
-                    } else { setCalFrom(""); }
-                    if (customTimeToRef.current) {
-                      setCalTo(new Date(customTimeToRef.current - 86399999).toISOString().slice(0, 10));
-                    } else { setCalTo(""); }
-                    setCalSelecting("from");
-                    setShowTimePopover(true); setShowSizePopover(false);
-                  } else if (v !== "") {
-                    setShowTimePopover(false);
-                    customTimeFromRef.current = 0; customTimeToRef.current = 0;
-                    setTimeFilter(v);
-                  }
-                }}>
-                  <option value="all">{t.timeAll}</option>
-                  <option value="today">{t.timeToday}</option>
-                  <option value="week">{t.timeWeek}</option>
-                  <option value="month">{t.timeMonth}</option>
-                  <option value="year">{t.timeYear}</option>
-                  <option value="custom">{customTimeLabel ?? t.timeCustom}</option>
-                </select>
+                <CustomSelect
+                  value={timeFilter}
+                  title={customTimeLabel ?? undefined}
+                  options={[
+                    { value: "all", label: t.timeAll },
+                    { value: "today", label: t.timeToday },
+                    { value: "week", label: t.timeWeek },
+                    { value: "month", label: t.timeMonth },
+                    { value: "year", label: t.timeYear },
+                    { value: "custom", label: customTimeLabel ?? t.timeCustom },
+                  ]}
+                  onChange={(v) => {
+                    if (v === "custom") {
+                      // Sync calendar state to current filter
+                      if (customTimeFromRef.current) {
+                        setCalFrom(new Date(customTimeFromRef.current).toISOString().slice(0, 10));
+                      } else { setCalFrom(""); }
+                      if (customTimeToRef.current) {
+                        setCalTo(new Date(customTimeToRef.current - 86399999).toISOString().slice(0, 10));
+                      } else { setCalTo(""); }
+                      setCalSelecting("from");
+                      setShowTimePopover(true); setShowSizePopover(false);
+                    } else {
+                      setShowTimePopover(false);
+                      customTimeFromRef.current = 0; customTimeToRef.current = 0;
+                      setTimeFilter(v);
+                    }
+                  }}
+                />
                 {showTimePopover && (
                   <div className="filter-popover" ref={timePopoverRef} onClick={(e) => e.stopPropagation()}>
                     <div className="cal-header">
@@ -3174,28 +3251,26 @@ function App() {
               </div>
 
               {/* Size filter */}
-              <div style={{ position: "relative", flex: "0.7 1 0", minWidth: 0 }}>
-                <select className="filter-select" style={{ width: "100%" }} value={sizeSelectValue} onMouseDown={(e) => {
-                  // Allow re-selecting "custom" when already on custom with popover closed
-                  if (sizeFilter === "custom" && !showSizePopover) {
-                    (e.currentTarget as HTMLSelectElement).value = "";
-                  }
-                }} onChange={(e) => {
-                  const v = e.target.value;
-                  if (v === "custom") {
-                    setShowSizePopover(true); setShowTimePopover(false);
-                  } else if (v !== "") {
-                    setShowSizePopover(false);
-                    customSizeMinRef.current = 0; customSizeMaxRef.current = 0;
-                    setSizeFilter(v);
-                  }
-                }}>
-                  <option value="all">{t.sizeAll}</option>
-                  <option value="kb">{t.sizeKB}</option>
-                  <option value="mb">{t.sizeMB}</option>
-                  <option value="gb">{t.sizeGB}</option>
-                  <option value="custom">{customSizeLabel ?? t.sizeCustom}</option>
-                </select>
+              <div style={{ position: "relative", flex: "1 1 0", minWidth: 0 }}>
+                <CustomSelect
+                  value={sizeFilter}
+                  options={[
+                    { value: "all", label: t.sizeAll },
+                    { value: "kb", label: t.sizeKB },
+                    { value: "mb", label: t.sizeMB },
+                    { value: "gb", label: t.sizeGB },
+                    { value: "custom", label: customSizeLabel ?? t.sizeCustom },
+                  ]}
+                  onChange={(v) => {
+                    if (v === "custom") {
+                      setShowSizePopover(true); setShowTimePopover(false);
+                    } else {
+                      setShowSizePopover(false);
+                      customSizeMinRef.current = 0; customSizeMaxRef.current = 0;
+                      setSizeFilter(v);
+                    }
+                  }}
+                />
                 {showSizePopover && (
                   <div className="filter-popover" ref={sizePopoverRef} onClick={(e) => e.stopPropagation()}>
                     <div className="filter-popover-row">
@@ -3210,12 +3285,15 @@ function App() {
                     </div>
                     <div className="filter-popover-row">
                       <label>单位</label>
-                      <select className="filter-select" style={{ width: 100 }} value={customSizeUnit}
-                        onChange={(e) => setCustomSizeUnit(e.target.value)}>
-                        <option value="KB">KB</option>
-                        <option value="MB">MB</option>
-                        <option value="GB">GB</option>
-                      </select>
+                      <CustomSelect
+                        value={customSizeUnit}
+                        options={[
+                          { value: "KB", label: "KB" },
+                          { value: "MB", label: "MB" },
+                          { value: "GB", label: "GB" },
+                        ]}
+                        onChange={(v) => setCustomSizeUnit(v)}
+                      />
                     </div>
                     <div className="filter-popover-actions">
                       <button className="act-btn" onClick={() => {
@@ -3232,13 +3310,15 @@ function App() {
               </div>
 
               {/* App filter */}
-              <div style={{ flex: "0.7 1 0", minWidth: 0 }}>
-                <select className="filter-select" style={{ width: "100%" }} value={appFilter} onChange={(e) => setAppFilter(e.target.value)}>
-                <option value="">{t.appFilterAll}</option>
-                {appFilterOptions.map((app) => (
-                  <option key={app} value={app}>{app}</option>
-                ))}
-              </select>
+              <div style={{ flex: "1 1 0", minWidth: 0 }}>
+                <CustomSelect
+                  value={appFilter}
+                  options={[
+                    { value: "", label: t.appFilterAll },
+                    ...appFilterOptions.map((app) => ({ value: app, label: app })),
+                  ]}
+                  onChange={(v) => setAppFilter(v)}
+                />
               </div>
             </div>
 
@@ -3793,11 +3873,21 @@ function App() {
               <div className="rule-section">
                 <div className="rule-section-title">{t.defaultFolderAction}</div>
                 <div className="form-row">
-                  <select
-                    className="form-select"
+                  <CustomSelect
+                    triggerClassName="form-select"
                     value={defaultFolderAction}
-                    onChange={async (event) => {
-                      const val = event.target.value;
+                    options={[
+                      { value: "Finder", label: t.folderActionFinder },
+                      { value: "QSpace Pro", label: t.folderActionQSpace },
+                      ...(defaultFolderAction && !["Finder", "QSpace Pro"].includes(defaultFolderAction)
+                        ? [{
+                            value: defaultFolderAction,
+                            label: defaultFolderAction.includes("|") ? defaultFolderAction.split("|")[0] : defaultFolderAction,
+                          }]
+                        : []),
+                      { value: "__custom__", label: t.folderActionCustom },
+                    ]}
+                    onChange={async (val) => {
                       if (val === "__custom__") {
                         const appStr = await pickApp();
                         if (appStr) {
@@ -3812,27 +3902,31 @@ function App() {
                       }
                     }}
                     style={{ flex: 1 }}
-                  >
-                    <option value="Finder">{t.folderActionFinder}</option>
-                    <option value="QSpace Pro">{t.folderActionQSpace}</option>
-                    {!["Finder", "QSpace Pro"].includes(defaultFolderAction) && defaultFolderAction && (
-                      <option value={defaultFolderAction}>
-                        {defaultFolderAction.includes("|") ? defaultFolderAction.split("|")[0] : defaultFolderAction}
-                      </option>
-                    )}
-                    <option value="__custom__">{t.folderActionCustom}</option>
-                  </select>
+                  />
                 </div>
               </div>
 
               <div className="rule-section">
                 <div className="rule-section-title">{t.defaultTerminalAction}</div>
                 <div className="form-row">
-                  <select
-                    className="form-select"
+                  <CustomSelect
+                    triggerClassName="form-select"
                     value={defaultTerminalAction}
-                    onChange={async (event) => {
-                      const val = event.target.value;
+                    options={[
+                      { value: "Terminal", label: t.terminalActionTerminal },
+                      { value: "WezTerm", label: t.terminalActionWezTerm },
+                      { value: "iTerm", label: "iTerm2" },
+                      { value: "kitty", label: "Kitty" },
+                      { value: "Warp", label: "Warp" },
+                      ...(defaultTerminalAction && !["Terminal", "WezTerm", "iTerm", "kitty", "Warp"].includes(defaultTerminalAction)
+                        ? [{
+                            value: defaultTerminalAction,
+                            label: defaultTerminalAction.includes("|") ? defaultTerminalAction.split("|")[0] : defaultTerminalAction,
+                          }]
+                        : []),
+                      { value: "__custom__", label: t.terminalActionCustom },
+                    ]}
+                    onChange={async (val) => {
                       if (val === "__custom__") {
                         const appStr = await pickApp();
                         if (appStr) {
@@ -3847,19 +3941,7 @@ function App() {
                       }
                     }}
                     style={{ flex: 1 }}
-                  >
-                    <option value="Terminal">{t.terminalActionTerminal}</option>
-                    <option value="WezTerm">{t.terminalActionWezTerm}</option>
-                    <option value="iTerm">iTerm2</option>
-                    <option value="kitty">Kitty</option>
-                    <option value="Warp">Warp</option>
-                    {!["Terminal", "WezTerm", "iTerm", "kitty", "Warp"].includes(defaultTerminalAction) && defaultTerminalAction && (
-                      <option value={defaultTerminalAction}>
-                        {defaultTerminalAction.includes("|") ? defaultTerminalAction.split("|")[0] : defaultTerminalAction}
-                      </option>
-                    )}
-                    <option value="__custom__">{t.terminalActionCustom}</option>
-                  </select>
+                  />
                 </div>
               </div>
             </article>
@@ -3956,16 +4038,17 @@ function App() {
                 <p className="set-card-desc">{t.excludeDirsDesc}</p>
                 <p className="set-card-hint">{t.excludeWildcardHint}</p>
                 <div className="form-row">
-                  <select
-                    className="form-select"
+                  <CustomSelect
+                    triggerClassName="form-select"
                     value={excludeRuleType}
                     disabled={isExcludeDirSaving}
-                    onChange={(event) => setExcludeRuleType(event.target.value as ExcludeRuleType)}
+                    options={[
+                      { value: "exact", label: t.excludeRuleExact },
+                      { value: "pattern", label: t.excludeRulePattern },
+                    ]}
+                    onChange={(val) => setExcludeRuleType(val as ExcludeRuleType)}
                     style={{ width: "auto", flexShrink: 0 }}
-                  >
-                    <option value="exact">{t.excludeRuleExact}</option>
-                    <option value="pattern">{t.excludeRulePattern}</option>
-                  </select>
+                  />
                 </div>
                 <div className="form-row">
                   <input

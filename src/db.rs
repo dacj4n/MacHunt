@@ -1089,9 +1089,8 @@ impl Db {
     /// List all files in a directory (by dir path). Used for rename cleanup.
     pub fn list_files_in_dir(&self, dir_path: &str) -> Vec<(String, String)> {
         let conn = self.conn.lock();
-        let mut stmt = conn
-            .prepare(
-                "SELECT f.name,
+        let mut stmt = match conn.prepare(
+            "SELECT f.name,
                     CASE
                         WHEN d.path = '/' THEN '/' || f.name
                         ELSE d.path || '/' || f.name
@@ -1099,14 +1098,17 @@ impl Db {
                  FROM files f
                  JOIN dirs d ON d.id = f.dir_id
                  WHERE d.path = ?1",
-            )
-            .unwrap();
-        stmt.query_map(params![dir_path], |row| {
+        ) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let result: Vec<_> = match stmt.query_map(params![dir_path], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .unwrap()
-        .filter_map(|r| r.ok())
-        .collect()
+        }) {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(_) => Vec::new(),
+        };
+        result
     }
 
     /// Delete a file entry by directory path and file name.
