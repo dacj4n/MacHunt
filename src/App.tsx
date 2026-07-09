@@ -1070,8 +1070,8 @@ function App() {
   const [showSizePopover, setShowSizePopover] = useState(false);
   const timePopoverRef = useRef<HTMLDivElement | null>(null);
   const sizePopoverRef = useRef<HTMLDivElement | null>(null);
-  const prevTimeRef = useRef("all");
-  const prevSizeRef = useRef("all");
+  const timeSelectValue = timeFilter === "custom" || showTimePopover ? "custom" : timeFilter;
+  const sizeSelectValue = sizeFilter === "custom" || showSizePopover ? "custom" : sizeFilter;
   // Applied custom values (separate from draft)
   const customSizeMinRef = useRef(0);
   const customSizeMaxRef = useRef(0);
@@ -1079,18 +1079,16 @@ function App() {
   const customTimeToRef = useRef(0);
   const [filterVersion, setFilterVersion] = useState(0);
 
-  // Close popovers and revert on click outside
+  // Close popovers on click outside (filter unchanged until Apply)
   useEffect(() => {
     if (!showTimePopover && !showSizePopover) return;
     const onMouseDown = (e: MouseEvent) => {
       const target = e.target as Node;
       if (showTimePopover && timePopoverRef.current && !timePopoverRef.current.contains(target)) {
         setShowTimePopover(false);
-        setTimeFilter(prevTimeRef.current);
       }
       if (showSizePopover && sizePopoverRef.current && !sizePopoverRef.current.contains(target)) {
         setShowSizePopover(false);
-        setSizeFilter(prevSizeRef.current);
       }
     };
     document.addEventListener("mousedown", onMouseDown);
@@ -3041,11 +3039,15 @@ function App() {
 
               {/* Time filter */}
               <div style={{ position: "relative" }}>
-                <select className="filter-select" value={timeFilter} onChange={(e) => {
+                <select className="filter-select" value={timeSelectValue} onChange={(e) => {
                   const v = e.target.value;
-                  if (v === "custom") { prevTimeRef.current = timeFilter; setShowTimePopover(true); setShowSizePopover(false); }
-                  else { setShowTimePopover(false); customTimeFromRef.current = 0; customTimeToRef.current = 0; }
-                  setTimeFilter(v);
+                  if (v === "custom") {
+                    setShowTimePopover(true); setShowSizePopover(false);
+                  } else {
+                    setShowTimePopover(false);
+                    customTimeFromRef.current = 0; customTimeToRef.current = 0;
+                    setTimeFilter(v);
+                  }
                 }}>
                   <option value="all">{t.timeAll}</option>
                   <option value="today">{t.timeToday}</option>
@@ -3070,6 +3072,7 @@ function App() {
                       <button className="act-btn" onClick={() => {
                         customTimeFromRef.current = customTimeFrom ? new Date(customTimeFrom).getTime() : 0;
                         customTimeToRef.current = customTimeTo ? new Date(customTimeTo).getTime() + 86399999 : 0;
+                        setTimeFilter("custom");
                         setShowTimePopover(false);
                         setFilterVersion(v => v + 1);
                       }}>{t.shortcutApply}</button>
@@ -3080,11 +3083,15 @@ function App() {
 
               {/* Size filter */}
               <div style={{ position: "relative" }}>
-                <select className="filter-select" value={sizeFilter} onChange={(e) => {
+                <select className="filter-select" value={sizeSelectValue} onChange={(e) => {
                   const v = e.target.value;
-                  if (v === "custom") { prevSizeRef.current = sizeFilter; setShowSizePopover(true); setShowTimePopover(false); }
-                  else { setShowSizePopover(false); customSizeMinRef.current = 0; customSizeMaxRef.current = 0; }
-                  setSizeFilter(v);
+                  if (v === "custom") {
+                    setShowSizePopover(true); setShowTimePopover(false);
+                  } else {
+                    setShowSizePopover(false);
+                    customSizeMinRef.current = 0; customSizeMaxRef.current = 0;
+                    setSizeFilter(v);
+                  }
                 }}>
                   <option value="all">{t.sizeAll}</option>
                   <option value="kb">{t.sizeKB}</option>
@@ -3118,6 +3125,7 @@ function App() {
                         const mul = customSizeUnit === "GB" ? 1073741824 : customSizeUnit === "MB" ? 1048576 : 1024;
                         customSizeMinRef.current = (parseFloat(customSizeMin) || 0) * mul;
                         customSizeMaxRef.current = (parseFloat(customSizeMax) || 0) * mul;
+                        setSizeFilter("custom");
                         setShowSizePopover(false);
                         setFilterVersion(v => v + 1);
                       }}>{t.shortcutApply}</button>
