@@ -226,6 +226,10 @@ impl Engine {
         // per-search `exists()` check. Runs infrequently and at low
         // priority to avoid competing with search/watcher operations.
         self.start_lazy_gc();
+
+        // Auto-detect newly mounted volumes (SMB, WebDAV, external disks)
+        // and trigger incremental indexing when they appear.
+        self.start_volume_poller();
     }
 
     /// Spawn a low-frequency background thread that cleans dead paths.
@@ -275,6 +279,80 @@ impl Engine {
                 }
                 cleanup_running.store(false, Ordering::SeqCst);
                 thread::sleep(std::time::Duration::from_secs(7200));
+            }
+        });
+    }
+
+    /// Periodically scan `/Volumes/` for newly mounted network/external drives
+    /// and automatically trigger incremental indexing on them. FSEvents does not
+    /// monitor SMB/WebDAV volumes, so this poller fills the gap.
+    fn start_volume_poller(&self) {
+        let engine = self.clone();
+        let include_dirs = self.include_dirs.clone();
+
+        thread::spawn(move || {
+            use std::collections::HashSet;
+
+            let vol_root = std::path::Path::new("/Volumes");
+            let mut known: HashSet<String> = HashSet::new();
+            // Initialize with currently mounted volumes
+            if let Ok(entries) = std::fs::read_dir(vol_root) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        known.insert(path.to_string_lossy().to_string());
+                    }
+                }
+            }
+
+            // Poll every 15 seconds — fast enough to catch remounts,
+            // slow enough to avoid I/O overhead.
+            loop {
+                thread::sleep(std::time::Duration::from_secs(15));
+
+                if !watcher::is_watch_running() {
+                    break;
+                }
+
+                let mut current: HashSet<String> = HashSet::new();
+                if let Ok(entries) = std::fs::read_dir(vol_root) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            current.insert(path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+
+                // Find newly mounted volumes
+                let new_volumes: Vec<String> = current
+                    .difference(&known)
+                    .cloned()
+                    .filter(|v| {
+                        // Skip system volumes and internal symlinks
+                        let p = std::path::Path::new(v);
+                        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                        name != "Macintosh HD" && name != "System"
+                            && !p.to_string_lossy().contains("/.timemachine")
+                    })
+                    .collect();
+
+                if !new_volumes.is_empty() {
+                    for vol_path in &new_volumes {
+                        println!(
+                            "[VolumePoller] detected new mount: {} — starting background index",
+                            vol_path
+                        );
+                        let engine_bg = engine.clone();
+                        let vol = vol_path.clone();
+                        let inc_dirs = include_dirs.load(Ordering::Relaxed);
+                        thread::spawn(move || {
+                            engine_bg.build_index(Some(vol), false, inc_dirs, false);
+                        });
+                    }
+                }
+
+                known = current;
             }
         });
     }
@@ -491,25 +569,26 @@ impl Engine {
     ) -> Vec<PathBuf> {
         let mut with_meta: Vec<(PathBuf, u64)> = paths
             .into_iter()
-            .filter_map(|p| {
-                let meta = std::fs::metadata(&p).ok()?;
-                let val = match sort_key {
-                    SortKey::Size => {
-                        if meta.is_file() {
-                            meta.len()
-                        } else {
-                            0
+            .map(|p| {
+                let val = std::fs::metadata(&p)
+                    .ok()
+                    .and_then(|meta| match sort_key {
+                        SortKey::Size => {
+                            if meta.is_file() {
+                                Some(meta.len())
+                            } else {
+                                Some(0)
+                            }
                         }
-                    }
-                    SortKey::Modified => meta
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_millis() as u64)
-                        .unwrap_or(0),
-                    _ => 0,
-                };
-                Some((p, val))
+                        SortKey::Modified => meta
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .and_then(|d| u64::try_from(d.as_millis()).ok()),
+                        _ => Some(0),
+                    })
+                    .unwrap_or(0); // keep path even if metadata unavailable (e.g. unmounted network drive)
+                (p, val)
             })
             .collect();
         with_meta.sort_by(|a, b| {
