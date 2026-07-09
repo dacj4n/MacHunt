@@ -84,11 +84,15 @@ const I18N = {
     timeWeek: "一周内",
     timeMonth: "一月内",
     timeYear: "一年内",
+    timeCustom: "自定义天数...",
     sizeFilter: "大小",
     sizeAll: "所有大小",
     sizeKB: "小于 1 MB",
     sizeMB: "1 MB ~ 100 MB",
     sizeGB: "大于 100 MB",
+    sizeCustom: "自定义范围...",
+    sizeMin: "最小",
+    sizeMax: "最大",
     appFilter: "应用",
     appFilterAll: "所有应用",
     build: "构建",
@@ -248,11 +252,15 @@ const I18N = {
     timeWeek: "This Week",
     timeMonth: "This Month",
     timeYear: "This Year",
+    timeCustom: "Custom days...",
     sizeFilter: "Size",
     sizeAll: "Any Size",
     sizeKB: "Under 1 MB",
     sizeMB: "1 MB – 100 MB",
     sizeGB: "Over 100 MB",
+    sizeCustom: "Custom range...",
+    sizeMin: "Min",
+    sizeMax: "Max",
     appFilter: "App",
     appFilterAll: "Any App",
     build: "Build",
@@ -645,6 +653,17 @@ const EXT_APP_MAP: Record<string, string> = {
   dmg: "磁盘工具", iso: "磁盘工具",
   sparseimage: "磁盘工具", sparsebundle: "磁盘工具",
 };
+
+function parseSize(input: string): number {
+  if (!input.trim()) return 0;
+  const s = input.trim().toLowerCase();
+  const num = parseFloat(s);
+  if (isNaN(num)) return 0;
+  if (s.endsWith("gb") || s.endsWith("g")) return num * 1073741824;
+  if (s.endsWith("mb") || s.endsWith("m")) return num * 1048576;
+  if (s.endsWith("kb") || s.endsWith("k")) return num * 1024;
+  return num; // raw bytes
+}
 
 function appForExt(ext: string): string {
   if (!ext) return "Other";
@@ -1039,8 +1058,11 @@ function App() {
   const [caseSensitive, setCaseSensitive] = useState(() => loadStoredCaseSensitive() ?? false);
   const [fuzzyEnabled, setFuzzyEnabled] = useState(() => loadStoredFuzzyEnabled() ?? false);
   const [activeTab, setActiveTab] = useState<TabId>("all");
-  const [timeFilter, setTimeFilter] = useState("all"); // all | today | week | month | year
-  const [sizeFilter, setSizeFilter] = useState("all"); // all | kb | mb | gb
+  const [timeFilter, setTimeFilter] = useState("all"); // all | today | week | month | year | custom
+  const [customTimeDays, setCustomTimeDays] = useState("");
+  const [sizeFilter, setSizeFilter] = useState("all"); // all | kb | mb | gb | custom
+  const [customSizeMin, setCustomSizeMin] = useState("");
+  const [customSizeMax, setCustomSizeMax] = useState("");
   const [appFilter, setAppFilter] = useState(""); // "" = all, or app name
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAscending, setSortAscending] = useState(true);
@@ -1152,16 +1174,20 @@ function App() {
     // Time filter
     if (timeFilter !== "all") {
       const now = Date.now();
-      const cutoff = now - ({
-        today: 86400000,
-        week: 604800000,
-        month: 2592000000,
-        year: 31536000000,
-      }[timeFilter] ?? 0);
-      list = list.filter((item) => {
-        const m = item.modifiedUnixMs;
-        return m != null && m >= cutoff;
-      });
+      const cutoff = timeFilter === "custom"
+        ? now - (parseInt(customTimeDays) || 0) * 86400000
+        : now - ({
+            today: 86400000,
+            week: 604800000,
+            month: 2592000000,
+            year: 31536000000,
+          }[timeFilter] ?? 0);
+      if (cutoff < now) {
+        list = list.filter((item) => {
+          const m = item.modifiedUnixMs;
+          return m != null && m >= cutoff;
+        });
+      }
     }
     // Size filter
     if (sizeFilter !== "all") {
@@ -1169,9 +1195,14 @@ function App() {
         const b = item.sizeBytes;
         if (b == null) return false;
         switch (sizeFilter) {
-          case "kb": return b < 1048576;           // < 1 MB
-          case "mb": return b >= 1048576 && b < 104857600; // 1 MB – 100 MB
-          case "gb": return b >= 104857600;         // > 100 MB
+          case "kb": return b < 1048576;
+          case "mb": return b >= 1048576 && b < 104857600;
+          case "gb": return b >= 104857600;
+          case "custom": {
+            const min = parseSize(customSizeMin);
+            const max = parseSize(customSizeMax);
+            return (min <= 0 || b >= min) && (max <= 0 || b <= max);
+          }
           default: return true;
         }
       });
@@ -1184,7 +1215,7 @@ function App() {
       });
     }
     return list;
-  }, [items, timeFilter, sizeFilter, appFilter]);
+  }, [items, timeFilter, customTimeDays, sizeFilter, customSizeMin, customSizeMax, appFilter]);
   const visibleStart = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VISIBLE_BUFFER);
   const visibleEnd = Math.min(filteredItems.length, visibleStart + Math.ceil(window.innerHeight / ROW_HEIGHT) + VISIBLE_BUFFER * 2);
   const visibleItems = filteredItems.slice(visibleStart, visibleEnd);
@@ -2979,7 +3010,18 @@ function App() {
                 <option value="week">{t.timeWeek}</option>
                 <option value="month">{t.timeMonth}</option>
                 <option value="year">{t.timeYear}</option>
+                <option value="custom">{t.timeCustom}</option>
               </select>
+              {timeFilter === "custom" && (
+                <input
+                  className="filter-input"
+                  type="number"
+                  min="1"
+                  placeholder="30"
+                  value={customTimeDays}
+                  onChange={(e) => setCustomTimeDays(e.target.value)}
+                />
+              )}
 
               {/* Size filter */}
               <select className="filter-select" value={sizeFilter} onChange={(e) => setSizeFilter(e.target.value)}>
@@ -2987,7 +3029,16 @@ function App() {
                 <option value="kb">{t.sizeKB}</option>
                 <option value="mb">{t.sizeMB}</option>
                 <option value="gb">{t.sizeGB}</option>
+                <option value="custom">{t.sizeCustom}</option>
               </select>
+              {sizeFilter === "custom" && (
+                <>
+                  <input className="filter-input" type="text" placeholder={`${t.sizeMin} (如 100KB)`}
+                    value={customSizeMin} onChange={(e) => setCustomSizeMin(e.target.value)} />
+                  <input className="filter-input" type="text" placeholder={`${t.sizeMax} (如 50MB)`}
+                    value={customSizeMax} onChange={(e) => setCustomSizeMax(e.target.value)} />
+                </>
+              )}
 
               {/* App filter */}
               <select className="filter-select" value={appFilter} onChange={(e) => setAppFilter(e.target.value)}>
