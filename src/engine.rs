@@ -423,8 +423,10 @@ impl Engine {
             }
 
             let dist = levenshtein(&name_cmp, &query);
-            // Allow up to (query_len / 3) + 1 edits; minimum tolerance of 1 for short queries.
-            let max_dist = (query.len() / 3).max(1);
+            // Use character count, not byte length, for distance tolerance.
+            // Byte length overestimates for UTF-8: 2-char "账号" = 6 bytes → max=2 (too wide).
+            // Char count:  2 → max_dist = max(0, 1) = 1 (correct: 1 typo for 2 chars).
+            let max_dist = (q_len / 3).max(1);
             if dist > max_dist {
                 continue;
             }

@@ -1122,7 +1122,9 @@ impl Db {
         let type_clause = Self::is_dir_sql(include_files, include_dirs);
         let prefix: String = query_lower.chars().take(2).collect();
         let len_min = q_len.saturating_sub(3).max(1) as i64;
-        let len_max = (q_len + 3) as i64;
+        // Use wider upper bound for non-Latin queries (Chinese etc. have longer filenames).
+        // Cap at 3× query length, minimum q_len+10 to avoid over-filtering short queries.
+        let len_max = (q_len * 3).max(q_len + 10) as i64;
         let lim = limit as i64;
         let sql = format!(
             "SELECT d.path, f.name FROM files f
@@ -1132,14 +1134,17 @@ impl Db {
             path_clause, ext_clause, type_clause
         );
         let mut stmt = conn.prepare(&sql).unwrap();
+        // Use %prefix% (substring) instead of prefix% to catch files where
+        // the query appears mid-name (e.g. query="账号" matches "用户账号.xlsx").
+        let like_pat = format!("%{}%", prefix);
         if let Some(ref pp) = path_param {
             stmt.query_map(
-                params![format!("{}%", prefix), len_min, len_max, pp, lim],
+                params![like_pat, len_min, len_max, pp, lim],
                 Self::map_row as fn(&rusqlite::Row) -> _,
             )
         } else {
             stmt.query_map(
-                params![format!("{}%", prefix), len_min, len_max, lim],
+                params![like_pat, len_min, len_max, lim],
                 Self::map_row as fn(&rusqlite::Row) -> _,
             )
         }
