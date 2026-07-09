@@ -1078,6 +1078,12 @@ function App() {
   const customTimeFromRef = useRef(0);
   const customTimeToRef = useRef(0);
   const [filterVersion, setFilterVersion] = useState(0);
+  // Calendar state
+  const [calMonth, setCalMonth] = useState(() => new Date().getMonth());
+  const [calYear, setCalYear] = useState(() => new Date().getFullYear());
+  const [calSelecting, setCalSelecting] = useState<"from" | "to">("from");
+  const [calFrom, setCalFrom] = useState("");
+  const [calTo, setCalTo] = useState("");
 
   // Close popovers on click outside (filter unchanged until Apply)
   useEffect(() => {
@@ -3058,20 +3064,60 @@ function App() {
                 </select>
                 {showTimePopover && (
                   <div className="filter-popover" ref={timePopoverRef} onClick={(e) => e.stopPropagation()}>
-                    <div className="filter-popover-row">
-                      <label>{t.sizeMin}</label>
-                      <input className="filter-input" type="date" value={customTimeFrom}
-                        onChange={(e) => setCustomTimeFrom(e.target.value)} />
+                    <div className="cal-header">
+                      <button className="cal-nav" onClick={() => { if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}>‹</button>
+                      <span className="cal-title">{calYear}年 {calMonth + 1}月</span>
+                      <button className="cal-nav" onClick={() => { if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}>›</button>
                     </div>
-                    <div className="filter-popover-row">
-                      <label>{t.sizeMax}</label>
-                      <input className="filter-input" type="date" value={customTimeTo}
-                        onChange={(e) => setCustomTimeTo(e.target.value)} />
+                    <div className="cal-weekdays">
+                      {["日","一","二","三","四","五","六"].map(d => <span key={d} className="cal-wd">{d}</span>)}
+                    </div>
+                    <div className="cal-grid">
+                      {(() => {
+                        const first = new Date(calYear, calMonth, 1).getDay();
+                        const days = new Date(calYear, calMonth + 1, 0).getDate();
+                        const cells: Array<number | null> = [];
+                        for (let i = 0; i < first; i++) cells.push(null);
+                        for (let d = 1; d <= days; d++) cells.push(d);
+                        const fromTs = calFrom ? new Date(calFrom).getTime() : 0;
+                        const toTs = calTo ? new Date(calTo).getTime() + 86399999 : 0;
+                        return cells.map((d, i) => {
+                          if (d === null) return <span key={`e${i}`} className="cal-day empty" />;
+                          const ds = `${calYear}-${String(calMonth+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+                          const ts = new Date(ds).getTime();
+                          const inRange = fromTs && toTs && ts >= fromTs && ts <= toTs;
+                          const isFrom = calFrom === ds;
+                          const isTo = calTo === ds;
+                          let cls = "cal-day";
+                          if (isFrom || isTo) cls += " cal-range-edge";
+                          else if (inRange) cls += " cal-in-range";
+                          return (
+                            <span key={ds} className={cls} onClick={() => {
+                              if (calSelecting === "from") {
+                                setCalFrom(ds); setCalTo(""); setCalSelecting("to");
+                              } else {
+                                if (ds < calFrom) { setCalTo(calFrom); setCalFrom(ds); }
+                                else setCalTo(ds);
+                                setCalSelecting("from");
+                              }
+                            }}>{d}</span>
+                          );
+                        });
+                      })()}
+                    </div>
+                    <div className="filter-popover-row" style={{ marginTop: 8 }}>
+                      <label style={{ fontSize: "0.8rem" }}>从</label>
+                      <input className="filter-input" readOnly value={calFrom} style={{ fontSize: "0.85rem" }} />
+                      <label style={{ fontSize: "0.8rem", width: 24 }}>到</label>
+                      <input className="filter-input" readOnly value={calTo} style={{ fontSize: "0.85rem" }} />
                     </div>
                     <div className="filter-popover-actions">
+                      <button className="act-btn cancel" onClick={() => {
+                        setCalFrom(""); setCalTo(""); setCalSelecting("from");
+                      }}>清除</button>
                       <button className="act-btn" onClick={() => {
-                        customTimeFromRef.current = customTimeFrom ? new Date(customTimeFrom).getTime() : 0;
-                        customTimeToRef.current = customTimeTo ? new Date(customTimeTo).getTime() + 86399999 : 0;
+                        customTimeFromRef.current = calFrom ? new Date(calFrom).getTime() : 0;
+                        customTimeToRef.current = calTo ? new Date(calTo).getTime() + 86399999 : 0;
                         setTimeFilter("custom");
                         setShowTimePopover(false);
                         setFilterVersion(v => v + 1);
