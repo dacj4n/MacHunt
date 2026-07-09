@@ -3,24 +3,29 @@ use std::path::PathBuf;
 
 /// Events emitted by the volume poller thread for frontend status updates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type")]
 pub enum VolumeEvent {
     /// A new volume was detected — indexing is about to start.
+    #[serde(rename = "mountDetected")]
     MountDetected {
         path: String,
         name: String,
     },
     /// Indexing of a volume has completed.
+    #[serde(rename = "indexComplete")]
     IndexComplete {
         path: String,
+        #[serde(rename = "fileCount")]
         file_count: usize,
-        /// Total files indexed across all volumes.
+        #[serde(rename = "totalIndexed")]
         total_indexed: usize,
     },
     /// A volume was unmounted — index entries are being removed.
+    #[serde(rename = "volumeRemoved")]
     VolumeRemoved {
         path: String,
         name: String,
+        #[serde(rename = "totalIndexed")]
         total_indexed: usize,
     },
 }
