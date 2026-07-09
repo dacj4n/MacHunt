@@ -1068,12 +1068,34 @@ function App() {
   const [appFilter, setAppFilter] = useState(""); // "" = all, or app name
   const [showTimePopover, setShowTimePopover] = useState(false);
   const [showSizePopover, setShowSizePopover] = useState(false);
+  const timePopoverRef = useRef<HTMLDivElement | null>(null);
+  const sizePopoverRef = useRef<HTMLDivElement | null>(null);
+  const prevTimeRef = useRef("all");
+  const prevSizeRef = useRef("all");
   // Applied custom values (separate from draft)
   const customSizeMinRef = useRef(0);
   const customSizeMaxRef = useRef(0);
   const customTimeFromRef = useRef(0);
   const customTimeToRef = useRef(0);
   const [filterVersion, setFilterVersion] = useState(0);
+
+  // Close popovers and revert on click outside
+  useEffect(() => {
+    if (!showTimePopover && !showSizePopover) return;
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (showTimePopover && timePopoverRef.current && !timePopoverRef.current.contains(target)) {
+        setShowTimePopover(false);
+        setTimeFilter(prevTimeRef.current);
+      }
+      if (showSizePopover && sizePopoverRef.current && !sizePopoverRef.current.contains(target)) {
+        setShowSizePopover(false);
+        setSizeFilter(prevSizeRef.current);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [showTimePopover, showSizePopover]);
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAscending, setSortAscending] = useState(true);
 
@@ -3021,9 +3043,9 @@ function App() {
               <div style={{ position: "relative" }}>
                 <select className="filter-select" value={timeFilter} onChange={(e) => {
                   const v = e.target.value;
-                  setTimeFilter(v);
-                  if (v === "custom") { setShowTimePopover(true); setShowSizePopover(false); }
+                  if (v === "custom") { prevTimeRef.current = timeFilter; setShowTimePopover(true); setShowSizePopover(false); }
                   else { setShowTimePopover(false); customTimeFromRef.current = 0; customTimeToRef.current = 0; }
+                  setTimeFilter(v);
                 }}>
                   <option value="all">{t.timeAll}</option>
                   <option value="today">{t.timeToday}</option>
@@ -3033,7 +3055,7 @@ function App() {
                   <option value="custom">{t.timeCustom}</option>
                 </select>
                 {showTimePopover && (
-                  <div className="filter-popover" onClick={(e) => e.stopPropagation()}>
+                  <div className="filter-popover" ref={timePopoverRef} onClick={(e) => e.stopPropagation()}>
                     <div className="filter-popover-row">
                       <label>{t.sizeMin}</label>
                       <input className="filter-input" type="date" value={customTimeFrom}
@@ -3060,9 +3082,9 @@ function App() {
               <div style={{ position: "relative" }}>
                 <select className="filter-select" value={sizeFilter} onChange={(e) => {
                   const v = e.target.value;
-                  setSizeFilter(v);
-                  if (v === "custom") { setShowSizePopover(true); setShowTimePopover(false); }
+                  if (v === "custom") { prevSizeRef.current = sizeFilter; setShowSizePopover(true); setShowTimePopover(false); }
                   else { setShowSizePopover(false); customSizeMinRef.current = 0; customSizeMaxRef.current = 0; }
+                  setSizeFilter(v);
                 }}>
                   <option value="all">{t.sizeAll}</option>
                   <option value="kb">{t.sizeKB}</option>
@@ -3071,7 +3093,7 @@ function App() {
                   <option value="custom">{t.sizeCustom}</option>
                 </select>
                 {showSizePopover && (
-                  <div className="filter-popover" onClick={(e) => e.stopPropagation()}>
+                  <div className="filter-popover" ref={sizePopoverRef} onClick={(e) => e.stopPropagation()}>
                     <div className="filter-popover-row">
                       <label>{t.sizeMin}</label>
                       <input className="filter-input" type="number" min="0" placeholder="0"
