@@ -278,7 +278,15 @@ impl AppState {
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
-    fn open_quicklook(paths: *const *const c_char, len: usize, index: usize) -> bool;
+    fn open_quicklook(
+        paths: *const *const c_char,
+        len: usize,
+        index: usize,
+        source_x: f64,
+        source_y: f64,
+        source_w: f64,
+        source_h: f64,
+    ) -> bool;
     fn copy_files_to_clipboard(paths: *const *const c_char, len: usize) -> bool;
     fn set_dock_flag(v: bool);
     fn install_policy_guard();
@@ -905,7 +913,14 @@ fn open_search_result(path: String, state: tauri::State<'_, AppState>) -> Result
 }
 
 #[tauri::command]
-fn preview_search_result(paths: Vec<String>) -> Result<(), String> {
+fn preview_search_result(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    icon_x: Option<f64>,
+    icon_y: Option<f64>,
+    icon_w: Option<f64>,
+    icon_h: Option<f64>,
+) -> Result<(), String> {
     if paths.is_empty() {
         return Ok(());
     }
@@ -926,8 +941,59 @@ fn preview_search_result(paths: Vec<String>) -> Result<(), String> {
             return Err("Target path does not exist".to_string());
         }
 
+        // Get window position via Tauri native API
+        let win = app
+            .get_webview_window("main")
+            .ok_or("Window not found")?;
+        let win_pos = win
+            .outer_position()
+            .map_err(|e| format!("Failed to get window position: {e}"))?;
+
+        // Tauri returns physical pixels. Get scale factor to convert to points.
+        let scale = win
+            .current_monitor()
+            .map_err(|e| format!("{e}"))?
+            .map(|m| m.scale_factor())
+            .unwrap_or(1.0);
+
+        let win_x = win_pos.x as f64 / scale;
+        let win_y = win_pos.y as f64 / scale;
+
+        // Screen height in logical points
+        let screen_h = win
+            .current_monitor()
+            .map_err(|e| format!("{e}"))?
+            .map(|m| m.size().height as f64 / scale)
+            .unwrap_or(900.0);
+
+        // Chrome height: Tauri's outer/inner size may be equal on macOS.
+        // macOS titlebar is ~28 logical points. Use that as fallback.
+        let win_size = win
+            .outer_size()
+            .map_err(|e| format!("Failed to get window size: {e}"))?;
+        let inner_size = win
+            .inner_size()
+            .map_err(|e| format!("Failed to get inner size: {e}"))?;
+        let raw_chrome = (win_size.height as f64 - inner_size.height as f64) / scale;
+        let chrome_h = if raw_chrome > 0.0 { raw_chrome } else { 28.0 };
+
+        let ix = icon_x.unwrap_or(0.0);
+        let iy = icon_y.unwrap_or(0.0);
+        let iw = icon_w.unwrap_or(28.0);
+        let ih = icon_h.unwrap_or(28.0);
+
+        // Use the icon rect itself as source. The QuickLook panel will
+        // expand from this rect on open. Close uses fade-out (sourceFrame
+        // returns NSZeroRect when panel is visible), so no shrink artifacts.
+        let sx = win_x + ix;
+        let sy = screen_h - (win_y + chrome_h + iy + ih); // AppKit bottom-left
+        let sw = iw;
+        let sh = ih;
+
         let raw_paths: Vec<*const c_char> = c_paths.iter().map(|p| p.as_ptr()).collect();
-        let opened = unsafe { open_quicklook(raw_paths.as_ptr(), raw_paths.len(), 0) };
+        let opened = unsafe {
+            open_quicklook(raw_paths.as_ptr(), raw_paths.len(), 0, sx, sy, sw, sh)
+        };
         if opened {
             Ok(())
         } else {
@@ -936,7 +1002,7 @@ fn preview_search_result(paths: Vec<String>) -> Result<(), String> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = paths;
+        let _ = (paths, icon_x, icon_y, icon_w, icon_h);
         Err("Quick Look preview is only supported on macOS".to_string())
     }
 }

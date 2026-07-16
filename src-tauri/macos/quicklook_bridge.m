@@ -7,6 +7,7 @@
 @interface MachuntQuickLookController : NSResponder <QLPreviewPanelDataSource, QLPreviewPanelDelegate>
 @property(nonatomic, copy) NSArray<NSURL *> *urls;
 @property(nonatomic, assign) NSInteger currentIndex;
+@property(nonatomic, assign) NSRect sourceRect;
 @end
 
 @implementation MachuntQuickLookController
@@ -25,6 +26,7 @@
   if (self) {
     _urls = @[];
     _currentIndex = 0;
+    _sourceRect = NSZeroRect;
   }
   return self;
 }
@@ -65,6 +67,19 @@
   }
 }
 
+- (NSRect)previewPanel:(QLPreviewPanel *)panel
+    sourceFrameOnScreenForPreviewItem:(id<QLPreviewItem>)item {
+  (void)item;
+  // Only return source rect during opening animation (panel not yet visible).
+  // Once visible, return NSZeroRect so closing uses a simple fade-out
+  // instead of shrinking — avoids colored background artifacts for
+  // files that QuickLook can't preview (folders, unknown types, etc).
+  if ([panel isVisible] || NSIsEmptyRect(self.sourceRect)) {
+    return NSZeroRect;
+  }
+  return self.sourceRect;
+}
+
 @end
 
 static NSArray<NSURL *> *build_urls(const char *const *paths, size_t len) {
@@ -91,7 +106,13 @@ static NSArray<NSURL *> *build_urls(const char *const *paths, size_t len) {
   return [urls copy];
 }
 
-bool open_quicklook(const char *const *paths, size_t len, size_t index) {
+bool open_quicklook(const char *const *paths,
+                    size_t len,
+                    size_t index,
+                    double source_x,
+                    double source_y,
+                    double source_w,
+                    double source_h) {
   @autoreleasepool {
     if (paths == NULL || len == 0) {
       return false;
@@ -104,8 +125,13 @@ bool open_quicklook(const char *const *paths, size_t len, size_t index) {
 
     __block bool opened = false;
     void (^openPanel)(void) = ^{
-      MachuntQuickLookController *controller = [MachuntQuickLookController sharedController];
+      MachuntQuickLookController *controller =
+          [MachuntQuickLookController sharedController];
       controller.urls = urls;
+
+      NSRect sourceRect =
+          NSMakeRect(source_x, source_y, source_w, source_h);
+      controller.sourceRect = sourceRect;
 
       NSInteger initialIndex = (NSInteger)index;
       NSInteger count = (NSInteger)controller.urls.count;
@@ -120,6 +146,11 @@ bool open_quicklook(const char *const *paths, size_t len, size_t index) {
       if (panel == nil) {
         opened = false;
         return;
+      }
+
+      // If already visible with different content, close then reopen
+      if ([panel isVisible]) {
+        [panel orderOut:nil];
       }
 
       panel.dataSource = controller;
@@ -174,14 +205,12 @@ bool force_accessory_policy(void) {
 static NSRunningApplication *g_previous_app = nil;
 
 bool activate_ignoring_other_apps(void) {
-  // Save the currently active app so we can restore focus later.
   g_previous_app = [[NSWorkspace sharedWorkspace] frontmostApplication];
   [NSApp activateIgnoringOtherApps:YES];
   return true;
 }
 
 bool deactivate_app(void) {
-  // Restore focus to whichever app was active before MacHunt took it.
   if (g_previous_app != nil) {
     [g_previous_app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
     g_previous_app = nil;

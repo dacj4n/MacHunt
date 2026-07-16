@@ -1264,6 +1264,7 @@ function App() {
   const pathInputRef = useRef<HTMLInputElement | null>(null);
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const openWithCloseTimerRef = useRef<number | null>(null);
+  const isPreviewingRef = useRef(false);
   const columnWidthsRef = useRef(columnWidths);
   const resizeStateRef = useRef<{
     left: ColumnKey;
@@ -2614,8 +2615,40 @@ function App() {
       return;
     }
     try {
-      await invoke("preview_search_result", { paths });
+      // Pass icon rect relative to webview content area.
+      // Rust backend will use native APIs to get the window's screen position
+      // and compute the final AppKit coordinates correctly.
+      let iconX = 0;
+      let iconY = 0;
+      let iconW = 28;
+      let iconH = 28;
+
+      const firstPath = paths[0];
+      const rowEl = rowRefs.current.get(firstPath);
+      if (rowEl) {
+        const iconEl = rowEl.querySelector(".file-icon") as HTMLElement | null;
+        if (iconEl) {
+          const rect = iconEl.getBoundingClientRect();
+          iconX = Math.round(rect.left);
+          iconY = Math.round(rect.top);
+          iconW = Math.round(rect.width);
+          iconH = Math.round(rect.height);
+        }
+      }
+
+      isPreviewingRef.current = true;
+      await invoke("preview_search_result", {
+        paths,
+        iconX,
+        iconY,
+        iconW,
+        iconH,
+      });
+      // Keep previewing flag for a moment after invoke returns,
+      // so blur events during QuickLook close don't clear selection.
+      setTimeout(() => { isPreviewingRef.current = false; }, 300);
     } catch (err) {
+      isPreviewingRef.current = false;
       setError(String(err));
     }
   };
@@ -2948,6 +2981,10 @@ function App() {
 
     window.addEventListener("keydown", onKeyDown);
     const onBlur = () => {
+      // Don't clear selection while QuickLook preview is active —
+      // the panel takes focus away from the window but user is still
+      // interacting with the preview.
+      if (isPreviewingRef.current) return;
       if (selectedPathsInOrder.length > 0) {
         setSelectedItemPaths([]);
         setSelectionAnchorPath(null);
