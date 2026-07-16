@@ -222,6 +222,7 @@ export function SettingsView(props: SettingsViewProps) {
               autoCorrect="off"
               autoCapitalize="off"
               spellCheck={false}
+              onFocus={(e) => e.target.select()}
               onKeyDown={(event) => {
                 if (event.key === "Tab") {
                   return;

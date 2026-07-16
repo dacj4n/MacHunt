@@ -3,6 +3,17 @@
    Based on doc/1.html reference design
    ================================================================ */
 
+/* ── Global: disable text selection ── */
+*, *::before, *::after {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input, textarea, [contenteditable] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* ===== DESIGN TOKENS: Dark Mode (default) ===== */
 :root {
   /* Surface hierarchy */
@@ -1825,10 +1836,15 @@ body {
   transition: box-shadow var(--ease);
 }
 
+/* Readonly inputs (e.g. shortcut capture): no double-click select */
+.form-input[readonly] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .form-input:focus {
-  box-shadow:
-    var(--shadow-inset-dark),
-    var(--shadow-inset-light);
+  outline: 2px solid var(--pn-primary);
+  outline-offset: 1px;
 }
 
 .form-input:disabled {
@@ -1879,6 +1895,9 @@ body {
   gap: var(--sp-sm);
   align-items: center;
   margin-top: var(--sp-sm);
+  margin-bottom: var(--sp-md);
+  position: relative;
+  z-index: 1;
 }
 
 .form-row + .form-row {
