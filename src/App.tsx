@@ -443,12 +443,13 @@ function App() {
     setSelectedItemPaths([path]); setSelectionAnchorPath(path);
   };
   const moveSelectionByArrow = (delta: number) => {
-    if (items.length === 0) return;
+    const source = activeView === "pinned" ? sortedPinnedItems : items;
+    if (source.length === 0) return;
     const anchorPath = selectionAnchorPath ?? selectedPathsInOrder[0] ?? null;
-    const anchorIndex = anchorPath ? items.findIndex((entry) => entry.path === anchorPath) : -1;
-    const startIndex = anchorIndex >= 0 ? anchorIndex : delta > 0 ? -1 : items.length;
-    const nextIndex = Math.max(0, Math.min(items.length - 1, startIndex + delta));
-    const nextPath = items[nextIndex].path;
+    const anchorIndex = anchorPath ? source.findIndex((entry) => entry.path === anchorPath) : -1;
+    const startIndex = anchorIndex >= 0 ? anchorIndex : delta > 0 ? -1 : source.length;
+    const nextIndex = Math.max(0, Math.min(source.length - 1, startIndex + delta));
+    const nextPath = source[nextIndex].path;
     setSelectedItemPaths([nextPath]); setSelectionAnchorPath(nextPath);
     window.requestAnimationFrame(() => { rowRefs.current.get(nextPath)?.scrollIntoView({ block: "nearest" }); });
   };
@@ -921,7 +922,33 @@ function App() {
   // Keyboard navigation
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && activeView === "search" && !contextMenu) {
+      // Tab: search input → results, elsewhere → search input
+      if (event.key === "Tab" && (activeView === "search" || activeView === "pinned") && !contextMenu) {
+        event.preventDefault();
+        if (activeView === "pinned") {
+          const source = pinnedItems;
+          if (source.length > 0) {
+            setSelectedItemPaths([source[0].path]);
+            setSelectionAnchorPath(source[0].path);
+          }
+          return;
+        }
+        // Search view: if not focused on search input, jump to search input
+        const searchInput = searchInputRef.current;
+        if (searchInput && document.activeElement !== searchInput) {
+          searchInput.focus();
+          searchInput.select();
+          return;
+        }
+        // Already on search input → jump to results
+        blurActiveEditable();
+        if (itemsRef.current.length > 0) {
+          setSelectedItemPaths([itemsRef.current[0].path]);
+          setSelectionAnchorPath(itemsRef.current[0].path);
+        }
+        return;
+      }
+      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && (activeView === "search" || activeView === "pinned") && !contextMenu) {
         if (!isEditableTarget(event.target)) { event.preventDefault(); moveSelectionByArrow(event.key === "ArrowDown" ? 1 : -1); }
         return;
       }

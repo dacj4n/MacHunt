@@ -14,6 +14,8 @@ input, textarea, [contenteditable] {
   user-select: text;
 }
 
+
+
 /* ===== DESIGN TOKENS: Dark Mode (default) ===== */
 :root {
   /* Surface hierarchy */
@@ -308,6 +310,7 @@ body {
   padding: 6px 16px;
   cursor: pointer !important;
   transition: all var(--ease);
+  outline: none !important;
 }
 
 .nav-btn:hover {
@@ -1836,10 +1839,12 @@ body {
   transition: box-shadow var(--ease);
 }
 
-/* Readonly inputs (e.g. shortcut capture): no double-click select */
+/* Readonly inputs (e.g. shortcut capture): no double-click select, show blinking caret */
 .form-input[readonly] {
   -webkit-user-select: none;
   user-select: none;
+  caret-color: var(--pn-primary);
+  caret-shape: bar;
 }
 
 .form-input:focus {
