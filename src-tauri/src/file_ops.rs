@@ -298,7 +298,7 @@ pub fn preview_search_result(
             .inner_size()
             .map_err(|e| format!("Failed to get inner size: {e}"))?;
         let raw_chrome = (win_size.height as f64 - inner_size.height as f64) / scale;
-        let chrome_h = if raw_chrome > 0.0 { raw_chrome } else { 28.0 };
+        let chrome_h = if raw_chrome > 0.0 { raw_chrome } else { 0.0 };
 
         let ix = icon_x.unwrap_or(0.0);
         let iy = icon_y.unwrap_or(0.0);

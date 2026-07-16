@@ -116,3 +116,66 @@ pub fn register_window_toggle_shortcut<R: tauri::Runtime>(
         })
         .map_err(|e| e.to_string())
 }
+
+/// Make the window movable by dragging any part of its background.
+pub fn make_window_movable_by_background(app: &tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::msg_send;
+        use objc2::rc::Retained;
+        use objc2_foundation::NSObject;
+
+        let window = app
+            .get_webview_window("main")
+            .ok_or_else(|| "Main window not found".to_string())?;
+        let ns_window_ptr = window.ns_window().map_err(|e| e.to_string())?;
+
+        unsafe {
+            let ns_window: Retained<NSObject> = Retained::retain(ns_window_ptr as *mut _).unwrap();
+            let _: () = msg_send![&ns_window, setMovableByWindowBackground: true];
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+    }
+    Ok(())
+}
+
+/// Set the window titlebar appearance to dark or light.
+#[tauri::command]
+pub fn set_window_appearance(app: tauri::AppHandle, dark: bool) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::msg_send;
+        use objc2::rc::Retained;
+        use objc2_app_kit::NSAppearance;
+        use objc2_foundation::NSObject;
+
+        let window = app
+            .get_webview_window("main")
+            .ok_or_else(|| "Main window not found".to_string())?;
+        let ns_window_ptr = window.ns_window().map_err(|e| e.to_string())?;
+
+        let name = unsafe {
+            if dark {
+                objc2_app_kit::NSAppearanceNameDarkAqua
+            } else {
+                objc2_app_kit::NSAppearanceNameAqua
+            }
+        };
+
+        let appearance = NSAppearance::appearanceNamed(name);
+        if let Some(appearance) = appearance {
+            unsafe {
+                let ns_window: Retained<NSObject> = Retained::retain(ns_window_ptr as *mut _).unwrap();
+                let _: () = msg_send![&ns_window, setAppearance: &*appearance];
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, dark);
+    }
+    Ok(())
+}

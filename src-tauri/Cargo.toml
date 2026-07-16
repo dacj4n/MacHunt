@@ -22,3 +22,6 @@ reqwest = { version = "0.12", features = ["json"] }
 machunt = { path = ".." }
 crossbeam = "0.8"
 objc2-service-management = "0.3.2"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"

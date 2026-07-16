@@ -86,6 +86,9 @@ pub fn run() {
                 let _ = show_main_window_internal(&app.handle().clone(), &state);
             }
 
+            // Make window draggable by background (no titlebar)
+            let _ = window::make_window_movable_by_background(&app.handle().clone());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
