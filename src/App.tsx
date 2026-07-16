@@ -4,1144 +4,88 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
-type TabId = "all" | "files" | "folders" | "documents" | "images" | "media" | "code" | "archives";
-type SortKey = "name" | "path" | "type" | "size" | "modified";
-type ColumnKey = "name" | "path" | "type" | "size" | "modified";
-type ThemeMode = "system" | "light" | "dark";
-type ViewMode = "search" | "pinned" | "settings";
-type VolumeEventType = { type: "mountDetected"; path: string; name: string }
-  | { type: "indexComplete"; path: string; fileCount: number; totalIndexed: number }
-  | { type: "volumeRemoved"; path: string; name: string; totalIndexed: number };
-type Language = "zh" | "en";
-type ExcludeRuleType = "exact" | "pattern";
+import { I18N } from "./i18n";
+import type {
+  TabId, SortKey, ColumnKey, ThemeMode, ViewMode, VolumeEventType,
+  Language, ExcludeRuleType, SearchResultItem, ContextMenuState,
+  SearchResponse, InitResponse, BuildResponse, BuildEvent, WatchResponse,
+  LaunchSettingsResponse, AutoVacuumSettingsResponse, ExcludeDirSettingsResponse,
+  WatchRootsSettingsResponse, FileManagerSettingsResponse,
+} from "./types";
+import {
+  DEFAULT_WINDOW_TOGGLE_SHORTCUT, DEFAULT_COLUMN_WIDTHS, COLUMN_KEYS,
+  EVENT_OPEN_SETTINGS, EVENT_FOCUS_SEARCH,
+  loadStoredTheme, detectDefaultLanguage, systemPrefersDark, resolveTheme,
+  loadStoredRegexEnabled, loadStoredCaseSensitive, loadStoredFuzzyEnabled,
+  loadPinnedItems, savePinnedItems, loadStoredColumnWidths,
+  buildSearchRequest, displayShortcut, shortcutFromKeyboardEvent,
+  fmt, isEditableTarget, blurActiveEditable, extensionOf, appForExt,
+  COLUMN_WIDTHS_STORAGE_KEY, LANGUAGE_STORAGE_KEY, REGEX_ENABLED_STORAGE_KEY,
+  CASE_SENSITIVE_STORAGE_KEY, FUZZY_ENABLED_STORAGE_KEY, THEME_STORAGE_KEY,
+  PINNED_STORAGE_KEY,
+  iconToken, iconGlyph, typeLabel, formatBytes, formatDate,
+} from "./utils";
+import { SearchView } from "./components/SearchView";
+import { SettingsView } from "./components/SettingsView";
+import { ContextMenu } from "./components/ContextMenu";
 
-const DEFAULT_WINDOW_TOGGLE_SHORTCUT = "CmdOrCtrl+Shift+KeyD";
-const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
-  name: 500,
-  path: 420,
-  type: 140,
-  size: 160,
-  modified: 300
-};
-
-const MIN_COLUMN_WIDTHS: Record<ColumnKey, number> = {
-  name: 160,
-  path: 120,
-  type: 90,
-  size: 72,
-  modified: 120
-};
-const COLUMN_KEYS: ColumnKey[] = ["name", "path", "type", "size", "modified"];
-
-const THEME_STORAGE_KEY = "machunt.theme.mode";
-const LANGUAGE_STORAGE_KEY = "machunt.language";
-const COLUMN_WIDTHS_STORAGE_KEY = "machunt.table.column.widths";
-const LEGACY_SEARCH_MODE_STORAGE_KEY = "machunt.search.mode";
-const REGEX_ENABLED_STORAGE_KEY = "machunt.search.regex_enabled";
-const CASE_SENSITIVE_STORAGE_KEY = "machunt.search.case_sensitive";
-const FUZZY_ENABLED_STORAGE_KEY = "machunt.search.fuzzy_enabled";
-const PINNED_STORAGE_KEY = "machunt.pinned.items";
-const EVENT_OPEN_SETTINGS = "app://open-settings";
-const EVENT_FOCUS_SEARCH = "app://focus-search";
-const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives"];
-
-const TAB_EXTENSIONS: Record<TabId, string[] | null> = {
-  all: null,
-  files: null,
-  folders: null,
-  documents: ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md"],
-  images: ["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "bmp", "tif", "tiff", "eps", "raw", "cr2", "nef", "arw", "avif", "hdr", "exr", "ico", "icns"],
-  media: ["mp3", "m4a", "wav", "flac", "aac", "ogg", "mp4", "mov", "avi", "mkv", "webm", "wmv", "mts", "aiff"],
-  code: ["rs", "ts", "tsx", "js", "jsx", "json", "toml", "yaml", "yml", "py", "go", "java", "c", "cpp", "h", "hpp", "html", "css", "scss", "less", "vue", "rb", "php", "sql", "sh", "bash", "zsh", "swift", "m", "mm", "xml"],
-  archives: ["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "dmg", "iso"],
-};
-
-const I18N = {
-  zh: {
-    searchPlaceholder: "搜索文件、文件夹、内容...",
-    searchTag: "搜索",
-    pathPlaceholder: "路径过滤",
-    choosePath: "选择路径",
-    menuOpen: "打开",
-    menuOpenWith: "打开于 ...",
-    menuFinder: "在Finder中查看",
-    menuQSpace: "在QSpace Pro中查看",
-    menuTerminal: "在终端中打开",
-    menuWezTerm: "在 WezTerm 中打开",
-    menuCopyName: "拷贝名称",
-    menuCopyPath: "拷贝路径",
-    menuCopyResult: "拷贝结果",
-    menuCopyAllResults: "拷贝所有结果",
-    menuCopyAllNames: "拷贝所有文件名",
-    menuCopyAllPaths: "拷贝所有文件路径",
-    menuTrash: "移到废纸篓",
-    regexEnabled: "正则",
-    fuzzyEnabled: "模糊",
-    caseSensitive: "区分大小写",
-    timeFilter: "时间",
-    timeAll: "所有时间",
-    timeToday: "今天",
-    timeWeek: "一周内",
-    timeMonth: "一月内",
-    timeYear: "一年内",
-    timeCustom: "自定义...",
-    sizeFilter: "大小",
-    sizeAll: "所有大小",
-    sizeKB: "小于 1 MB",
-    sizeMB: "1 MB ~ 100 MB",
-    sizeGB: "大于 100 MB",
-    sizeCustom: "自定义...",
-    sizeMin: "最小",
-    sizeMax: "最大",
-    appFilter: "应用",
-    appFilterAll: "所有应用",
-    build: "构建",
-    rebuild: "重建",
-    buildStatusBuilding: "正在构建索引...",
-    buildStatusRebuilding: "正在重建索引...",
-    buildStatusFailed: "构建失败",
-    startWatch: "监听",
-    stopWatch: "停止",
-    starting: "启动中...",
-    stopping: "停止中...",
-    tab_all: "全部",
-    tab_files: "文件",
-    tab_folders: "文件夹",
-    typeFile: "文件",
-    typeFolder: "文件夹",
-    tab_documents: "文档",
-    tab_images: "图片",
-    tab_media: "音视频",
-    tab_code: "代码",
-    tab_archives: "压缩包",
-
-    sort: "排序",
-    sort_name: "名称",
-    sort_size: "大小",
-    sort_modified: "修改时间",
-    header_name: "名称",
-    header_path: "路径",
-    header_type: "类型",
-    header_size: "大小",
-    header_modified: "修改日期",
-    emptyTypeHint: "输入关键词开始搜索。",
-    emptyNoMatch: "没有匹配结果。",
-    indexedItems: "已索引 {count} 项",
-    shownItems: "显示 {count} 项",
-    searching: "搜索中...",
-    versionLabel: "版本",
-    settingsTitle: "设置",
-    settingsDesc: "主题和语言配置会立即生效并自动保存。",
-    backToSearch: "返回搜索",
-    themeModeTitle: "主题模式",
-    themeSystemTitle: "随系统变化",
-    themeSystemDesc: "跟随 macOS 的深色/浅色外观自动切换。",
-    themeLightTitle: "白天主题",
-    themeLightDesc: "始终使用浅色主题。",
-    themeDarkTitle: "夜间主题",
-    themeDarkDesc: "始终使用深色主题。",
-    themeCurrent: "当前生效主题",
-    languageTitle: "语言",
-    languageZhTitle: "中文",
-    languageZhDesc: "界面使用中文。",
-    languageEnTitle: "English",
-    languageEnDesc: "Interface in English.",
-    shortcutTitle: "快捷键",
-    shortcutDesc: "设置全局快捷键用于显示/隐藏窗口。",
-    shortcutInputHint: "点击输入框后直接按组合键",
-    shortcutInputPlaceholder: "例如：Cmd+Shift+F",
-    shortcutCurrent: "当前快捷键",
-    shortcutApply: "应用",
-    shortcutReset: "恢复默认",
-    shortcutSaved: "快捷键已保存",
-    shortcutNeedModifier: "快捷键至少需要一个修饰键（Cmd/Ctrl/Alt/Shift）",
-    startupTitle: "启动",
-    startupDesc: "分别设置开机自启与应用静默启动（启动后不显示窗口，可用快捷键唤起）。",
-    startupLaunchAtLogin: "开机自启",
-    startupLaunchAtLoginDesc: "登录 macOS 后自动启动 MacHunt。",
-    startupSilentStart: "静默启动",
-    startupSilentStartDesc: "开启后，启动应用时默认隐藏窗口，可随时用全局快捷键唤起。",
-    startupShowDockIcon: "显示程序坞图标",
-    startupShowDockIconDesc: "开启后，程序坞会显示 MacHunt 图标，方便通过点击图标切换窗口。",
-    startupSaved: "启动设置已保存",
-    startupSaving: "正在保存启动设置...",
-    startupSaveFailed: "保存启动设置失败",
-    autoVacuumTitle: "索引维护",
-    autoVacuumDesc: "控制重建后是否自动执行数据库空间回收（VACUUM）。",
-    autoVacuumOn: "重建后自动压缩数据库",
-    autoVacuumOnDesc: "开启后，重建结束会按条件自动 VACUUM，减少 index.db 长期膨胀。",
-    autoVacuumSaved: "索引维护设置已保存",
-    autoVacuumSaving: "正在保存索引维护设置...",
-    autoVacuumSaveFailed: "保存索引维护设置失败",
-    maxResultsTitle: "搜索结果数量",
-    maxResultsDesc: "控制每次搜索最多返回的结果数量（50-10000）。",
-    maxResultsSaved: "结果数量设置已保存",
-    maxResultsSaving: "正在保存结果数量设置...",
-    maxResultsSaveFailed: "保存结果数量设置失败",
-    excludeDirsTitle: "排除目录",
-    excludeDirsDesc: "这些规则会在构建/重建索引时跳过匹配目录。支持完整目录和正则（同时兼容 * 通配符）。",
-    excludeWildcardHint: "* 仅匹配单层目录，** 匹配所有层级。例如 /Volumes/* 只跳过一级，/Volumes/** 跳过全部。",
-    watchRootsTitle: "监听根目录",
-    watchRootsDesc: "Watcher 只监听这些根路径，减少事件噪音并提升增量索引效率。",
-    watchRootsInputPlaceholder: "例如：/Users",
-    watchRootsSaved: "监听根目录已保存",
-    watchRootsSaveFailed: "保存监听根目录失败",
-    watchRootsEmptyHint: "当前没有监听根目录，将自动回退默认根目录集合。",
-    excludeRuleType: "规则类型",
-    excludeRuleExact: "完整目录",
-    excludeRulePattern: "正则/通配符",
-    excludeRuleInputPlaceholderExact: "例如：/Volumes/",
-    excludeRuleInputPlaceholderPattern: "例如：*/.git/",
-    excludeAdd: "添加",
-    excludeSaveFailed: "保存排除目录失败",
-    excludeEmptyHint: "当前没有排除规则。",
-    excludeExactListTitle: "完整目录规则",
-    excludePatternListTitle: "正则/通配符规则",
-    removeRule: "删除",
-    excludeSaved: "排除目录规则已保存",
-    updateTitle: "更新",
-    updateDesc: "检查 MacHunt 是否有新版本。",
-    updateAutoCheck: "自动检查更新",
-    updateAutoCheckDesc: "启动时自动检查是否有新版本。",
-    updateCheckNow: "检查更新",
-    updateChecking: "正在检查...",
-    updateNoUpdate: "已是最新版本",
-    updateNewVersion: "有新版本可用: {version}",
-    updateDownload: "下载",
-    updateFailed: "检查更新失败",
-    updateSaved: "更新设置已保存",
-    updateCurrentVersion: "当前版本",
-    pinnedTag: "收藏",
-    pinnedEmpty: "暂无收藏",
-    menuPin: "收藏",
-    menuUnpin: "取消收藏",
-    pinnedCount: "已收藏 {count} 项",
-    fileManagerTitle: "文件管理器与终端",
-    fileManagerDesc: "自定义搜索结果中文件夹和终端的默认打开方式。",
-    defaultFolderAction: "默认文件夹打开方式",
-    defaultTerminalAction: "默认终端打开方式",
-    folderActionFinder: "访达",
-    folderActionQSpace: "QSpace Pro",
-    folderActionCustom: "自定义 App...",
-    terminalActionTerminal: "终端",
-    terminalActionWezTerm: "WezTerm",
-    terminalActionCustom: "自定义 App...",
-    selectCustomApp: "选择自定义 App",
-    customApp: "自定义 App",
-    openInDefaultTerminal: "在默认终端中打开",
-  },
-  en: {
-    searchPlaceholder: "Search files, folders, content...",
-    searchTag: "Search",
-    pathPlaceholder: "Path filter",
-    choosePath: "Choose Path",
-    menuOpen: "Open",
-    menuOpenWith: "Open With ...",
-    menuFinder: "Reveal in Finder",
-    menuQSpace: "View in QSpace Pro",
-    menuTerminal: "Open in Terminal",
-    menuWezTerm: "Open in WezTerm",
-    menuCopyName: "Copy Name",
-    menuCopyPath: "Copy Path",
-    menuCopyResult: "Copy Result",
-    menuCopyAllResults: "Copy All Results",
-    menuCopyAllNames: "Copy All Names",
-    menuCopyAllPaths: "Copy All Paths",
-    menuTrash: "Move to Trash",
-    regexEnabled: "Regex",
-    fuzzyEnabled: "Fuzzy",
-    caseSensitive: "Case Sensitive",
-    timeFilter: "Time",
-    timeAll: "Any Time",
-    timeToday: "Today",
-    timeWeek: "This Week",
-    timeMonth: "This Month",
-    timeYear: "This Year",
-    timeCustom: "Custom...",
-    sizeFilter: "Size",
-    sizeAll: "Any Size",
-    sizeKB: "Under 1 MB",
-    sizeMB: "1 MB – 100 MB",
-    sizeGB: "Over 100 MB",
-    sizeCustom: "Custom...",
-    sizeMin: "Min",
-    sizeMax: "Max",
-    appFilter: "App",
-    appFilterAll: "Any App",
-    build: "Build",
-    rebuild: "Rebuild",
-    buildStatusBuilding: "Building index...",
-    buildStatusRebuilding: "Rebuilding index...",
-    buildStatusFailed: "Build failed",
-    startWatch: "Watch",
-    stopWatch: "Stop",
-    starting: "Starting...",
-    stopping: "Stopping...",
-    tab_all: "All",
-    tab_files: "Files",
-    tab_folders: "Folders",
-    typeFile: "File",
-    typeFolder: "Folder",
-    tab_documents: "Documents",
-    tab_images: "Images",
-    tab_media: "Media",
-    tab_code: "Code",
-    tab_archives: "Archives",
-    tab_applications: "Applications",
-
-    sort: "Sort",
-    sort_name: "Name",
-    sort_size: "Size",
-    sort_modified: "Modified",
-    header_name: "Name",
-    header_path: "Path",
-    header_type: "Type",
-    header_size: "Size",
-    header_modified: "Date Modified",
-    emptyTypeHint: "Type a keyword to start searching.",
-    emptyNoMatch: "No matching files found.",
-    indexedItems: "{count} items indexed",
-    shownItems: "{count} items shown",
-    searching: "Searching...",
-    versionLabel: "Version",
-    settingsTitle: "Settings",
-    settingsDesc: "Theme and language changes apply immediately and are saved.",
-    backToSearch: "Back to Search",
-    themeModeTitle: "Theme",
-    themeSystemTitle: "Follow System",
-    themeSystemDesc: "Switch with macOS appearance automatically.",
-    themeLightTitle: "Light",
-    themeLightDesc: "Always use light appearance.",
-    themeDarkTitle: "Dark",
-    themeDarkDesc: "Always use dark appearance.",
-    themeCurrent: "Current theme",
-    languageTitle: "Language",
-    languageZhTitle: "中文",
-    languageZhDesc: "Show interface in Chinese.",
-    languageEnTitle: "English",
-    languageEnDesc: "Show interface in English.",
-    shortcutTitle: "Shortcut",
-    shortcutDesc: "Set a global shortcut to show/hide the window.",
-    shortcutInputHint: "Focus this field and press a key combination",
-    shortcutInputPlaceholder: "Example: Cmd+Shift+F",
-    shortcutCurrent: "Current shortcut",
-    shortcutApply: "Apply",
-    shortcutReset: "Reset Default",
-    shortcutSaved: "Shortcut saved",
-    shortcutNeedModifier: "Shortcut must include at least one modifier (Cmd/Ctrl/Alt/Shift)",
-    startupTitle: "Startup",
-    startupDesc: "Configure launch at login and silent app startup independently.",
-    startupLaunchAtLogin: "Launch at Login",
-    startupLaunchAtLoginDesc: "Start MacHunt automatically after signing in to macOS.",
-    startupSilentStart: "Silent Startup",
-    startupSilentStartDesc: "When enabled, app launches hidden; use the global shortcut to reveal it.",
-    startupShowDockIcon: "Show Dock Icon",
-    startupShowDockIconDesc: "When enabled, MacHunt icon appears in the Dock for easy window switching.",
-    startupSaved: "Startup settings saved",
-    startupSaving: "Saving startup settings...",
-    startupSaveFailed: "Failed to save startup settings",
-    autoVacuumTitle: "Index Maintenance",
-    autoVacuumDesc: "Control whether database space reclaim (VACUUM) runs automatically after rebuild.",
-    autoVacuumOn: "Auto vacuum after rebuild",
-    autoVacuumOnDesc: "When enabled, rebuild finishes with conditional VACUUM to reduce long-term index.db growth.",
-    autoVacuumSaved: "Index maintenance setting saved",
-    autoVacuumSaving: "Saving index maintenance setting...",
-    autoVacuumSaveFailed: "Failed to save index maintenance setting",
-    maxResultsTitle: "Max Search Results",
-    maxResultsDesc: "Control the maximum number of results returned per search (50-10000).",
-    maxResultsSaved: "Max results setting saved",
-    maxResultsSaving: "Saving max results setting...",
-    maxResultsSaveFailed: "Failed to save max results setting",
-    excludeDirsTitle: "Excluded Directories",
-    excludeDirsDesc: "These rules are applied during build/rebuild to skip matching directories. Supports exact paths and regex (also accepts * wildcards).",
-    excludeWildcardHint: "* matches only one directory level, ** matches all levels. e.g. /Volumes/* skips one level, /Volumes/** skips everything under.",
-    watchRootsTitle: "Watch Roots",
-    watchRootsDesc: "Watcher listens only to these root paths to reduce event noise and improve incremental indexing efficiency.",
-    watchRootsInputPlaceholder: "Example: /Users",
-    watchRootsSaved: "Watch roots saved",
-    watchRootsSaveFailed: "Failed to save watch roots",
-    watchRootsEmptyHint: "No watch roots configured. Default roots will be used automatically.",
-    excludeRuleType: "Rule Type",
-    excludeRuleExact: "Exact Directory",
-    excludeRulePattern: "Regex / Wildcard",
-    excludeRuleInputPlaceholderExact: "Example: /Volumes/",
-    excludeRuleInputPlaceholderPattern: "Example: */.git/",
-    excludeAdd: "Add",
-    excludeSaveFailed: "Failed to save excluded directories",
-    excludeEmptyHint: "No exclusion rules yet.",
-    excludeExactListTitle: "Exact Directory Rules",
-    excludePatternListTitle: "Regex / Wildcard Rules",
-    removeRule: "Remove",
-    excludeSaved: "Excluded directory rules saved",
-    updateTitle: "Updates",
-    updateDesc: "Check for new MacHunt versions.",
-    updateAutoCheck: "Auto-check for Updates",
-    updateAutoCheckDesc: "Automatically check for new versions on startup.",
-    updateCheckNow: "Check for Updates",
-    updateChecking: "Checking...",
-    updateNoUpdate: "You are up to date",
-    updateNewVersion: "New version available: {version}",
-    updateDownload: "Download",
-    updateFailed: "Failed to check for updates",
-    updateSaved: "Update settings saved",
-    updateCurrentVersion: "Current Version",
-    pinnedTag: "Pinned",
-    pinnedEmpty: "No pinned items",
-    menuPin: "Pin",
-    menuUnpin: "Unpin",
-    pinnedCount: "{count} pinned items",
-    fileManagerTitle: "File Manager & Terminal",
-    fileManagerDesc: "Customize the default apps for opening folders and terminal from search results.",
-    defaultFolderAction: "Default Folder Opener",
-    defaultTerminalAction: "Default Terminal",
-    folderActionFinder: "Finder",
-    folderActionQSpace: "QSpace Pro",
-    folderActionCustom: "Custom App...",
-    terminalActionTerminal: "Terminal",
-    terminalActionWezTerm: "WezTerm",
-    terminalActionCustom: "Custom App...",
-    selectCustomApp: "Select Custom App",
-    customApp: "Custom App",
-    openInDefaultTerminal: "Open in Default Terminal",
-  }
-} as const;
-
-interface SearchResultItem {
-  name: string;
-  path: string;
-  parent: string;
-  isDir: boolean;
-  isFile: boolean;
-  sizeBytes?: number;
-  modifiedUnixMs?: number;
-}
-
-interface SearchResponse {
-  items: SearchResultItem[];
-  total: number;
-  tookMs: number;
-}
-
-interface InitResponse {
-  indexed: number;
-  hasIndex: boolean;
-  lastEventId?: number;
-}
-
-interface BuildResponse {
-  indexed: number;
-  tookMs: number;
-}
-
-interface BuildEvent {
-  phase: "started" | "finished";
-  indexed?: number;
-  tookMs?: number;
-}
-
-interface WatchResponse {
-  running: boolean;
-  mode: string;
-  code: string;
-  message: string;
-  lastEventId?: number;
-}
-
-interface LaunchSettingsResponse {
-  launchAtLogin: boolean;
-  silentStart: boolean;
-  showDockIcon: boolean;
-}
-
-interface AutoVacuumSettingsResponse {
-  autoVacuumOnRebuild: boolean;
-}
-
-interface ExcludeDirSettingsResponse {
-  exactDirs: string[];
-  patternDirs: string[];
-}
-
-interface WatchRootsSettingsResponse {
-  roots: string[];
-}
-
-interface FileManagerSettingsResponse {
-  defaultFolderAction: string;
-  defaultTerminalAction: string;
-  customFolderApp: string;
-  customTerminalApp: string;
-}
-
-interface ContextMenuState {
-  x: number;
-  y: number;
-  item: SearchResultItem;
-  multiSelection: boolean;
-}
-
-function extensionOf(name: string): string {
-  const idx = name.lastIndexOf(".");
-  if (idx < 0 || idx === name.length - 1) {
-    return "";
-  }
-  return name.slice(idx + 1).toLowerCase();
-}
-
-function classifyTab(item: SearchResultItem): TabId {
-  if (item.isDir) {
-    return "folders";
-  }
-
-  const ext = extensionOf(item.name);
-  if (["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md"].includes(ext)) {
-    return "documents";
-  }
-  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "bmp"].includes(ext)) {
-    return "images";
-  }
-  if (["mp3", "m4a", "wav", "flac", "aac", "mp4", "mov", "avi", "mkv"].includes(ext)) {
-    return "media";
-  }
-  if (["rs", "ts", "tsx", "js", "jsx", "json", "toml", "yaml", "yml", "py", "go", "java", "c", "cpp", "h", "hpp", "html", "css"].includes(ext)) {
-    return "code";
-  }
-  if (["zip", "rar", "7z", "tar", "gz", "bz2", "xz"].includes(ext)) {
-    return "archives";
-  }
-  return "all";
-}
-
-function filterByTab(items: SearchResultItem[], tab: TabId): SearchResultItem[] {
-  if (tab === "all") {
-    return items;
-  }
-  if (tab === "files") {
-    return items.filter((item) => item.isFile);
-  }
-  if (tab === "folders") {
-    return items.filter((item) => item.isDir);
-  }
-  return items.filter((item) => classifyTab(item) === tab);
-}
-
-function sortItems(items: SearchResultItem[], key: SortKey, ascending: boolean): SearchResultItem[] {
-  const sorted = [...items];
-  sorted.sort((a, b) => {
-    let cmp = 0;
-    if (key === "name") {
-      cmp = a.name.localeCompare(b.name);
-    } else if (key === "path") {
-      cmp = a.parent.localeCompare(b.parent);
-    } else if (key === "type") {
-      cmp = typeSortKey(a).localeCompare(typeSortKey(b));
-    } else if (key === "size") {
-      cmp = (a.sizeBytes ?? -1) - (b.sizeBytes ?? -1);
-    } else {
-      cmp = (a.modifiedUnixMs ?? 0) - (b.modifiedUnixMs ?? 0);
-    }
-    return ascending ? cmp : -cmp;
-  });
-  return sorted;
-}
-
-function formatBytes(bytes?: number): string {
-  if (!bytes || bytes < 0) {
-    return "--";
-  }
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  const kb = bytes / 1024;
-  if (kb < 1024) {
-    return `${kb.toFixed(1)} KB`;
-  }
-  const mb = kb / 1024;
-  if (mb < 1024) {
-    return `${mb.toFixed(1)} MB`;
-  }
-  const gb = mb / 1024;
-  return `${gb.toFixed(1)} GB`;
-}
-
-function formatDate(ms?: number): string {
-  if (!ms) {
-    return "--";
-  }
-  return new Date(ms).toLocaleString();
-}
-
-// ── Extension → Application name mapping (frontend-side) ──
-const EXT_APP_MAP: Record<string, string> = {
-  // ═══ Adobe Creative Cloud ═══
-  ai: "Adobe Illustrator", ait: "Adobe Illustrator", eps: "Adobe Illustrator",
-  psd: "Adobe Photoshop", psb: "Adobe Photoshop", psp: "Adobe Photoshop",
-  aco: "Adobe Photoshop", abr: "Adobe Photoshop", pat: "Adobe Photoshop",
-  csh: "Adobe Photoshop", grd: "Adobe Photoshop", ase: "Adobe Photoshop",
-  indd: "Adobe InDesign", indt: "Adobe InDesign", idml: "Adobe InDesign", indb: "Adobe InDesign",
-  aep: "Adobe After Effects", aet: "Adobe After Effects", aepx: "Adobe After Effects",
-  prproj: "Adobe Premiere Pro", prel: "Adobe Premiere Pro",
-  lrcat: "Adobe Lightroom", xmp: "Adobe Lightroom", lrtemplate: "Adobe Lightroom",
-  dng: "Adobe Lightroom",
-  fla: "Adobe Animate", xfl: "Adobe Animate",
-  swf: "Adobe Flash",
-  xd: "Adobe XD",
-  pdf: "Adobe Acrobat",
-  // ═══ Apple 专业应用 ═══
-  fcpxml: "Final Cut Pro", fcpx: "Final Cut Pro",
-  aupreset: "Logic Pro",
-  band: "GarageBand",
-  // ═══ Sketch / Figma ═══
-  sketch: "Sketch",
-  fig: "Figma", jam: "Figma",
-  // ═══ Affinity Suite ═══
-  afdesign: "Affinity Designer", afphoto: "Affinity Photo", afpub: "Affinity Publisher",
-  // ═══ Corel ═══
-  cdr: "CorelDRAW", cdt: "CorelDRAW", cmx: "CorelDRAW",
-  // ═══ 像素画 ═══
-  pxm: "Pixelmator Pro",
-  aseprite: "Aseprite",
-  // ═══ DaVinci Resolve ═══
-  drp: "DaVinci Resolve",
-  // ═══ Capture One ═══
-  cos: "Capture One", eip: "Capture One",
-  // ═══ 3D / CAD ═══
-  blend: "Blender", blend1: "Blender",
-  c4d: "Cinema 4D",
-  skp: "SketchUp",
-  max: "3ds Max", "3ds": "3ds Max",
-  ma: "Maya", mb: "Maya",
-  fbx: "预览", obj: "预览", stl: "预览", glb: "预览", gltf: "预览",
-  usdz: "预览", usd: "预览", usda: "预览", usdc: "预览",
-  // ═══ 字体 ═══
-  ttf: "字体册", otf: "字体册", woff: "字体册", woff2: "字体册",
-  // ═══ 通用图像 ═══
-  jpg: "预览", jpeg: "预览", jpe: "预览",
-  png: "预览", gif: "预览", webp: "预览",
-  bmp: "预览", heic: "预览", heif: "预览",
-  tif: "预览", tiff: "预览",
-  ico: "预览", icns: "预览",
-  svg: "预览", svgz: "预览",
-  raw: "预览", cr2: "预览", cr3: "预览", crw: "预览",
-  nef: "预览", nrw: "预览",
-  arw: "预览", srf: "预览", sr2: "预览",
-  orf: "预览", rw2: "预览",
-  pef: "预览", raf: "预览",
-  dcr: "预览", kdc: "预览", mrw: "预览",
-  "3fr": "预览", fff: "预览",
-  avif: "预览", hdr: "预览", exr: "预览",
-  // ═══ 音视频 ═══
-  mp4: "QuickTime Player", m4v: "QuickTime Player", mov: "QuickTime Player",
-  avi: "QuickTime Player", mkv: "QuickTime Player", webm: "QuickTime Player",
-  wmv: "QuickTime Player", flv: "QuickTime Player",
-  mts: "QuickTime Player", m2ts: "QuickTime Player",
-  mp3: "音乐", m4a: "音乐", m4r: "音乐",
-  wav: "音乐", aiff: "音乐", aif: "音乐",
-  flac: "音乐", aac: "音乐", ogg: "音乐",
-  wma: "音乐", caf: "音乐",
-  // ═══ 办公文档 ═══
-  doc: "Microsoft Word", docx: "Microsoft Word", dot: "Microsoft Word", dotx: "Microsoft Word",
-  xls: "Microsoft Excel", xlsx: "Microsoft Excel", xlt: "Microsoft Excel", xltx: "Microsoft Excel",
-  csv: "Microsoft Excel",
-  ppt: "Microsoft PowerPoint", pptx: "Microsoft PowerPoint", pot: "Microsoft PowerPoint", potx: "Microsoft PowerPoint",
-  pages: "Pages", numbers: "Numbers", key: "Keynote", kth: "Keynote",
-  txt: "文本编辑", md: "文本编辑", rtf: "文本编辑", rtfd: "文本编辑",
-  // ═══ 代码 / Web ═══
-  html: "Safari 浏览器", htm: "Safari 浏览器", css: "Safari 浏览器", xml: "Safari 浏览器",
-  swift: "Xcode", c: "Xcode", cpp: "Xcode", h: "Xcode", hpp: "Xcode", m: "Xcode", mm: "Xcode",
-  playground: "Xcode", xcodeproj: "Xcode", xcworkspace: "Xcode",
-  storyboard: "Xcode", xib: "Xcode", plist: "Xcode",
-  rs: "VS Code", ts: "VS Code", tsx: "VS Code", js: "VS Code", jsx: "VS Code",
-  json: "VS Code", toml: "VS Code", yaml: "VS Code", yml: "VS Code",
-  py: "VS Code", go: "VS Code", java: "VS Code", rb: "VS Code", php: "VS Code", sql: "VS Code",
-  scss: "VS Code", less: "VS Code", sass: "VS Code", vue: "VS Code", svelte: "VS Code",
-  sh: "终端", bash: "终端", zsh: "终端", fish: "终端", command: "终端",
-  // ═══ 压缩 / 磁盘 ═══
-  zip: "归档实用工具", rar: "归档实用工具", "7z": "归档实用工具",
-  tar: "归档实用工具", gz: "归档实用工具", bz2: "归档实用工具", xz: "归档实用工具",
-  tgz: "归档实用工具", tbz2: "归档实用工具",
-  dmg: "磁盘工具", iso: "磁盘工具",
-  sparseimage: "磁盘工具", sparsebundle: "磁盘工具",
-};
-
-function parseSize(input: string): number {
-  if (!input.trim()) return 0;
-  const s = input.trim().toLowerCase();
-  const num = parseFloat(s);
-  if (isNaN(num)) return 0;
-  if (s.endsWith("gb") || s.endsWith("g")) return num * 1073741824;
-  if (s.endsWith("mb") || s.endsWith("m")) return num * 1048576;
-  if (s.endsWith("kb") || s.endsWith("k")) return num * 1024;
-  return num; // raw bytes
-}
-
-function appForExt(ext: string): string {
-  if (!ext) return "Other";
-  return EXT_APP_MAP[ext.toLowerCase()] || "Other";
-}
-
-function iconToken(item: SearchResultItem): string {
-  if (item.isDir) {
-    return "folder";
-  }
-  const tab = classifyTab(item);
-  if (tab === "documents") {
-    return "doc";
-  }
-  if (tab === "images") {
-    return "img";
-  }
-  if (tab === "media") {
-    return "media";
-  }
-  if (tab === "code") {
-    return "code";
-  }
-  if (tab === "archives") {
-    return "archive";
-  }
-  return "file";
-}
-
-function typeLabel(item: SearchResultItem, tFolder: string, tFile: string): string {
-  if (item.isDir) {
-    return tFolder;
-  }
-  const ext = extensionOf(item.name);
-  if (ext.length > 0) {
-    return ext.toUpperCase();
-  }
-  return tFile;
-}
-
-function typeSortKey(item: SearchResultItem): string {
-  if (item.isDir) {
-    return "0-folder";
-  }
-
-  const ext = extensionOf(item.name);
-  if (ext.length > 0) {
-    return `1-${ext.toLowerCase()}`;
-  }
-  return "1-file";
-}
-
-function iconGlyph(token: string): string {
-  switch (token) {
-    case "folder":
-      return "F";
-    case "doc":
-      return "D";
-    case "img":
-      return "I";
-    case "media":
-      return "M";
-    case "code":
-      return "C";
-    case "archive":
-      return "A";
-    default:
-      return "*";
-  }
-}
-
-function setCellPreviewTooltip(
-  event: React.MouseEvent<HTMLElement>,
-  text: string
-) {
-  const cell = event.currentTarget;
-  const isTruncated = cell.scrollWidth > cell.clientWidth;
-  if (isTruncated) {
-    cell.title = text;
-  } else {
-    cell.removeAttribute("title");
-  }
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-  const tag = target.tagName;
-  return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
-}
-
-function blurActiveEditable(): void {
-  if (typeof document === "undefined") {
-    return;
-  }
-  const active = document.activeElement;
-  if (active instanceof HTMLElement && isEditableTarget(active)) {
-    active.blur();
-  }
-}
-
-function buildSearchRequest(
-  query: string,
-  tab: TabId,
-  pathPrefix: string,
-  caseSensitive: boolean,
-  regexEnabled: boolean,
-  fuzzyEnabled: boolean,
-  sortKey: SortKey,
-  sortAscending: boolean,
-  limit: number
-) {
-  const includeFiles = tab !== "folders";
-  const includeDirs = tab === "all" || tab === "folders";
-  const extensions = TAB_EXTENSIONS[tab];
-  const mode = fuzzyEnabled ? "Fuzzy" : regexEnabled ? "Pattern" : "Substring";
-  return {
-    request: {
-      query,
-      mode,
-      regexEnabled,
-      caseSensitive,
-      pathPrefix: pathPrefix.trim() || null,
-      includeFiles,
-      includeDirs,
-      limit,
-      extensions,
-      sortKey,
-      sortAscending,
-    }
-  };
-}
-
-function systemPrefersDark(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-    return false;
-  }
-  return window.matchMedia("(prefers-color-scheme: dark)").matches;
-}
-
-function resolveTheme(themeMode: ThemeMode, systemDark: boolean): "light" | "dark" {
-  if (themeMode === "system") {
-    return systemDark ? "dark" : "light";
-  }
-  return themeMode;
-}
-
-function loadStoredTheme(): ThemeMode {
-  if (typeof window === "undefined") {
-    return "system";
-  }
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-  if (stored === "light" || stored === "dark") {
-    return stored;
-  }
-  return "system";
-}
-
-function detectDefaultLanguage(): Language {
-  if (typeof navigator !== "undefined" && navigator.language.toLowerCase().startsWith("zh")) {
-    return "zh";
-  }
-  return "en";
-}
-
-function isMacPlatform(): boolean {
-  if (typeof navigator === "undefined") {
-    return true;
-  }
-  return /mac/i.test(navigator.platform);
-}
-
-function displayShortcut(shortcut: string): string {
-  const tokens = shortcut
-    .split("+")
-    .map((token) => token.trim())
-    .filter((token) => token.length > 0);
-  if (tokens.length === 0) {
-    return "";
-  }
-
-  const isMac = isMacPlatform();
-  return tokens
-    .map((token) => {
-      const upper = token.toUpperCase();
-      if (upper === "CMDORCTRL" || upper === "COMMANDORCONTROL" || upper === "COMMANDORCTRL" || upper === "CMDORCONTROL") {
-        return isMac ? "Cmd" : "Ctrl";
-      }
-      if (upper === "CMD" || upper === "COMMAND" || upper === "SUPER") {
-        return "Cmd";
-      }
-      if (upper === "CTRL" || upper === "CONTROL") {
-        return "Ctrl";
-      }
-      if (upper === "ALT" || upper === "OPTION") {
-        return isMac ? "Option" : "Alt";
-      }
-      if (upper === "SHIFT") {
-        return "Shift";
-      }
-      if (upper.startsWith("KEY") && upper.length === 4) {
-        return upper.slice(3);
-      }
-      if (upper.startsWith("DIGIT") && upper.length === 6) {
-        return upper.slice(5);
-      }
-      if (upper === "SPACE") {
-        return "Space";
-      }
-      return token;
-    })
-    .join("+");
-}
-
-function shortcutFromKeyboardEvent(event: React.KeyboardEvent<HTMLInputElement>): string | null {
-  const modifierCodes = new Set([
-    "MetaLeft",
-    "MetaRight",
-    "ControlLeft",
-    "ControlRight",
-    "AltLeft",
-    "AltRight",
-    "ShiftLeft",
-    "ShiftRight"
-  ]);
-
-  const modifiers: string[] = [];
-  if (event.metaKey || event.ctrlKey) {
-    modifiers.push("CmdOrCtrl");
-  }
-  if (event.altKey) {
-    modifiers.push("Alt");
-  }
-  if (event.shiftKey) {
-    modifiers.push("Shift");
-  }
-  if (modifiers.length === 0 || modifierCodes.has(event.code)) {
-    return null;
-  }
-
-  let keyToken = event.code;
-  if (keyToken === "NumpadDecimal") {
-    keyToken = "Period";
-  }
-  if (keyToken === "NumpadAdd") {
-    keyToken = "Equal";
-  }
-  return `${modifiers.join("+")}+${keyToken}`;
-}
-
-function fmt(template: string, vars: Record<string, string | number>): string {
-  return template.replace(/\{(\w+)\}/g, (_, key: string) => String(vars[key] ?? ""));
-}
-
-function normalizeStoredColumnWidth(value: unknown, key: ColumnKey): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return null;
-  }
-  const min = MIN_COLUMN_WIDTHS[key];
-  const max = 2200;
-  return Math.round(Math.max(min, Math.min(max, value)));
-}
-
-function loadStoredColumnWidths(): Record<ColumnKey, number> | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const raw = window.localStorage.getItem(COLUMN_WIDTHS_STORAGE_KEY);
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<Record<ColumnKey, unknown>>;
-    const name = normalizeStoredColumnWidth(parsed.name, "name");
-    const path = normalizeStoredColumnWidth(parsed.path, "path");
-    const type = normalizeStoredColumnWidth(parsed.type, "type") ?? DEFAULT_COLUMN_WIDTHS.type;
-    const size = normalizeStoredColumnWidth(parsed.size, "size");
-    const modified = normalizeStoredColumnWidth(parsed.modified, "modified");
-    if (name === null || path === null || size === null || modified === null) {
-      return null;
-    }
-    return { name, path, type, size, modified };
-  } catch {
-    return null;
-  }
-}
-
-function loadStoredRegexEnabled(): boolean | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  const raw = window.localStorage.getItem(REGEX_ENABLED_STORAGE_KEY);
-  if (raw === "1") {
-    return true;
-  }
-  if (raw === "0") {
-    return false;
-  }
-
-  const legacy = window.localStorage.getItem(LEGACY_SEARCH_MODE_STORAGE_KEY);
-  if (legacy === "Pattern") {
-    return true;
-  }
-  if (legacy === "Substring") {
-    return false;
-  }
-  return null;
-}
-
-function loadStoredCaseSensitive(): boolean | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  const raw = window.localStorage.getItem(CASE_SENSITIVE_STORAGE_KEY);
-  if (raw === "1") {
-    return true;
-  }
-  if (raw === "0") {
-    return false;
-  }
-  return null;
-}
-
-function loadStoredFuzzyEnabled(): boolean | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  const raw = window.localStorage.getItem(FUZZY_ENABLED_STORAGE_KEY);
-  if (raw === "1") return true;
-  if (raw === "0") return false;
-  return null;
-}
-
-function loadPinnedItems(): SearchResultItem[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-  try {
-    const raw = window.localStorage.getItem(PINNED_STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as SearchResultItem[];
-  } catch {
-    return [];
-  }
-}
-
-function savePinnedItems(items: SearchResultItem[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(items));
-}
-
-function CustomSelect<T extends string>({
-  value,
-  options,
-  onChange,
-  title,
-  disabled,
-  triggerClassName = "custom-select-trigger",
-  style,
-}: {
-  value: T;
-  options: { value: T; label: string }[];
-  onChange: (value: T) => void | Promise<void>;
-  title?: string;
-  disabled?: boolean;
-  triggerClassName?: string;
-  style?: React.CSSProperties;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleMouseDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (
-        panelRef.current?.contains(target) ||
-        triggerRef.current?.contains(target)
-      ) {
-        return;
-      }
-      setIsOpen(false);
-    };
-    document.addEventListener("mousedown", handleMouseDown);
-    return () => document.removeEventListener("mousedown", handleMouseDown);
-  }, [isOpen]);
-
-  const selectedLabel =
-    options.find((o) => o.value === value)?.label ?? "";
-
-  return (
-    <div className="custom-select" style={style}>
-      <button
-        ref={triggerRef}
-        type="button"
-        className={triggerClassName}
-        title={title}
-        disabled={disabled}
-        onClick={() => {
-          if (disabled) return;
-          setIsOpen((prev) => !prev);
-        }}
-      >
-        {selectedLabel}
-      </button>
-      {isOpen && !disabled && (
-        <div className="custom-select-panel" ref={panelRef}>
-          {options.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              className={`custom-select-item ${opt.value === value ? "active" : ""}`}
-              onClick={() => {
-                void onChange(opt.value);
-                setIsOpen(false);
-              }}
-            >
-              <span className="custom-select-check">
-                {opt.value === value ? "✓" : ""}
-              </span>
-              <span>{opt.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+const ROW_HEIGHT = 46;
+const VISIBLE_BUFFER = 10;
 
 function App() {
+  // ── core state ──
   const [activeView, setActiveView] = useState<ViewMode>("search");
   const [themeMode, setThemeMode] = useState<ThemeMode>(loadStoredTheme);
   const [systemDark, setSystemDark] = useState(systemPrefersDark());
   const [language, setLanguage] = useState<Language>(detectDefaultLanguage());
+  const resolvedTheme = resolveTheme(themeMode, systemDark);
+  const t = I18N[language];
+
+  // ── shortcut state ──
   const [windowToggleShortcut, setWindowToggleShortcut] = useState(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
   const [shortcutDraft, setShortcutDraft] = useState(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
   const [shortcutStatus, setShortcutStatus] = useState("");
   const [isShortcutSaving, setIsShortcutSaving] = useState(false);
+
+  // ── launch settings ──
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [silentStart, setSilentStart] = useState(false);
   const [showDockIcon, setShowDockIcon] = useState(false);
   const [isLaunchSettingsSaving, setIsLaunchSettingsSaving] = useState(false);
   const [launchSettingsStatus, setLaunchSettingsStatus] = useState("");
+
+  // ── auto vacuum ──
   const [autoVacuumOnRebuild, setAutoVacuumOnRebuild] = useState(true);
   const [isAutoVacuumSettingsSaving, setIsAutoVacuumSettingsSaving] = useState(false);
   const [autoVacuumSettingsStatus, setAutoVacuumSettingsStatus] = useState("");
+
+  // ── update check ──
   const [autoCheckUpdate, setAutoCheckUpdate] = useState(true);
   const [isAutoCheckSaving, setIsAutoCheckSaving] = useState(false);
   const [autoCheckStatus, setAutoCheckStatus] = useState("");
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<{ hasUpdate: boolean; latestVersion: string } | null>(null);
+
+  // ── max results ──
   const [maxResults, setMaxResults] = useState(500);
   const [isMaxResultsSaving, setIsMaxResultsSaving] = useState(false);
   const [maxResultsStatus, setMaxResultsStatus] = useState("");
-  const [updateInfo, setUpdateInfo] = useState<{ hasUpdate: boolean; latestVersion: string } | null>(null);
+
+  // ── exclude dirs ──
   const [excludeRuleType, setExcludeRuleType] = useState<ExcludeRuleType>("exact");
   const [excludeRuleDraft, setExcludeRuleDraft] = useState("");
   const [excludeExactDirs, setExcludeExactDirs] = useState<string[]>([]);
   const [excludePatternDirs, setExcludePatternDirs] = useState<string[]>([]);
   const [excludeDirStatus, setExcludeDirStatus] = useState("");
   const [isExcludeDirSaving, setIsExcludeDirSaving] = useState(false);
+
+  // ── watch roots ──
   const [watchRootDraft, setWatchRootDraft] = useState("");
   const [watchRoots, setWatchRoots] = useState<string[]>([]);
   const [watchRootStatus, setWatchRootStatus] = useState("");
   const [isWatchRootSaving, setIsWatchRootSaving] = useState(false);
+
+  // ── search state ──
   const [query, setQuery] = useState("");
   const [pathPrefix, setPathPrefix] = useState("");
   const [pathSuggestions, setPathSuggestions] = useState<string[]>([]);
@@ -1151,91 +95,38 @@ function App() {
   const [caseSensitive, setCaseSensitive] = useState(() => loadStoredCaseSensitive() ?? false);
   const [fuzzyEnabled, setFuzzyEnabled] = useState(() => loadStoredFuzzyEnabled() ?? false);
   const [activeTab, setActiveTab] = useState<TabId>("all");
-  const [timeFilter, setTimeFilter] = useState("all"); // all | today | week | month | year | custom
-  const [sizeFilter, setSizeFilter] = useState("all"); // all | kb | mb | gb | custom
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortAscending, setSortAscending] = useState(true);
+
+  // ── filter state ──
+  const [timeFilter, setTimeFilter] = useState("all");
+  const [sizeFilter, setSizeFilter] = useState("all");
   const [customSizeMin, setCustomSizeMinTemp] = useState("");
   const [customSizeMax, setCustomSizeMaxTemp] = useState("");
   const [customSizeUnit, setCustomSizeUnit] = useState("MB");
-  const [appFilter, setAppFilter] = useState(""); // "" = all, or app name
+  const [appFilter, setAppFilter] = useState("");
   const [showTimePopover, setShowTimePopover] = useState(false);
   const [showSizePopover, setShowSizePopover] = useState(false);
   const timePopoverRef = useRef<HTMLDivElement | null>(null);
   const sizePopoverRef = useRef<HTMLDivElement | null>(null);
-  // Custom filter values (refs — not state — avoid re-render on every keystroke)
   const customSizeMinRef = useRef(0);
   const customSizeMaxRef = useRef(0);
   const customTimeFromRef = useRef(0);
   const customTimeToRef = useRef(0);
   const [filterVersion, setFilterVersion] = useState(0);
 
-  const customTimeLabel = useMemo(() => {
-    if (timeFilter !== "custom") return null;
-    const from = customTimeFromRef.current;
-    const to = customTimeToRef.current;
-    if (!from && !to) return null;
-    const fmt = (ts: number) => {
-      const d = new Date(ts);
-      return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
-    };
-    let label = "";
-    if (from) label += fmt(from);
-    label += " ~ ";
-    if (to) label += fmt(to - 86399999);
-    return label;
-  }, [timeFilter, showTimePopover, filterVersion]);
-  const customSizeLabel = useMemo(() => {
-    if (sizeFilter !== "custom" || showSizePopover) return null;
-    const min = customSizeMinRef.current;
-    const max = customSizeMaxRef.current;
-    if (!min && !max) return null;
-    const fmtNum = (v: number) => Number.isInteger(v) ? v.toString() : v.toFixed(1);
-    const fmt = (b: number) => {
-      if (b >= 1073741824) return `${fmtNum(b/1073741824)} GB`;
-      if (b >= 1048576) return `${fmtNum(b/1048576)} MB`;
-      if (b >= 1024) return `${fmtNum(b/1024)} KB`;
-      return `${b} B`;
-    };
-    let label = "";
-    if (min) label += fmt(min);
-    label += " ~ ";
-    if (max) label += fmt(max);
-    return label;
-  }, [sizeFilter, showSizePopover, filterVersion]);
-
-
-  // Calendar state
+  // ── calendar state ──
   const [calMonth, setCalMonth] = useState(() => new Date().getMonth());
   const [calYear, setCalYear] = useState(() => new Date().getFullYear());
   const [calSelecting, setCalSelecting] = useState<"from" | "to">("from");
   const [calFrom, setCalFrom] = useState("");
   const [calTo, setCalTo] = useState("");
 
-  // Close popovers on click outside (filter unchanged until Apply)
-  useEffect(() => {
-    if (!showTimePopover && !showSizePopover) return;
-    const onMouseDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (showTimePopover && timePopoverRef.current && !timePopoverRef.current.contains(target)) {
-        setShowTimePopover(false);
-      }
-      if (showSizePopover && sizePopoverRef.current && !sizePopoverRef.current.contains(target)) {
-        setShowSizePopover(false);
-      }
-    };
-    document.addEventListener("mousedown", onMouseDown);
-    return () => document.removeEventListener("mousedown", onMouseDown);
-  }, [showTimePopover, showSizePopover]);
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortAscending, setSortAscending] = useState(true);
-
+  // ── results state ──
   const [items, setItems] = useState<SearchResultItem[]>([]);
   const itemsRef = useRef(items);
   itemsRef.current = items;
   const [pinnedItems, setPinnedItems] = useState<SearchResultItem[]>(loadPinnedItems);
-  const [defaultFolderAction, setDefaultFolderAction] = useState("Finder");
-  const [defaultTerminalAction, setDefaultTerminalAction] = useState("Terminal");
-  const [customFolderApp, setCustomFolderApp] = useState("");
-  const [customTerminalApp, setCustomTerminalApp] = useState("");
   const [indexed, setIndexed] = useState(0);
   const [appVersion, setAppVersion] = useState("");
   const [totalFound, setTotalFound] = useState(0);
@@ -1247,24 +138,30 @@ function App() {
   const [isIndexLoading, setIsIndexLoading] = useState(true);
   const [isBuilding, setIsBuilding] = useState(false);
   const [isPickingPath, setIsPickingPath] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // ── file manager ──
+  const [defaultFolderAction, setDefaultFolderAction] = useState("Finder");
+  const [defaultTerminalAction, setDefaultTerminalAction] = useState("Terminal");
+  const [customFolderApp, setCustomFolderApp] = useState("");
+  const [customTerminalApp, setCustomTerminalApp] = useState("");
+
+  // ── context menu ──
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [openWithVisible, setOpenWithVisible] = useState(false);
+  const openWithCloseTimerRef = useRef<number | null>(null);
+  const isPreviewingRef = useRef(false);
+
+  // ── selection ──
   const [selectedItemPaths, setSelectedItemPaths] = useState<string[]>([]);
   const [selectionAnchorPath, setSelectionAnchorPath] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+
+  // ── column resize ──
   const [scrollTop, setScrollTop] = useState(0);
   const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>(
     () => loadStoredColumnWidths() ?? DEFAULT_COLUMN_WIDTHS
   );
   const [activeResizer, setActiveResizer] = useState<string | null>(null);
-  const tableShellRef = useRef<HTMLDivElement | null>(null);
-  const tableBodyRef = useRef<HTMLDivElement | null>(null);
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const pathPickerRef = useRef<HTMLDivElement | null>(null);
-  const pathInputRef = useRef<HTMLInputElement | null>(null);
-  const rowRefs = useRef(new Map<string, HTMLElement>());
-  const openWithCloseTimerRef = useRef<number | null>(null);
-  const isPreviewingRef = useRef(false);
   const columnWidthsRef = useRef(columnWidths);
   const resizeStateRef = useRef<{
     left: ColumnKey;
@@ -1273,14 +170,20 @@ function App() {
     startWidths: Record<ColumnKey, number>;
   } | null>(null);
 
+  // ── refs ──
+  const tableShellRef = useRef<HTMLDivElement | null>(null);
+  const tableBodyRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const pathPickerRef = useRef<HTMLDivElement | null>(null);
+  const pathInputRef = useRef<HTMLInputElement | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLElement>());
+
+  // ── derived ──
   const gridTemplateColumns = `${columnWidths.name}px ${columnWidths.path}px ${columnWidths.type}px ${columnWidths.size}px ${columnWidths.modified}px`;
-  const resolvedTheme = resolveTheme(themeMode, systemDark);
-  const t = I18N[language];
   const normalizedPathPrefix = pathPrefix.trim().toLowerCase();
   const visiblePathSuggestions = [...pathSuggestions]
     .filter((path) => {
       if (!normalizedPathPrefix) return true;
-      // Always show top-level picks (home, /Volumes) for quick re-selection.
       if (path.startsWith("/Volumes/")) return true;
       if (path.startsWith("/Users/") && path.split("/").length <= 3) return true;
       return path.toLowerCase().includes(normalizedPathPrefix);
@@ -1288,25 +191,13 @@ function App() {
     .sort((left, right) => {
       const leftLower = left.toLowerCase();
       const rightLower = right.toLowerCase();
-      // Give priority to child paths of the prefix (not the prefix itself).
-      const leftChild = normalizedPathPrefix.length > 0
-        && leftLower.startsWith(normalizedPathPrefix)
-        && leftLower.length > normalizedPathPrefix.length;
-      const rightChild = normalizedPathPrefix.length > 0
-        && rightLower.startsWith(normalizedPathPrefix)
-        && rightLower.length > normalizedPathPrefix.length;
-      if (leftChild !== rightChild) {
-        return leftChild ? -1 : 1;
-      }
-      // Root-level picks always show before other matches.
+      const leftChild = normalizedPathPrefix.length > 0 && leftLower.startsWith(normalizedPathPrefix) && leftLower.length > normalizedPathPrefix.length;
+      const rightChild = normalizedPathPrefix.length > 0 && rightLower.startsWith(normalizedPathPrefix) && rightLower.length > normalizedPathPrefix.length;
+      if (leftChild !== rightChild) return leftChild ? -1 : 1;
       const leftRoot = left.startsWith("/Volumes/") || (left.startsWith("/Users/") && left.split("/").length <= 3);
       const rightRoot = right.startsWith("/Volumes/") || (right.startsWith("/Users/") && right.split("/").length <= 3);
-      if (leftRoot !== rightRoot) {
-        return leftRoot ? -1 : 1;
-      }
-      if (left.length !== right.length) {
-        return left.length - right.length;
-      }
+      if (leftRoot !== rightRoot) return leftRoot ? -1 : 1;
+      if (left.length !== right.length) return left.length - right.length;
       return left.localeCompare(right);
     })
     .slice(0, 8);
@@ -1325,15 +216,9 @@ function App() {
   );
   const hasMultiSelection = selectedPathsInOrder.length > 1;
 
-  const tabLabel = (tab: TabId): string => t[`tab_${tab}` as const];
-  const formatIndexedItems = (count: number): string => fmt(t.indexedItems, { count: count.toLocaleString() });
-  const formatShownItems = (count: number): string => fmt(t.shownItems, { count: count.toLocaleString() });
-  const ROW_HEIGHT = 46;
-  const VISIBLE_BUFFER = 10;
-  // Apply time/size/app dropdown filters on top of the existing items
+  // ── filtered items ──
   const filteredItems = useMemo(() => {
     let list = items;
-    // Time filter
     if (timeFilter !== "all") {
       const now = Date.now();
       const cutoff = timeFilter === "custom"
@@ -1355,7 +240,6 @@ function App() {
         return m >= cutoff;
       });
     }
-    // Size filter
     if (sizeFilter !== "all") {
       list = list.filter((item) => {
         const b = item.sizeBytes;
@@ -1373,7 +257,6 @@ function App() {
         }
       });
     }
-    // App filter (by file extension → app mapping)
     if (appFilter !== "") {
       list = list.filter((item) => {
         if (item.isDir) return false;
@@ -1382,9 +265,12 @@ function App() {
     }
     return list;
   }, [items, timeFilter, sizeFilter, appFilter, filterVersion]);
+
   const visibleStart = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VISIBLE_BUFFER);
   const visibleEnd = Math.min(filteredItems.length, visibleStart + Math.ceil(window.innerHeight / ROW_HEIGHT) + VISIBLE_BUFFER * 2);
   const visibleItems = filteredItems.slice(visibleStart, visibleEnd);
+  const topSpacerHeight = visibleStart * ROW_HEIGHT;
+  const bottomSpacerHeight = (filteredItems.length - visibleEnd) * ROW_HEIGHT;
 
   const sortedPinnedItems = useMemo(() => {
     const sorted = [...pinnedItems];
@@ -1392,13 +278,8 @@ function App() {
     sorted.sort((a, b) => {
       let cmp = 0;
       switch (sortKey) {
-        case "name":
-          cmp = a.name.localeCompare(b.name);
-          break;
-        case "path":
-          cmp = (a.parent || "").localeCompare(b.parent || "");
-          if (cmp === 0) cmp = a.name.localeCompare(b.name);
-          break;
+        case "name": cmp = a.name.localeCompare(b.name); break;
+        case "path": cmp = (a.parent || "").localeCompare(b.parent || ""); if (cmp === 0) cmp = a.name.localeCompare(b.name); break;
         case "type": {
           const extA = a.name.includes(".") ? a.name.slice(a.name.lastIndexOf(".") + 1).toLowerCase() : "";
           const extB = b.name.includes(".") ? b.name.slice(b.name.lastIndexOf(".") + 1).toLowerCase() : "";
@@ -1406,1597 +287,50 @@ function App() {
           if (cmp === 0) cmp = a.name.localeCompare(b.name);
           break;
         }
-        case "size":
-          cmp = (a.sizeBytes ?? 0) - (b.sizeBytes ?? 0);
-          break;
-        case "modified":
-          cmp = (a.modifiedUnixMs ?? 0) - (b.modifiedUnixMs ?? 0);
-          break;
+        case "size": cmp = (a.sizeBytes ?? 0) - (b.sizeBytes ?? 0); break;
+        case "modified": cmp = (a.modifiedUnixMs ?? 0) - (b.modifiedUnixMs ?? 0); break;
       }
       return cmp * dir;
     });
     return sorted;
   }, [pinnedItems, sortKey, sortAscending]);
-  const topSpacerHeight = visibleStart * ROW_HEIGHT;
-  const bottomSpacerHeight = (filteredItems.length - visibleEnd) * ROW_HEIGHT;
 
-  const clearOpenWithCloseTimer = () => {
-    if (openWithCloseTimerRef.current !== null) {
-      window.clearTimeout(openWithCloseTimerRef.current);
-      openWithCloseTimerRef.current = null;
-    }
-  };
-  const openOpenWithMenu = () => {
-    clearOpenWithCloseTimer();
-    setOpenWithVisible(true);
-  };
-  const scheduleCloseOpenWithMenu = () => {
-    clearOpenWithCloseTimer();
-    openWithCloseTimerRef.current = window.setTimeout(() => {
-      setOpenWithVisible(false);
-      openWithCloseTimerRef.current = null;
-    }, 220);
-  };
-  const closeContextMenu = () => {
-    clearOpenWithCloseTimer();
-    setContextMenu(null);
-    setOpenWithVisible(false);
-  };
-
-  const closePathDropdown = () => {
-    setIsPathDropdownOpen(false);
-    setActivePathSuggestion(-1);
-  };
-
-  const applyPathSuggestion = (path: string) => {
-    setPathPrefix(path);
-    closePathDropdown();
-    pathInputRef.current?.focus();
-  };
-
-  const handlePathInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Escape") {
-      closePathDropdown();
-      return;
-    }
-
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      if (!isPathDropdownOpen) {
-        setIsPathDropdownOpen(true);
-      }
-      if (visiblePathSuggestions.length === 0) {
-        return;
-      }
-      setActivePathSuggestion((prev) => {
-        if (prev < 0 || prev >= visiblePathSuggestions.length - 1) {
-          return 0;
-        }
-        return prev + 1;
-      });
-      return;
-    }
-
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      if (!isPathDropdownOpen) {
-        setIsPathDropdownOpen(true);
-      }
-      if (visiblePathSuggestions.length === 0) {
-        return;
-      }
-      setActivePathSuggestion((prev) => {
-        if (prev <= 0) {
-          return visiblePathSuggestions.length - 1;
-        }
-        return prev - 1;
-      });
-      return;
-    }
-
-    if (event.key === "Enter" && isPathDropdownVisible && activePathSuggestion >= 0) {
-      event.preventDefault();
-      applyPathSuggestion(visiblePathSuggestions[activePathSuggestion]);
-    }
-  };
-
-  useEffect(() => {
-    columnWidthsRef.current = columnWidths;
-  }, [columnWidths]);
-
-  useEffect(() => {
-    return () => {
-      clearOpenWithCloseTimer();
+  const customTimeLabel = useMemo(() => {
+    if (timeFilter !== "custom") return null;
+    const from = customTimeFromRef.current;
+    const to = customTimeToRef.current;
+    if (!from && !to) return null;
+    const fmtDate = (ts: number) => {
+      const d = new Date(ts);
+      return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
     };
-  }, []);
+    let label = "";
+    if (from) label += fmtDate(from);
+    label += " ~ ";
+    if (to) label += fmtDate(to - 86399999);
+    return label;
+  }, [timeFilter, showTimePopover, filterVersion]);
 
-  useEffect(() => {
-    if (activePathSuggestion < visiblePathSuggestions.length) {
-      return;
-    }
-    setActivePathSuggestion(-1);
-  }, [activePathSuggestion, visiblePathSuggestions.length]);
-
-  useEffect(() => {
-    if (!isPathDropdownOpen) {
-      return;
-    }
-
-    const closeWhenClickOutside = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) {
-        return;
-      }
-      if (pathPickerRef.current?.contains(target)) {
-        return;
-      }
-      closePathDropdown();
+  const customSizeLabel = useMemo(() => {
+    if (sizeFilter !== "custom" || showSizePopover) return null;
+    const min = customSizeMinRef.current;
+    const max = customSizeMaxRef.current;
+    if (!min && !max) return null;
+    const fmtNum = (v: number) => Number.isInteger(v) ? v.toString() : v.toFixed(1);
+    const fmtBytes = (b: number) => {
+      if (b >= 1073741824) return `${fmtNum(b/1073741824)} GB`;
+      if (b >= 1048576) return `${fmtNum(b/1048576)} MB`;
+      if (b >= 1024) return `${fmtNum(b/1024)} KB`;
+      return `${b} B`;
     };
-
-    window.addEventListener("mousedown", closeWhenClickOutside);
-    return () => {
-      window.removeEventListener("mousedown", closeWhenClickOutside);
-    };
-  }, [isPathDropdownOpen]);
-
-  useEffect(() => {
-    if (!contextMenu) {
-      return;
-    }
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        closeContextMenu();
-      }
-    };
-    const close = () => closeContextMenu();
-
-    window.addEventListener("keydown", closeOnEscape);
-    window.addEventListener("resize", close);
-    window.addEventListener("scroll", close, true);
-    return () => {
-      window.removeEventListener("keydown", closeOnEscape);
-      window.removeEventListener("resize", close);
-      window.removeEventListener("scroll", close, true);
-    };
-  }, [contextMenu]);
-
-  useEffect(() => {
-    const visible = new Set(items.map((item) => item.path));
-    setSelectedItemPaths((prev) => {
-      const next = prev.filter((path) => visible.has(path));
-      return next.length === prev.length ? prev : next;
-    });
-    setSelectionAnchorPath((prev) => (prev && visible.has(prev) ? prev : null));
-  }, [items]);
-
-  useEffect(() => {
-    const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
-    if (stored === "zh" || stored === "en") {
-      setLanguage(stored);
-    }
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem(THEME_STORAGE_KEY, themeMode);
-  }, [themeMode]);
-
-  useEffect(() => {
-    localStorage.setItem(REGEX_ENABLED_STORAGE_KEY, regexEnabled ? "1" : "0");
-  }, [regexEnabled]);
-
-  useEffect(() => {
-    localStorage.setItem(CASE_SENSITIVE_STORAGE_KEY, caseSensitive ? "1" : "0");
-  }, [caseSensitive]);
-
-  useEffect(() => {
-    localStorage.setItem(FUZZY_ENABLED_STORAGE_KEY, fuzzyEnabled ? "1" : "0");
-  }, [fuzzyEnabled]);
-
-  useEffect(() => {
-    localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
-  }, [language]);
-
-  useEffect(() => {
-    void invoke("set_menu_language", { language });
-  }, [language]);
-
-  useEffect(() => {
-    const root = document.documentElement;
-    root.setAttribute("data-theme", resolvedTheme);
-  }, [resolvedTheme]);
-
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") {
-      return;
-    }
-
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = (event: MediaQueryListEvent) => {
-      setSystemDark(event.matches);
-    };
-    setSystemDark(media.matches);
-
-    if (typeof media.addEventListener === "function") {
-      media.addEventListener("change", onChange);
-      return () => media.removeEventListener("change", onChange);
-    }
-
-    const legacyListener = (event: MediaQueryListEvent) => onChange(event);
-    media.addListener(legacyListener);
-    return () => media.removeListener(legacyListener);
-  }, []);
-
-  useEffect(() => {
-    if (isIndexLoading) {
-      closePathDropdown();
-    }
-  }, [isIndexLoading]);
-
-  useEffect(() => {
-    let unlistenMenu: (() => void) | undefined;
-    void listen(EVENT_OPEN_SETTINGS, () => {
-      setActiveView("settings");
-    })
-      .then((dispose) => {
-        unlistenMenu = dispose;
-      })
-      .catch(() => {
-        // Keep UI usable even if menu event binding fails.
-      });
-
-    return () => {
-      if (unlistenMenu) {
-        unlistenMenu();
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    const loadShortcut = async () => {
-      try {
-        const shortcut = await invoke<string>("get_window_toggle_shortcut");
-        if (!mounted) {
-          return;
-        }
-        const normalized = shortcut.trim().length > 0 ? shortcut : DEFAULT_WINDOW_TOGGLE_SHORTCUT;
-        setWindowToggleShortcut(normalized);
-        setShortcutDraft(normalized);
-      } catch {
-        if (!mounted) {
-          return;
-        }
-        setWindowToggleShortcut(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
-        setShortcutDraft(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
-      }
-    };
-
-    void loadShortcut();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    const loadWatchRootsSettings = async () => {
-      try {
-        const settings = await invoke<WatchRootsSettingsResponse>("get_watch_roots_settings");
-        if (!mounted) {
-          return;
-        }
-        setWatchRoots(settings.roots);
-      } catch (err) {
-        if (!mounted) {
-          return;
-        }
-        setError(String(err));
-      }
-    };
-
-    void loadWatchRootsSettings();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    const loadAutoVacuumSettings = async () => {
-      try {
-        const settings = await invoke<AutoVacuumSettingsResponse>("get_auto_vacuum_settings");
-        if (!mounted) {
-          return;
-        }
-        setAutoVacuumOnRebuild(settings.autoVacuumOnRebuild);
-      } catch (err) {
-        if (!mounted) {
-          return;
-        }
-        setError(String(err));
-      }
-    };
-
-    void loadAutoVacuumSettings();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  // Load auto-check-update setting
-  useEffect(() => {
-    let mounted = true;
-    const load = async () => {
-      try {
-        const settings = await invoke<{ autoCheckUpdate: boolean }>("get_auto_check_update");
-        if (mounted) setAutoCheckUpdate(settings.autoCheckUpdate);
-      } catch { /* keep default */ }
-    };
-    void load();
-    return () => { mounted = false; };
-  }, []);
-
-  // Load max-results setting
-  useEffect(() => {
-    let mounted = true;
-    const load = async () => {
-      try {
-        const settings = await invoke<{ maxResults: number }>("get_max_results");
-        if (mounted) setMaxResults(settings.maxResults);
-      } catch { /* keep default */ }
-    };
-    void load();
-    return () => { mounted = false; };
-  }, []);
-
-  // Auto-check for updates on startup (after settings load)
-  useEffect(() => {
-    if (!autoCheckUpdate) return;
-    let mounted = true;
-    const check = async () => {
-      try {
-        const result = await invoke<{ hasUpdate: boolean; latestVersion: string }>("check_for_update");
-        if (mounted && result.hasUpdate) setUpdateInfo(result);
-      } catch { /* network error, ignore */ }
-    };
-    const timer = window.setTimeout(() => { void check(); }, 3000);
-    return () => { mounted = false; window.clearTimeout(timer); };
-  }, [autoCheckUpdate]);
-
-  useEffect(() => {
-    let mounted = true;
-    const loadLaunchSettings = async () => {
-      try {
-        const settings = await invoke<LaunchSettingsResponse>("get_launch_settings");
-        if (!mounted) {
-          return;
-        }
-        setLaunchAtLogin(settings.launchAtLogin);
-        setSilentStart(settings.silentStart);
-        setShowDockIcon(settings.showDockIcon);
-      } catch (err) {
-        if (!mounted) {
-          return;
-        }
-        setError(String(err));
-      }
-    };
-
-    void loadLaunchSettings();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    const loadExcludeDirSettings = async () => {
-      try {
-        const settings = await invoke<ExcludeDirSettingsResponse>("get_exclude_dir_settings");
-        if (!mounted) {
-          return;
-        }
-        setExcludeExactDirs(settings.exactDirs);
-        setExcludePatternDirs(settings.patternDirs);
-      } catch (err) {
-        if (!mounted) {
-          return;
-        }
-        setError(String(err));
-      }
-    };
-
-    void loadExcludeDirSettings();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    const loadFileManagerSettings = async () => {
-      try {
-        const settings = await invoke<FileManagerSettingsResponse>("get_file_manager_settings");
-        if (!mounted) {
-          return;
-        }
-        setDefaultFolderAction(settings.defaultFolderAction);
-        setDefaultTerminalAction(settings.defaultTerminalAction);
-        setCustomFolderApp(settings.customFolderApp);
-        setCustomTerminalApp(settings.customTerminalApp);
-      } catch (err) {
-        console.error("Failed to load file manager settings", err);
-      }
-    };
-
-    void loadFileManagerSettings();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let unlistenFocus: (() => void) | undefined;
-    void listen(EVENT_FOCUS_SEARCH, () => {
-      setActiveView("search");
-      window.requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      });
-    })
-      .then((dispose) => {
-        unlistenFocus = dispose;
-      })
-      .catch(() => {
-        // Keep app usable even if focus event binding fails.
-      });
-
-    return () => {
-      if (unlistenFocus) {
-        unlistenFocus();
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    const init = async () => {
-      if (mounted) {
-        setIsIndexLoading(true);
-      }
-      try {
-        const initial = await invoke<InitResponse>("initialize");
-        if (!mounted) {
-          return;
-        }
-        setIndexed(initial.indexed);
-        try {
-          const v = await invoke<string>("get_version");
-          if (mounted) setAppVersion(v);
-        } catch { /* ignore */ }
-      } catch (err) {
-        if (!mounted) {
-          return;
-        }
-        setError(String(err));
-      } finally {
-        if (mounted) {
-          setIsIndexLoading(false);
-        }
-      }
-
-      try {
-        const watch = await invoke<WatchResponse>("start_watch_auto");
-        if (mounted) {
-          setIsWatchRunning(watch.running);
-          if (watch.code === "bootstrap") {
-            setIsBuilding(true);
-            setBuildStatus(t.buildStatusBuilding);
-          }
-        }
-      } catch (err) {
-        if (mounted) {
-          setError(String(err));
-        }
-        try {
-          const watch = await invoke<WatchResponse>("watch_status");
-          if (mounted) {
-            setIsWatchRunning(watch.running);
-          }
-        } catch {
-          // Keep UI usable even if watcher state fetch fails.
-        }
-      }
-    };
-
-    void init();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isPathDropdownOpen) {
-      return;
-    }
-    let mounted = true;
-    const loadPathSuggestions = async () => {
-      try {
-        const suggestions = await invoke<string[]>("list_path_suggestions");
-        if (!mounted) return;
-        setPathSuggestions(suggestions);
-      } catch {
-        // Keep path filter usable even if suggestion load fails.
-      }
-    };
-    void loadPathSuggestions();
-    return () => {
-      mounted = false;
-    };
-  }, [isPathDropdownOpen]);
-
-  const fitColumnsToContainer = useCallback(() => {
-    const body = tableBodyRef.current;
-    const shell = tableShellRef.current;
-    const hostWidth = body?.clientWidth ?? shell?.clientWidth ?? 0;
-    if (hostWidth <= 0) {
-      return;
-    }
-    const available = Math.max(0, hostWidth - 32);
-    setColumnWidths((prev) => {
-      const total = prev.name + prev.path + prev.type + prev.size + prev.modified;
-      if (total === available) {
-        return prev;
-      }
-
-      if (total < available) {
-        const deficit = available - total;
-        const next = { ...prev };
-        const weightTotal = COLUMN_KEYS.reduce((sum, key) => sum + DEFAULT_COLUMN_WIDTHS[key], 0);
-        let distributed = 0;
-        for (const key of COLUMN_KEYS) {
-          const add = Math.floor((deficit * DEFAULT_COLUMN_WIDTHS[key]) / weightTotal);
-          next[key] = Math.round(next[key] + add);
-          distributed += add;
-        }
-        let remaining = deficit - distributed;
-        const growOrder: ColumnKey[] = ["path", "name", "modified", "type", "size"];
-        let cursor = 0;
-        while (remaining > 0) {
-          const key = growOrder[cursor % growOrder.length];
-          next[key] = Math.round(next[key] + 1);
-          remaining -= 1;
-          cursor += 1;
-        }
-        if (
-          next.name === prev.name &&
-          next.path === prev.path &&
-          next.type === prev.type &&
-          next.size === prev.size &&
-          next.modified === prev.modified
-        ) {
-          return prev;
-        }
-        return next;
-      }
-
-      const next = { ...prev };
-      let overflow = total - available;
-      const order: ColumnKey[] = ["path", "modified", "size", "name", "type"];
-
-      for (const key of order) {
-        if (overflow <= 0) {
-          break;
-        }
-        const minWidth = MIN_COLUMN_WIDTHS[key];
-        const current = next[key];
-        const reducible = Math.max(0, current - minWidth);
-        if (reducible <= 0) {
-          continue;
-        }
-        const cut = Math.min(reducible, overflow);
-        next[key] = Math.round(current - cut);
-        overflow -= cut;
-      }
-
-      if (
-        next.name === prev.name &&
-        next.path === prev.path &&
-        next.type === prev.type &&
-        next.size === prev.size &&
-        next.modified === prev.modified
-      ) {
-        return prev;
-      }
-      return next;
-    });
-  }, []);
-
-  useEffect(() => {
-    fitColumnsToContainer();
-    window.addEventListener("resize", fitColumnsToContainer);
-    return () => {
-      window.removeEventListener("resize", fitColumnsToContainer);
-    };
-  }, [fitColumnsToContainer]);
-
-  useEffect(() => {
-    const onMouseMove = (event: MouseEvent) => {
-      const state = resizeStateRef.current;
-      if (!state) {
-        return;
-      }
-      const delta = event.clientX - state.startX;
-      const start = state.startWidths;
-      const leftKey = state.left;
-      const leftIndex = COLUMN_KEYS.indexOf(leftKey);
-      const rightIndex = COLUMN_KEYS.indexOf(state.right);
-      if (leftIndex < 0 || rightIndex < 0 || rightIndex !== leftIndex + 1) {
-        return;
-      }
-
-      const next: Record<ColumnKey, number> = { ...start };
-      if (delta >= 0) {
-        let remaining = delta;
-        for (let i = rightIndex; i < COLUMN_KEYS.length && remaining > 0; i += 1) {
-          const key = COLUMN_KEYS[i];
-          const minWidth = MIN_COLUMN_WIDTHS[key];
-          const reducible = Math.max(0, next[key] - minWidth);
-          if (reducible <= 0) {
-            continue;
-          }
-          const cut = Math.min(reducible, remaining);
-          next[key] = Math.round(next[key] - cut);
-          remaining -= cut;
-        }
-        const grown = delta - remaining;
-        next[leftKey] = Math.round(start[leftKey] + grown);
-      } else {
-        let remaining = -delta;
-        for (let i = leftIndex; i >= 0 && remaining > 0; i -= 1) {
-          const key = COLUMN_KEYS[i];
-          const minWidth = MIN_COLUMN_WIDTHS[key];
-          const reducible = Math.max(0, next[key] - minWidth);
-          if (reducible <= 0) {
-            continue;
-          }
-          const cut = Math.min(reducible, remaining);
-          next[key] = Math.round(next[key] - cut);
-          remaining -= cut;
-        }
-        const shrink = -delta - remaining;
-        const rightKey = COLUMN_KEYS[rightIndex];
-        next[rightKey] = Math.round(start[rightKey] + shrink);
-      }
-
-      setColumnWidths(next);
-    };
-
-    const finishResize = () => {
-      if (resizeStateRef.current && typeof window !== "undefined") {
-        try {
-          window.localStorage.setItem(COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(columnWidthsRef.current));
-        } catch {
-          // Ignore write failures (e.g. private mode/quota), keep UI functional.
-        }
-      }
-      resizeStateRef.current = null;
-      setActiveResizer(null);
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-    };
-
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", finishResize);
-    window.addEventListener("blur", finishResize);
-    window.addEventListener("mouseleave", finishResize);
-
-    return () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", finishResize);
-      window.removeEventListener("blur", finishResize);
-      window.removeEventListener("mouseleave", finishResize);
-    };
-  }, []);
-
-  const startResize =
-    (left: ColumnKey, right: ColumnKey, marker: string) => (event: React.MouseEvent<HTMLSpanElement>) => {
-      if (event.button !== 0) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      resizeStateRef.current = {
-        left,
-        right,
-        startX: event.clientX,
-        startWidths: { ...columnWidthsRef.current }
-      };
-      setActiveResizer(marker);
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = "col-resize";
-    };
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void listen<BuildEvent>("index://build-status", (event) => {
-      const payload = event.payload;
-      if (payload.phase === "started") {
-        setIsBuilding(true);
-      } else {
-        setIsBuilding(false);
-        if (typeof payload.indexed === "number") {
-          setIndexed(payload.indexed);
-        }
-        setBuildStatus("");
-      }
-    })
-      .then((dispose) => {
-        unlisten = dispose;
-      })
-      .catch(() => {
-        setError("Unable to listen to build events.");
-      });
-
-    return () => {
-      if (unlisten) {
-        unlisten();
-      }
-    };
-  }, []);
-
-  const volumeMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    const isZh = language === "zh";
-    void listen<VolumeEventType>("volume://event", (event) => {
-      const e = event.payload;
-      if (volumeMsgTimer.current) { clearTimeout(volumeMsgTimer.current); }
-      if (e.type === "mountDetected") {
-        const name = volNameFromPath(e.path);
-        setBuildStatus(isZh ? `检测到新卷 ${name}，正在索引...` : `New volume ${name} detected, indexing...`);
-      } else if (e.type === "indexComplete") {
-        const name = volNameFromPath(e.path);
-        setBuildStatus(isZh ? `${name} 索引完成，${e.fileCount} 个文件` : `${name} indexed, ${e.fileCount} files`);
-        volumeMsgTimer.current = setTimeout(() => setBuildStatus(""), 5000);
-      } else if (e.type === "volumeRemoved") {
-        const name = volNameFromPath(e.path);
-        setBuildStatus(isZh ? `${name} 已断开，索引已清理` : `${name} disconnected, index removed`);
-        volumeMsgTimer.current = setTimeout(() => setBuildStatus(""), 5000);
-      }
-    })
-      .then((dispose) => { unlisten = dispose; })
-      .catch(() => {});
-    return () => {
-      if (unlisten) unlisten();
-      if (volumeMsgTimer.current) clearTimeout(volumeMsgTimer.current);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function volNameFromPath(path: string): string {
-    const parts = path.split("/");
-    return parts[parts.length - 1] || path;
-  }
-
-  useEffect(() => {
-    const persist = () => {
-      void invoke("persist_watch_cursor");
-    };
-    window.addEventListener("beforeunload", persist);
-    return () => {
-      window.removeEventListener("beforeunload", persist);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (isIndexLoading) {
-      setIsSearching(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    const runSearch = async () => {
-      const needle = query.trim();
-      if (needle.length === 0) {
-        setItems([]);
-        setTotalFound(0);
-        setTookMs(0);
-        setScrollTop(0);
-        return;
-      }
-
-      setIsSearching(true);
-      setError(null);
-      try {
-        const response = await invoke<SearchResponse>(
-          "search",
-          buildSearchRequest(needle, activeTab, pathPrefix, caseSensitive, regexEnabled, fuzzyEnabled, sortKey, sortAscending, maxResults)
-        );
-        if (cancelled) {
-          return;
-        }
-        setItems(response.items);
-        setTotalFound(response.total);
-        setTookMs(response.tookMs);
-        setScrollTop(0);
-        if (tableBodyRef.current) tableBodyRef.current.scrollTop = 0;
-      } catch (err) {
-        if (!cancelled) {
-          setError(String(err));
-          setItems([]);
-          setTotalFound(0);
-          setScrollTop(0);
-        }
-      } finally {
-        if (!cancelled) {
-          setIsSearching(false);
-        }
-      }
-    };
-
-    const timer = window.setTimeout(() => {
-      void runSearch();
-    }, 180);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [query, pathPrefix, activeTab, regexEnabled, caseSensitive, fuzzyEnabled, sortKey, sortAscending, isIndexLoading, maxResults]);
-
-  const runBuild = async (rebuild: boolean) => {
-    if (isBuilding) {
-      return;
-    }
-    setError(null);
-    setIsBuilding(true);
-    setBuildStatus(rebuild ? t.buildStatusRebuilding : t.buildStatusBuilding);
-    try {
-      const result = await invoke<BuildResponse>("build_index", {
-        path: pathPrefix.trim() || null,
-        rebuild,
-        includeDirs: true
-      });
-      setIndexed(result.indexed);
-      setBuildStatus("");
-    } catch (err) {
-      setError(String(err));
-      setBuildStatus(t.buildStatusFailed);
-    } finally {
-      setIsBuilding(false);
-    }
-  };
-
-  const toggleWatch = async () => {
-    if (isWatchPending) {
-      return;
-    }
-    setError(null);
-    setIsWatchPending(true);
-    try {
-      const command = isWatchRunning ? "stop_watch" : "start_watch_auto";
-      const status = await invoke<WatchResponse>(command);
-      setIsWatchRunning(status.running);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setIsWatchPending(false);
-    }
-  };
-
-  const applyWindowToggleShortcut = async (shortcut: string) => {
-    const normalized = shortcut.trim();
-    if (!normalized) {
-      setShortcutStatus(t.shortcutNeedModifier);
-      return;
-    }
-
-    setError(null);
-    setShortcutStatus("");
-    setIsShortcutSaving(true);
-    try {
-      const saved = await invoke<string>("set_window_toggle_shortcut", { shortcut: normalized });
-      const next = saved.trim().length > 0 ? saved : normalized;
-      setWindowToggleShortcut(next);
-      setShortcutDraft(next);
-      setShortcutStatus(t.shortcutSaved);
-    } catch (err) {
-      const message = String(err);
-      setError(message);
-      setShortcutStatus(message);
-    } finally {
-      setIsShortcutSaving(false);
-    }
-  };
-
-  const resetWindowToggleShortcut = async () => {
-    setShortcutDraft(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
-    await applyWindowToggleShortcut(DEFAULT_WINDOW_TOGGLE_SHORTCUT);
-  };
-
-  const applyLaunchSettings = async (nextLaunchAtLogin: boolean, nextSilentStart: boolean, nextShowDockIcon: boolean) => {
-    if (isLaunchSettingsSaving) {
-      return;
-    }
-    setIsLaunchSettingsSaving(true);
-    setLaunchSettingsStatus(t.startupSaving);
-    setError(null);
-    try {
-      const saved = await invoke<LaunchSettingsResponse>("set_launch_settings", {
-        launchAtLogin: nextLaunchAtLogin,
-        silentStart: nextSilentStart,
-        showDockIcon: nextShowDockIcon
-      });
-      setLaunchAtLogin(saved.launchAtLogin);
-      setSilentStart(saved.silentStart);
-      setShowDockIcon(saved.showDockIcon);
-      setLaunchSettingsStatus(t.startupSaved);
-    } catch (err) {
-      setLaunchSettingsStatus(t.startupSaveFailed);
-      setError(String(err));
-    } finally {
-      setIsLaunchSettingsSaving(false);
-    }
-  };
-
-  const applyAutoVacuumSettings = async (nextAutoVacuumOnRebuild: boolean) => {
-    if (isAutoVacuumSettingsSaving) {
-      return;
-    }
-    setIsAutoVacuumSettingsSaving(true);
-    setAutoVacuumSettingsStatus(t.autoVacuumSaving);
-    setError(null);
-    try {
-      const saved = await invoke<AutoVacuumSettingsResponse>("set_auto_vacuum_settings", {
-        autoVacuumOnRebuild: nextAutoVacuumOnRebuild
-      });
-      setAutoVacuumOnRebuild(saved.autoVacuumOnRebuild);
-      setAutoVacuumSettingsStatus(t.autoVacuumSaved);
-    } catch (err) {
-      setAutoVacuumSettingsStatus(t.autoVacuumSaveFailed);
-      setError(String(err));
-    } finally {
-      setIsAutoVacuumSettingsSaving(false);
-    }
-  };
-
-  const applyAutoCheckUpdate = async (nextAutoCheck: boolean) => {
-    if (isAutoCheckSaving) return;
-    setIsAutoCheckSaving(true);
-    setAutoCheckStatus("");
-    setError(null);
-    try {
-      const saved = await invoke<{ autoCheckUpdate: boolean }>("set_auto_check_update", {
-        autoCheckUpdate: nextAutoCheck
-      });
-      setAutoCheckUpdate(saved.autoCheckUpdate);
-      setAutoCheckStatus(t.updateSaved);
-    } catch (err) {
-      setAutoCheckStatus(t.updateFailed);
-      setError(String(err));
-    } finally {
-      setIsAutoCheckSaving(false);
-    }
-  };
-
-  const applyMaxResults = async (nextMaxResults: number) => {
-    if (isMaxResultsSaving) return;
-    const clamped = Math.max(50, Math.min(10000, Math.round(nextMaxResults)));
-    setMaxResults(clamped);
-    setIsMaxResultsSaving(true);
-    setMaxResultsStatus(t.maxResultsSaving);
-    setError(null);
-    try {
-      const saved = await invoke<{ maxResults: number }>("set_max_results", {
-        maxResults: clamped
-      });
-      setMaxResults(saved.maxResults);
-      setMaxResultsStatus(t.maxResultsSaved);
-    } catch (err) {
-      setMaxResultsStatus(t.maxResultsSaveFailed);
-      setError(String(err));
-    } finally {
-      setIsMaxResultsSaving(false);
-    }
-  };
-
-  const checkForUpdatesManually = async () => {
-    if (isCheckingUpdate) return;
-    setIsCheckingUpdate(true);
-    setUpdateInfo(null);
-    try {
-      const result = await invoke<{ hasUpdate: boolean; latestVersion: string }>("check_for_update");
-      setUpdateInfo(result);
-    } catch {
-      setUpdateInfo({ hasUpdate: false, latestVersion: "" });
-    } finally {
-      setIsCheckingUpdate(false);
-    }
-  };
-
-  const applyExcludeDirSettings = async (nextExactDirs: string[], nextPatternDirs: string[]) => {
-    if (isExcludeDirSaving) {
-      return;
-    }
-    setIsExcludeDirSaving(true);
-    setExcludeDirStatus("");
-    setError(null);
-    try {
-      const saved = await invoke<ExcludeDirSettingsResponse>("set_exclude_dir_settings", {
-        exactDirs: nextExactDirs,
-        patternDirs: nextPatternDirs
-      });
-      setExcludeExactDirs(saved.exactDirs);
-      setExcludePatternDirs(saved.patternDirs);
-      setExcludeDirStatus(t.excludeSaved);
-    } catch (err) {
-      setExcludeDirStatus(t.excludeSaveFailed);
-      setError(String(err));
-    } finally {
-      setIsExcludeDirSaving(false);
-    }
-  };
-
-  const addExcludeRule = async () => {
-    const rule = excludeRuleDraft.trim();
-    if (!rule) {
-      return;
-    }
-    if (excludeRuleType === "exact") {
-      await applyExcludeDirSettings([...excludeExactDirs, rule], excludePatternDirs);
-    } else {
-      await applyExcludeDirSettings(excludeExactDirs, [...excludePatternDirs, rule]);
-    }
-    setExcludeRuleDraft("");
-  };
-
-  const removeExcludeRule = async (type: ExcludeRuleType, rule: string) => {
-    if (type === "exact") {
-      await applyExcludeDirSettings(
-        excludeExactDirs.filter((item) => item !== rule),
-        excludePatternDirs
-      );
-      return;
-    }
-    await applyExcludeDirSettings(
-      excludeExactDirs,
-      excludePatternDirs.filter((item) => item !== rule)
-    );
-  };
-
-  const applyWatchRoots = async (nextRoots: string[]) => {
-    if (isWatchRootSaving) {
-      return;
-    }
-    setIsWatchRootSaving(true);
-    setWatchRootStatus("");
-    setError(null);
-    try {
-      const saved = await invoke<WatchRootsSettingsResponse>("set_watch_roots_settings", {
-        roots: nextRoots
-      });
-      setWatchRoots(saved.roots);
-      setWatchRootStatus(t.watchRootsSaved);
-    } catch (err) {
-      setWatchRootStatus(t.watchRootsSaveFailed);
-      setError(String(err));
-    } finally {
-      setIsWatchRootSaving(false);
-    }
-  };
-
-  const addWatchRoot = async () => {
-    const root = watchRootDraft.trim();
-    if (!root) {
-      return;
-    }
-    await applyWatchRoots([...watchRoots, root]);
-    setWatchRootDraft("");
-  };
-
-  const removeWatchRoot = async (root: string) => {
-    await applyWatchRoots(watchRoots.filter((item) => item !== root));
-  };
-
-  const pickWatchRoot = async () => {
-    if (isPickingPath || isWatchRootSaving) {
-      return;
-    }
-    setError(null);
-    setIsPickingPath(true);
-    try {
-      const selected = await invoke<string | null>("pick_path_in_finder");
-      if (selected && selected.trim().length > 0) {
-        setWatchRootDraft(selected.trim());
-      }
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setIsPickingPath(false);
-    }
-  };
-
-  const pickExcludeRulePath = async () => {
-    if (isPickingPath || excludeRuleType !== "exact") {
-      return;
-    }
-    setError(null);
-    setIsPickingPath(true);
-    try {
-      const selected = await invoke<string | null>("pick_path_in_finder");
-      if (selected && selected.trim().length > 0) {
-        setExcludeRuleDraft(selected.trim());
-      }
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setIsPickingPath(false);
-    }
-  };
-
-  const pickPath = async () => {
-    if (isPickingPath) {
-      return;
-    }
-    setError(null);
-    setIsPickingPath(true);
-    try {
-      const selected = await invoke<string | null>("pick_path_in_finder");
-      if (selected && selected.trim().length > 0) {
-        setPathPrefix(selected);
-        closePathDropdown();
-      }
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setIsPickingPath(false);
-    }
-  };
-
-  const pickApp = async (): Promise<string | null> => {
-    if (isPickingPath) {
-      return null;
-    }
-    setError(null);
-    setIsPickingPath(true);
-    try {
-      const selected = await invoke<string | null>("pick_app");
-      return selected ?? null;
-    } catch (err) {
-      setError(String(err));
-      return null;
-    } finally {
-      setIsPickingPath(false);
-    }
-  };
-
-  const applyFileManagerSettings = async (
-    nextFolderAction: string,
-    nextTerminalAction: string,
-    nextCustomFolderApp: string,
-    nextCustomTerminalApp: string
-  ) => {
-    try {
-      const saved = await invoke<FileManagerSettingsResponse>("set_file_manager_settings", {
-        defaultFolderAction: nextFolderAction,
-        defaultTerminalAction: nextTerminalAction,
-        customFolderApp: nextCustomFolderApp,
-        customTerminalApp: nextCustomTerminalApp,
-      });
-      setDefaultFolderAction(saved.defaultFolderAction);
-      setDefaultTerminalAction(saved.defaultTerminalAction);
-      setCustomFolderApp(saved.customFolderApp);
-      setCustomTerminalApp(saved.customTerminalApp);
-    } catch (err) {
-      setError(String(err));
-    }
-  };
-
-  const openResult = async (path: string) => {
-    try {
-      await invoke("open_search_result", { path });
-    } catch (err) {
-      setError(String(err));
-    }
-  };
-
-  const previewResults = async (paths: string[]) => {
-    if (paths.length === 0) {
-      return;
-    }
-    try {
-      // Pass icon rect relative to webview content area.
-      // Rust backend will use native APIs to get the window's screen position
-      // and compute the final AppKit coordinates correctly.
-      let iconX = 0;
-      let iconY = 0;
-      let iconW = 28;
-      let iconH = 28;
-
-      const firstPath = paths[0];
-      const rowEl = rowRefs.current.get(firstPath);
-      if (rowEl) {
-        const iconEl = rowEl.querySelector(".file-icon") as HTMLElement | null;
-        if (iconEl) {
-          const rect = iconEl.getBoundingClientRect();
-          iconX = Math.round(rect.left);
-          iconY = Math.round(rect.top);
-          iconW = Math.round(rect.width);
-          iconH = Math.round(rect.height);
-        }
-      }
-
-      isPreviewingRef.current = true;
-      await invoke("preview_search_result", {
-        paths,
-        iconX,
-        iconY,
-        iconW,
-        iconH,
-      });
-      // Keep previewing flag for a moment after invoke returns,
-      // so blur events during QuickLook close don't clear selection.
-      setTimeout(() => { isPreviewingRef.current = false; }, 300);
-    } catch (err) {
-      isPreviewingRef.current = false;
-      setError(String(err));
-    }
-  };
-
-  const revealInFinder = async (path: string) => {
-    try {
-      await invoke("reveal_in_finder", { path });
-    } catch (err) {
-      setError(String(err));
-    }
-  };
-
-  const openInQSpace = async (path: string) => {
-    try {
-      await invoke("open_in_qspace", { path });
-    } catch (err) {
-      setError(String(err));
-    }
-  };
-
-  const openInTerminal = async (path: string) => {
-    try {
-      await invoke("open_in_terminal", { path });
-    } catch (err) {
-      setError(String(err));
-    }
-  };
-
-  const openInWezTerm = async (path: string) => {
-    try {
-      await invoke("open_in_wezterm", { path });
-    } catch (err) {
-      setError(String(err));
-    }
-  };
-
-  const copyViaExecCommand = (text: string): boolean => {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.top = "0";
-    textarea.style.left = "-9999px";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(textarea);
-    return ok;
-  };
-
-  const copyText = async (text: string) => {
-    const errors: string[] = [];
-
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-        return;
-      }
-    } catch (err) {
-      errors.push(`navigator.clipboard: ${String(err)}`);
-    }
-
-    try {
-      if (copyViaExecCommand(text)) {
-        return;
-      }
-      errors.push("document.execCommand(copy) returned false");
-    } catch (err) {
-      errors.push(`document.execCommand(copy): ${String(err)}`);
-    }
-
-    try {
-      await invoke("copy_to_clipboard", { text });
-      return;
-    } catch (err) {
-      errors.push(`tauri invoke copy_to_clipboard: ${String(err)}`);
-    }
-
-    setError(`Copy failed. ${errors.join("; ")}`);
-  };
-
-  const copyAllSelectedNames = async () => {
-    await copyText(selectedItemsInOrder.map((item) => item.name).join("\n"));
-  };
-
-  const copyAllSelectedPaths = async () => {
-    await copyText(selectedItemsInOrder.map((item) => item.path).join("\n"));
-  };
-
-  const copySearchResults = async (paths: string[]) => {
-    const selectedPaths = paths.filter((path) => path.trim().length > 0);
-    if (selectedPaths.length === 0) {
-      return;
-    }
-    try {
-      await invoke("copy_search_results", { paths: selectedPaths });
-    } catch (err) {
-      setError(String(err));
-    }
-  };
-
-  const moveToTrash = async (path: string) => {
-    try {
-      await invoke("move_to_trash", { path });
-    } catch (err) {
-      setError(String(err));
-    }
-  };
-
-  const runContextAction = async (action: () => Promise<void>) => {
-    try {
-      await action();
-    } finally {
-      closeContextMenu();
-    }
-  };
-
-  const toggleHeaderSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortAscending((prev) => !prev);
-      return;
-    }
-    setSortKey(key);
-    setSortAscending(true);
-  };
-
-  const handleRowClick = (event: React.MouseEvent<HTMLElement>, item: SearchResultItem, index: number) => {
-    blurActiveEditable();
-    const path = item.path;
-    const isMetaMulti = event.metaKey;
-
-    if (event.shiftKey) {
-      const anchorPath = selectionAnchorPath ?? selectedPathsInOrder[0] ?? path;
-      const anchorIndex = items.findIndex((entry) => entry.path === anchorPath);
-      if (anchorIndex < 0) {
-        setSelectedItemPaths([path]);
-        setSelectionAnchorPath(path);
-        return;
-      }
-
-      const rangeStart = Math.min(anchorIndex, index);
-      const rangeEnd = Math.max(anchorIndex, index);
-      const rangePaths = items.slice(rangeStart, rangeEnd + 1).map((entry) => entry.path);
-
-      if (isMetaMulti) {
-        const merged = new Set(selectedPathsInOrder);
-        for (const p of rangePaths) {
-          merged.add(p);
-        }
-        setSelectedItemPaths(Array.from(merged));
-      } else {
-        setSelectedItemPaths(rangePaths);
-      }
-      setSelectionAnchorPath(path);
-      return;
-    }
-
-    if (isMetaMulti) {
-      if (selectedItemPathSet.has(path)) {
-        const next = selectedItemPaths.filter((p) => p !== path);
-        setSelectedItemPaths(next);
-        setSelectionAnchorPath(next.length > 0 ? next[next.length - 1] : null);
-      } else {
-        setSelectedItemPaths([...selectedItemPaths, path]);
-        setSelectionAnchorPath(path);
-      }
-      return;
-    }
-
-    setSelectedItemPaths([path]);
-    setSelectionAnchorPath(path);
-  };
-
-  const moveSelectionByArrow = (delta: number) => {
-    if (items.length === 0) {
-      return;
-    }
-
-    const anchorPath = selectionAnchorPath ?? selectedPathsInOrder[0] ?? null;
-    const anchorIndex = anchorPath ? items.findIndex((entry) => entry.path === anchorPath) : -1;
-    const startIndex = anchorIndex >= 0 ? anchorIndex : delta > 0 ? -1 : items.length;
-    const nextIndex = Math.max(0, Math.min(items.length - 1, startIndex + delta));
-    const nextPath = items[nextIndex].path;
-
-    setSelectedItemPaths([nextPath]);
-    setSelectionAnchorPath(nextPath);
-
-    window.requestAnimationFrame(() => {
-      rowRefs.current.get(nextPath)?.scrollIntoView({ block: "nearest" });
-    });
-  };
-
-  const openResultContextMenu = (event: React.MouseEvent<HTMLElement>, item: SearchResultItem) => {
-    event.preventDefault();
-    blurActiveEditable();
-    const menuWidth = 230;
-    const keepsMultiSelection = selectedItemPathSet.has(item.path);
-    const menuIsMulti = keepsMultiSelection && hasMultiSelection;
-    const menuHeight = menuIsMulti ? 432 : 372;
-    const x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
-    const y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
-    if (!selectedItemPathSet.has(item.path)) {
-      setSelectedItemPaths([item.path]);
-      setSelectionAnchorPath(item.path);
-    }
-    setContextMenu({
-      x,
-      y,
-      item,
-      multiSelection: menuIsMulti
-    });
-    setOpenWithVisible(false);
-  };
-
-  const isPinned = useCallback(
-    (path: string) => pinnedItems.some((item) => item.path === path),
-    [pinnedItems]
-  );
-
-  const togglePin = useCallback(
-    (item: SearchResultItem) => {
-      setPinnedItems((prev) => {
-        const already = prev.some((p) => p.path === item.path);
-        const next = already
-          ? prev.filter((p) => p.path !== item.path)
-          : [...prev, item];
-        savePinnedItems(next);
-        return next;
-      });
-    },
-    []
-  );
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && activeView === "search" && !contextMenu) {
-        if (!isEditableTarget(event.target)) {
-          event.preventDefault();
-          moveSelectionByArrow(event.key === "ArrowDown" ? 1 : -1);
-        }
-        return;
-      }
-
-      const openSelectedResult = () => {
-        const source = activeView === "pinned" ? pinnedItems : itemsRef.current;
-        const selected = source.find((i) => selectedItemPathSet.has(i.path));
-        if (selected) {
-          event.preventDefault();
-          void openResult(selected.path);
-        }
-      };
-
-      if (event.key === "Enter" && (activeView === "search" || activeView === "pinned") && !contextMenu && !isEditableTarget(event.target)) {
-        openSelectedResult();
-        return;
-      }
-
-      if ((event.metaKey || event.ctrlKey) && !event.altKey) {
-        const key = event.key.toLowerCase();
-        if (key === "o") {
-          openSelectedResult();
-          return;
-        }
-        if (key === "1") {
-          event.preventDefault();
-          setActiveView("search");
-          return;
-        }
-        if (key === "2") {
-          event.preventDefault();
-          setActiveView("pinned");
-          return;
-        }
-        if (key === "3") {
-          event.preventDefault();
-          setActiveView("settings");
-          return;
-        }
-        if (key === "f") {
-          event.preventDefault();
-          setActiveView("search");
-          searchInputRef.current?.focus();
-          searchInputRef.current?.select();
-          return;
-        }
-      }
-
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "a") {
-        if ((activeView !== "search" && activeView !== "pinned") || contextMenu) {
-          if (activeView === "settings" || !isEditableTarget(event.target)) {
-            event.preventDefault();
-          }
-          return;
-        }
-        if (isEditableTarget(event.target)) return;
-        event.preventDefault();
-        const source = activeView === "pinned" ? pinnedItems : itemsRef.current;
-        setSelectedItemPaths(source.map((item) => item.path));
-        return;
-      }
-
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "c") {
-        if ((activeView !== "search" && activeView !== "pinned") || contextMenu || selectedPathsInOrder.length === 0) {
-          return;
-        }
-        if (isEditableTarget(event.target)) {
-          return;
-        }
-        event.preventDefault();
-        blurActiveEditable();
-        void copySearchResults(selectedPathsInOrder);
-        return;
-      }
-
-      if (event.key !== " " && event.code !== "Space") {
-        return;
-      }
-      if (event.repeat || (activeView !== "search" && activeView !== "pinned") || selectedPathsInOrder.length === 0 || contextMenu) {
-        return;
-      }
-      if (isEditableTarget(event.target)) {
-        return;
-      }
-      event.preventDefault();
-      blurActiveEditable();
-      void previewResults(selectedPathsInOrder);
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    const onBlur = () => {
-      // Don't clear selection while QuickLook preview is active —
-      // the panel takes focus away from the window but user is still
-      // interacting with the preview.
-      if (isPreviewingRef.current) return;
-      if (selectedPathsInOrder.length > 0) {
-        setSelectedItemPaths([]);
-        setSelectionAnchorPath(null);
-      }
-    };
-    window.addEventListener("blur", onBlur);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("blur", onBlur);
-    };
-  }, [activeView, contextMenu, selectedPathsInOrder]);
-
+    let label = "";
+    if (min) label += fmtBytes(min);
+    label += " ~ ";
+    if (max) label += fmtBytes(max);
+    return label;
+  }, [sizeFilter, showSizePopover, filterVersion]);
+
+  // ── app filter options ──
   const appFilterOptions = useMemo(() => {
     const apps = new Set<string>();
     for (const item of items) {
@@ -3005,41 +339,630 @@ function App() {
     return Array.from(apps).sort();
   }, [items]);
 
-  // Reset app filter when current selection is no longer in the options
-  // (e.g. after a new search returns no files for that app).
-  useEffect(() => {
-    if (appFilter && !appFilterOptions.includes(appFilter)) {
-      setAppFilter("");
+  // ── context menu helpers ──
+  const clearOpenWithCloseTimer = () => {
+    if (openWithCloseTimerRef.current !== null) {
+      window.clearTimeout(openWithCloseTimerRef.current);
+      openWithCloseTimerRef.current = null;
     }
-  }, [appFilterOptions, appFilter]);
-
-  const settingsThemeOptions: Array<{ mode: ThemeMode; title: string; description: string }> = [
-    { mode: "system", title: t.themeSystemTitle, description: t.themeSystemDesc },
-    { mode: "light", title: t.themeLightTitle, description: t.themeLightDesc },
-    { mode: "dark", title: t.themeDarkTitle, description: t.themeDarkDesc }
-  ];
-
-  const settingsLanguageOptions: Array<{ code: Language; title: string; description: string }> = [
-    { code: "zh", title: t.languageZhTitle, description: "界面使用中文。" },
-    { code: "en", title: t.languageEnTitle, description: "Interface in English." }
-  ];
-
-  const TAB_ICONS: Record<TabId, string> = {
-    all: "\u229E", files: "\u25A3", folders: "\u25A4", documents: "\u2261", images: "\u25C9", media: "\u266A", code: "\u2329\u232A", archives: "\u25A0"
   };
+  const openOpenWithMenu = () => { clearOpenWithCloseTimer(); setOpenWithVisible(true); };
+  const scheduleCloseOpenWithMenu = () => {
+    clearOpenWithCloseTimer();
+    openWithCloseTimerRef.current = window.setTimeout(() => { setOpenWithVisible(false); openWithCloseTimerRef.current = null; }, 220);
+  };
+  const closeContextMenu = () => { clearOpenWithCloseTimer(); setContextMenu(null); setOpenWithVisible(false); };
 
+  const closePathDropdown = () => { setIsPathDropdownOpen(false); setActivePathSuggestion(-1); };
+  const applyPathSuggestion = (path: string) => { setPathPrefix(path); closePathDropdown(); pathInputRef.current?.focus(); };
+
+  // ── isPinned / togglePin ──
+  const isPinned = useCallback((path: string) => pinnedItems.some((item) => item.path === path), [pinnedItems]);
+  const togglePin = useCallback((item: SearchResultItem) => {
+    setPinnedItems((prev) => {
+      const already = prev.some((p) => p.path === item.path);
+      const next = already ? prev.filter((p) => p.path !== item.path) : [...prev, item];
+      savePinnedItems(next);
+      return next;
+    });
+  }, []);
+
+  // ── scrollbar ──
   const scrollTimers = useRef(new Map<HTMLElement, ReturnType<typeof setTimeout>>());
   const handleScrollbarScroll = (e: React.UIEvent<HTMLElement>) => {
     const el = e.currentTarget;
     el.classList.add("scrolling");
     const prev = scrollTimers.current.get(el);
     if (prev) clearTimeout(prev);
-    scrollTimers.current.set(el, setTimeout(() => {
-      el.classList.remove("scrolling");
-      scrollTimers.current.delete(el);
-    }, 600));
+    scrollTimers.current.set(el, setTimeout(() => { el.classList.remove("scrolling"); scrollTimers.current.delete(el); }, 600));
   };
 
+  // ── actions ──
+  const openResult = async (path: string) => { try { await invoke("open_search_result", { path }); } catch (err) { setError(String(err)); } };
+  const revealInFinder = async (path: string) => { try { await invoke("reveal_in_finder", { path }); } catch (err) { setError(String(err)); } };
+  const openInQSpace = async (path: string) => { try { await invoke("open_in_qspace", { path }); } catch (err) { setError(String(err)); } };
+  const openInTerminal = async (path: string) => { try { await invoke("open_in_terminal", { path }); } catch (err) { setError(String(err)); } };
+  const openInWezTerm = async (path: string) => { try { await invoke("open_in_wezterm", { path }); } catch (err) { setError(String(err)); } };
+  const moveToTrash = async (path: string) => { try { await invoke("move_to_trash", { path }); } catch (err) { setError(String(err)); } };
+
+  const copyViaExecCommand = (text: string): boolean => {
+    const textarea = document.createElement("textarea");
+    textarea.value = text; textarea.setAttribute("readonly", ""); textarea.style.position = "fixed"; textarea.style.top = "0"; textarea.style.left = "-9999px"; textarea.style.opacity = "0";
+    document.body.appendChild(textarea); textarea.focus(); textarea.select();
+    const ok = document.execCommand("copy"); document.body.removeChild(textarea); return ok;
+  };
+  const copyText = async (text: string) => {
+    const errors: string[] = [];
+    try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return; } } catch (err) { errors.push(`navigator.clipboard: ${String(err)}`); }
+    try { if (copyViaExecCommand(text)) return; errors.push("document.execCommand(copy) returned false"); } catch (err) { errors.push(`document.execCommand(copy): ${String(err)}`); }
+    try { await invoke("copy_to_clipboard", { text }); return; } catch (err) { errors.push(`tauri invoke copy_to_clipboard: ${String(err)}`); }
+    setError(`Copy failed. ${errors.join("; ")}`);
+  };
+  const copySearchResults = async (paths: string[]) => {
+    const selected = paths.filter((p) => p.trim().length > 0);
+    if (selected.length === 0) return;
+    try { await invoke("copy_search_results", { paths: selected }); } catch (err) { setError(String(err)); }
+  };
+  const previewResults = async (paths: string[]) => {
+    if (paths.length === 0) return;
+    try {
+      let iconX = 0, iconY = 0, iconW = 28, iconH = 28;
+      const firstPath = paths[0];
+      const rowEl = rowRefs.current.get(firstPath);
+      if (rowEl) {
+        const iconEl = rowEl.querySelector(".file-icon") as HTMLElement | null;
+        if (iconEl) { const rect = iconEl.getBoundingClientRect(); iconX = Math.round(rect.left); iconY = Math.round(rect.top); iconW = Math.round(rect.width); iconH = Math.round(rect.height); }
+      }
+      isPreviewingRef.current = true;
+      await invoke("preview_search_result", { paths, iconX, iconY, iconW, iconH });
+      setTimeout(() => { isPreviewingRef.current = false; }, 300);
+    } catch (err) { isPreviewingRef.current = false; setError(String(err)); }
+  };
+
+  // ── row click / selection ──
+  const handleRowClick = (event: React.MouseEvent<HTMLElement>, item: SearchResultItem, index: number) => {
+    blurActiveEditable();
+    const path = item.path;
+    const isMetaMulti = event.metaKey;
+    if (event.shiftKey) {
+      const anchorPath = selectionAnchorPath ?? selectedPathsInOrder[0] ?? path;
+      const anchorIndex = items.findIndex((entry) => entry.path === anchorPath);
+      if (anchorIndex < 0) { setSelectedItemPaths([path]); setSelectionAnchorPath(path); return; }
+      const rangeStart = Math.min(anchorIndex, index);
+      const rangeEnd = Math.max(anchorIndex, index);
+      const rangePaths = items.slice(rangeStart, rangeEnd + 1).map((entry) => entry.path);
+      if (isMetaMulti) { const merged = new Set(selectedPathsInOrder); for (const p of rangePaths) merged.add(p); setSelectedItemPaths(Array.from(merged)); }
+      else setSelectedItemPaths(rangePaths);
+      setSelectionAnchorPath(path); return;
+    }
+    if (isMetaMulti) {
+      if (selectedItemPathSet.has(path)) { const next = selectedItemPaths.filter((p) => p !== path); setSelectedItemPaths(next); setSelectionAnchorPath(next.length > 0 ? next[next.length - 1] : null); }
+      else { setSelectedItemPaths([...selectedItemPaths, path]); setSelectionAnchorPath(path); }
+      return;
+    }
+    setSelectedItemPaths([path]); setSelectionAnchorPath(path);
+  };
+  const moveSelectionByArrow = (delta: number) => {
+    if (items.length === 0) return;
+    const anchorPath = selectionAnchorPath ?? selectedPathsInOrder[0] ?? null;
+    const anchorIndex = anchorPath ? items.findIndex((entry) => entry.path === anchorPath) : -1;
+    const startIndex = anchorIndex >= 0 ? anchorIndex : delta > 0 ? -1 : items.length;
+    const nextIndex = Math.max(0, Math.min(items.length - 1, startIndex + delta));
+    const nextPath = items[nextIndex].path;
+    setSelectedItemPaths([nextPath]); setSelectionAnchorPath(nextPath);
+    window.requestAnimationFrame(() => { rowRefs.current.get(nextPath)?.scrollIntoView({ block: "nearest" }); });
+  };
+  const openResultContextMenu = (event: React.MouseEvent<HTMLElement>, item: SearchResultItem) => {
+    event.preventDefault(); blurActiveEditable();
+    const menuWidth = 230;
+    const keepsMultiSelection = selectedItemPathSet.has(item.path);
+    const menuIsMulti = keepsMultiSelection && hasMultiSelection;
+    const menuHeight = menuIsMulti ? 432 : 372;
+    const x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
+    const y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
+    if (!selectedItemPathSet.has(item.path)) { setSelectedItemPaths([item.path]); setSelectionAnchorPath(item.path); }
+    setContextMenu({ x, y, item, multiSelection: menuIsMulti }); setOpenWithVisible(false);
+  };
+
+  // ── sort ──
+  const toggleHeaderSort = (key: SortKey) => {
+    if (sortKey === key) { setSortAscending((prev) => !prev); return; }
+    setSortKey(key); setSortAscending(true);
+  };
+
+  // ── column resize ──
+  const startResize = (left: ColumnKey, right: ColumnKey, marker: string) => (event: React.MouseEvent<HTMLSpanElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault(); event.stopPropagation();
+    resizeStateRef.current = { left, right, startX: event.clientX, startWidths: { ...columnWidthsRef.current } };
+    setActiveResizer(marker); document.body.style.userSelect = "none"; document.body.style.cursor = "col-resize";
+  };
+  const fitColumnsToContainer = useCallback(() => {
+    const body = tableBodyRef.current; const shell = tableShellRef.current;
+    const hostWidth = body?.clientWidth ?? shell?.clientWidth ?? 0;
+    if (hostWidth <= 0) return;
+    const available = Math.max(0, hostWidth - 32);
+    setColumnWidths((prev) => {
+      const total = prev.name + prev.path + prev.type + prev.size + prev.modified;
+      if (total === available) return prev;
+      if (total < available) {
+        const deficit = available - total; const next = { ...prev };
+        const weightTotal = COLUMN_KEYS.reduce((sum, key) => sum + DEFAULT_COLUMN_WIDTHS[key], 0);
+        let distributed = 0;
+        for (const key of COLUMN_KEYS) { const add = Math.floor((deficit * DEFAULT_COLUMN_WIDTHS[key]) / weightTotal); next[key] = Math.round(next[key] + add); distributed += add; }
+        let remaining = deficit - distributed; const growOrder: ColumnKey[] = ["path", "name", "modified", "type", "size"]; let cursor = 0;
+        while (remaining > 0) { const key = growOrder[cursor % growOrder.length]; next[key] = Math.round(next[key] + 1); remaining -= 1; cursor += 1; }
+        if (next.name === prev.name && next.path === prev.path && next.type === prev.type && next.size === prev.size && next.modified === prev.modified) return prev;
+        return next;
+      }
+      const next = { ...prev }; let overflow = total - available; const order: ColumnKey[] = ["path", "modified", "size", "name", "type"];
+      for (const key of order) {
+        if (overflow <= 0) break;
+        const current = next[key]; const reducible = Math.max(0, current - DEFAULT_COLUMN_WIDTHS[key] + (DEFAULT_COLUMN_WIDTHS[key] - 1));
+        // Use min width directly
+        const minWidth = 72; // fallback
+        const realMin: Record<string, number> = { name: 160, path: 120, type: 90, size: 72, modified: 120 };
+        const actualMin = realMin[key] ?? minWidth;
+        const cuttable = Math.max(0, current - actualMin);
+        if (cuttable <= 0) continue;
+        const cut = Math.min(cuttable, overflow); next[key] = Math.round(current - cut); overflow -= cut;
+      }
+      if (next.name === prev.name && next.path === prev.path && next.type === prev.type && next.size === prev.size && next.modified === prev.modified) return prev;
+      return next;
+    });
+  }, []);
+
+  // ── settings apply ──
+  const applyWindowToggleShortcut = async (shortcut: string) => {
+    const normalized = shortcut.trim();
+    if (!normalized) { setShortcutStatus(t.shortcutNeedModifier); return; }
+    setError(null); setShortcutStatus(""); setIsShortcutSaving(true);
+    try {
+      const saved = await invoke<string>("set_window_toggle_shortcut", { shortcut: normalized });
+      const next = saved.trim().length > 0 ? saved : normalized;
+      setWindowToggleShortcut(next); setShortcutDraft(next); setShortcutStatus(t.shortcutSaved);
+    } catch (err) { const message = String(err); setError(message); setShortcutStatus(message); }
+    finally { setIsShortcutSaving(false); }
+  };
+  const resetWindowToggleShortcut = async () => { setShortcutDraft(DEFAULT_WINDOW_TOGGLE_SHORTCUT); await applyWindowToggleShortcut(DEFAULT_WINDOW_TOGGLE_SHORTCUT); };
+
+  const applyLaunchSettings = async (nextLaunchAtLogin: boolean, nextSilentStart: boolean, nextShowDockIcon: boolean) => {
+    if (isLaunchSettingsSaving) return;
+    setIsLaunchSettingsSaving(true); setLaunchSettingsStatus(t.startupSaving); setError(null);
+    try {
+      const saved = await invoke<LaunchSettingsResponse>("set_launch_settings", { launchAtLogin: nextLaunchAtLogin, silentStart: nextSilentStart, showDockIcon: nextShowDockIcon });
+      setLaunchAtLogin(saved.launchAtLogin); setSilentStart(saved.silentStart); setShowDockIcon(saved.showDockIcon); setLaunchSettingsStatus(t.startupSaved);
+    } catch (err) { setLaunchSettingsStatus(t.startupSaveFailed); setError(String(err)); }
+    finally { setIsLaunchSettingsSaving(false); }
+  };
+  const applyAutoVacuumSettings = async (next: boolean) => {
+    if (isAutoVacuumSettingsSaving) return;
+    setIsAutoVacuumSettingsSaving(true); setAutoVacuumSettingsStatus(t.autoVacuumSaving); setError(null);
+    try {
+      const saved = await invoke<AutoVacuumSettingsResponse>("set_auto_vacuum_settings", { autoVacuumOnRebuild: next });
+      setAutoVacuumOnRebuild(saved.autoVacuumOnRebuild); setAutoVacuumSettingsStatus(t.autoVacuumSaved);
+    } catch (err) { setAutoVacuumSettingsStatus(t.autoVacuumSaveFailed); setError(String(err)); }
+    finally { setIsAutoVacuumSettingsSaving(false); }
+  };
+  const applyAutoCheckUpdate = async (next: boolean) => {
+    if (isAutoCheckSaving) return;
+    setIsAutoCheckSaving(true); setAutoCheckStatus(""); setError(null);
+    try {
+      const saved = await invoke<{ autoCheckUpdate: boolean }>("set_auto_check_update", { autoCheckUpdate: next });
+      setAutoCheckUpdate(saved.autoCheckUpdate); setAutoCheckStatus(t.updateSaved);
+    } catch (err) { setAutoCheckStatus(t.updateFailed); setError(String(err)); }
+    finally { setIsAutoCheckSaving(false); }
+  };
+  const applyMaxResults = async (next: number) => {
+    if (isMaxResultsSaving) return;
+    const clamped = Math.max(50, Math.min(10000, Math.round(next)));
+    setMaxResults(clamped); setIsMaxResultsSaving(true); setMaxResultsStatus(t.maxResultsSaving); setError(null);
+    try {
+      const saved = await invoke<{ maxResults: number }>("set_max_results", { maxResults: clamped });
+      setMaxResults(saved.maxResults); setMaxResultsStatus(t.maxResultsSaved);
+    } catch (err) { setMaxResultsStatus(t.maxResultsSaveFailed); setError(String(err)); }
+    finally { setIsMaxResultsSaving(false); }
+  };
+  const checkForUpdatesManually = async () => {
+    if (isCheckingUpdate) return;
+    setIsCheckingUpdate(true); setUpdateInfo(null);
+    try { const result = await invoke<{ hasUpdate: boolean; latestVersion: string }>("check_for_update"); setUpdateInfo(result); }
+    catch { setUpdateInfo({ hasUpdate: false, latestVersion: "" }); }
+    finally { setIsCheckingUpdate(false); }
+  };
+  const applyExcludeDirSettings = async (nextExact: string[], nextPattern: string[]) => {
+    if (isExcludeDirSaving) return;
+    setIsExcludeDirSaving(true); setExcludeDirStatus(""); setError(null);
+    try {
+      const saved = await invoke<ExcludeDirSettingsResponse>("set_exclude_dir_settings", { exactDirs: nextExact, patternDirs: nextPattern });
+      setExcludeExactDirs(saved.exactDirs); setExcludePatternDirs(saved.patternDirs); setExcludeDirStatus(t.excludeSaved);
+    } catch (err) { setExcludeDirStatus(t.excludeSaveFailed); setError(String(err)); }
+    finally { setIsExcludeDirSaving(false); }
+  };
+  const addExcludeRule = async () => {
+    const rule = excludeRuleDraft.trim(); if (!rule) return;
+    if (excludeRuleType === "exact") await applyExcludeDirSettings([...excludeExactDirs, rule], excludePatternDirs);
+    else await applyExcludeDirSettings(excludeExactDirs, [...excludePatternDirs, rule]);
+    setExcludeRuleDraft("");
+  };
+  const removeExcludeRule = async (type: ExcludeRuleType, rule: string) => {
+    if (type === "exact") await applyExcludeDirSettings(excludeExactDirs.filter((r) => r !== rule), excludePatternDirs);
+    else await applyExcludeDirSettings(excludeExactDirs, excludePatternDirs.filter((r) => r !== rule));
+  };
+  const applyWatchRoots = async (nextRoots: string[]) => {
+    if (isWatchRootSaving) return;
+    setIsWatchRootSaving(true); setWatchRootStatus(""); setError(null);
+    try {
+      const saved = await invoke<WatchRootsSettingsResponse>("set_watch_roots_settings", { roots: nextRoots });
+      setWatchRoots(saved.roots); setWatchRootStatus(t.watchRootsSaved);
+    } catch (err) { setWatchRootStatus(t.watchRootsSaveFailed); setError(String(err)); }
+    finally { setIsWatchRootSaving(false); }
+  };
+  const addWatchRoot = async () => { const root = watchRootDraft.trim(); if (!root) return; await applyWatchRoots([...watchRoots, root]); setWatchRootDraft(""); };
+  const removeWatchRoot = async (root: string) => { await applyWatchRoots(watchRoots.filter((r) => r !== root)); };
+  const pickWatchRoot = async () => {
+    if (isPickingPath || isWatchRootSaving) return;
+    setError(null); setIsPickingPath(true);
+    try { const selected = await invoke<string | null>("pick_path_in_finder"); if (selected && selected.trim().length > 0) setWatchRootDraft(selected.trim()); }
+    catch (err) { setError(String(err)); }
+    finally { setIsPickingPath(false); }
+  };
+  const pickExcludeRulePath = async () => {
+    if (isPickingPath || excludeRuleType !== "exact") return;
+    setError(null); setIsPickingPath(true);
+    try { const selected = await invoke<string | null>("pick_path_in_finder"); if (selected && selected.trim().length > 0) setExcludeRuleDraft(selected.trim()); }
+    catch (err) { setError(String(err)); }
+    finally { setIsPickingPath(false); }
+  };
+  const pickPath = async () => {
+    if (isPickingPath) return;
+    setError(null); setIsPickingPath(true);
+    try { const selected = await invoke<string | null>("pick_path_in_finder"); if (selected && selected.trim().length > 0) { setPathPrefix(selected); closePathDropdown(); } }
+    catch (err) { setError(String(err)); }
+    finally { setIsPickingPath(false); }
+  };
+  const pickApp = async (): Promise<string | null> => {
+    if (isPickingPath) return null;
+    setError(null); setIsPickingPath(true);
+    try { return await invoke<string | null>("pick_app"); }
+    catch (err) { setError(String(err)); return null; }
+    finally { setIsPickingPath(false); }
+  };
+  const applyFileManagerSettings = async (fa: string, ta: string, cfa: string, cta: string) => {
+    try {
+      const saved = await invoke<FileManagerSettingsResponse>("set_file_manager_settings", { defaultFolderAction: fa, defaultTerminalAction: ta, customFolderApp: cfa, customTerminalApp: cta });
+      setDefaultFolderAction(saved.defaultFolderAction); setDefaultTerminalAction(saved.defaultTerminalAction); setCustomFolderApp(saved.customFolderApp); setCustomTerminalApp(saved.customTerminalApp);
+    } catch (err) { setError(String(err)); }
+  };
+
+  const runBuild = async (rebuild: boolean) => {
+    if (isBuilding) return;
+    setError(null); setIsBuilding(true);
+    setBuildStatus(rebuild ? t.buildStatusRebuilding : t.buildStatusBuilding);
+    try {
+      const result = await invoke<BuildResponse>("build_index", { path: pathPrefix.trim() || null, rebuild, includeDirs: true });
+      setIndexed(result.indexed); setBuildStatus("");
+    } catch (err) { setError(String(err)); setBuildStatus(t.buildStatusFailed); }
+    finally { setIsBuilding(false); }
+  };
+  const toggleWatch = async () => {
+    if (isWatchPending) return;
+    setError(null); setIsWatchPending(true);
+    try {
+      const command = isWatchRunning ? "stop_watch" : "start_watch_auto";
+      const status = await invoke<WatchResponse>(command);
+      setIsWatchRunning(status.running);
+    } catch (err) { setError(String(err)); }
+    finally { setIsWatchPending(false); }
+  };
+
+  const handlePathInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") { closePathDropdown(); return; }
+    if (event.key === "ArrowDown") {
+      event.preventDefault(); if (!isPathDropdownOpen) setIsPathDropdownOpen(true);
+      if (visiblePathSuggestions.length === 0) return;
+      setActivePathSuggestion((prev) => prev < 0 || prev >= visiblePathSuggestions.length - 1 ? 0 : prev + 1); return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault(); if (!isPathDropdownOpen) setIsPathDropdownOpen(true);
+      if (visiblePathSuggestions.length === 0) return;
+      setActivePathSuggestion((prev) => prev <= 0 ? visiblePathSuggestions.length - 1 : prev - 1); return;
+    }
+    if (event.key === "Enter" && isPathDropdownVisible && activePathSuggestion >= 0) {
+      event.preventDefault(); applyPathSuggestion(visiblePathSuggestions[activePathSuggestion]);
+    }
+  };
+
+  // ── effects ──
+  useEffect(() => { columnWidthsRef.current = columnWidths; }, [columnWidths]);
+  useEffect(() => { return () => { clearOpenWithCloseTimer(); }; }, []);
+  useEffect(() => { if (activePathSuggestion < visiblePathSuggestions.length) return; setActivePathSuggestion(-1); }, [activePathSuggestion, visiblePathSuggestions.length]);
+
+  useEffect(() => {
+    if (!isPathDropdownOpen) return;
+    const closeWhenClickOutside = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (pathPickerRef.current?.contains(target)) return;
+      closePathDropdown();
+    };
+    window.addEventListener("mousedown", closeWhenClickOutside);
+    return () => window.removeEventListener("mousedown", closeWhenClickOutside);
+  }, [isPathDropdownOpen]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") closeContextMenu(); };
+    const close = () => closeContextMenu();
+    window.addEventListener("keydown", closeOnEscape); window.addEventListener("resize", close); window.addEventListener("scroll", close, true);
+    return () => { window.removeEventListener("keydown", closeOnEscape); window.removeEventListener("resize", close); window.removeEventListener("scroll", close, true); };
+  }, [contextMenu]);
+
+  useEffect(() => {
+    const visible = new Set(items.map((item) => item.path));
+    setSelectedItemPaths((prev) => { const next = prev.filter((p) => visible.has(p)); return next.length === prev.length ? prev : next; });
+    setSelectionAnchorPath((prev) => (prev && visible.has(prev) ? prev : null));
+  }, [items]);
+
+  useEffect(() => { const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY); if (stored === "zh" || stored === "en") setLanguage(stored); }, []);
+  useEffect(() => { localStorage.setItem(THEME_STORAGE_KEY, themeMode); }, [themeMode]);
+  useEffect(() => { localStorage.setItem(REGEX_ENABLED_STORAGE_KEY, regexEnabled ? "1" : "0"); }, [regexEnabled]);
+  useEffect(() => { localStorage.setItem(CASE_SENSITIVE_STORAGE_KEY, caseSensitive ? "1" : "0"); }, [caseSensitive]);
+  useEffect(() => { localStorage.setItem(FUZZY_ENABLED_STORAGE_KEY, fuzzyEnabled ? "1" : "0"); }, [fuzzyEnabled]);
+  useEffect(() => { localStorage.setItem(LANGUAGE_STORAGE_KEY, language); }, [language]);
+  useEffect(() => { void invoke("set_menu_language", { language }); }, [language]);
+  useEffect(() => { document.documentElement.setAttribute("data-theme", resolvedTheme); }, [resolvedTheme]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches);
+    setSystemDark(media.matches);
+    if (typeof media.addEventListener === "function") { media.addEventListener("change", onChange); return () => media.removeEventListener("change", onChange); }
+    const legacyListener = (event: MediaQueryListEvent) => onChange(event);
+    media.addListener(legacyListener); return () => media.removeListener(legacyListener);
+  }, []);
+
+  useEffect(() => { if (isIndexLoading) closePathDropdown(); }, [isIndexLoading]);
+
+  // Listen for menu events
+  useEffect(() => {
+    let unlistenMenu: (() => void) | undefined;
+    void listen(EVENT_OPEN_SETTINGS, () => setActiveView("settings")).then((d) => { unlistenMenu = d; }).catch(() => {});
+    return () => { if (unlistenMenu) unlistenMenu(); };
+  }, []);
+  useEffect(() => {
+    let unlistenFocus: (() => void) | undefined;
+    void listen(EVENT_FOCUS_SEARCH, () => { setActiveView("search"); window.requestAnimationFrame(() => { searchInputRef.current?.focus(); searchInputRef.current?.select(); }); }).then((d) => { unlistenFocus = d; }).catch(() => {});
+    return () => { if (unlistenFocus) unlistenFocus(); };
+  }, []);
+
+  // Load settings
+  useEffect(() => {
+    let m = true; const load = async () => { try { const s = await invoke<string>("get_window_toggle_shortcut"); if (!m) return; const n = s.trim().length > 0 ? s : DEFAULT_WINDOW_TOGGLE_SHORTCUT; setWindowToggleShortcut(n); setShortcutDraft(n); } catch { if (m) { setWindowToggleShortcut(DEFAULT_WINDOW_TOGGLE_SHORTCUT); setShortcutDraft(DEFAULT_WINDOW_TOGGLE_SHORTCUT); } } };
+    void load(); return () => { m = false; };
+  }, []);
+  useEffect(() => {
+    let m = true; const load = async () => { try { const s = await invoke<WatchRootsSettingsResponse>("get_watch_roots_settings"); if (m) setWatchRoots(s.roots); } catch (e) { if (m) setError(String(e)); } };
+    void load(); return () => { m = false; };
+  }, []);
+  useEffect(() => {
+    let m = true; const load = async () => { try { const s = await invoke<AutoVacuumSettingsResponse>("get_auto_vacuum_settings"); if (m) setAutoVacuumOnRebuild(s.autoVacuumOnRebuild); } catch (e) { if (m) setError(String(e)); } };
+    void load(); return () => { m = false; };
+  }, []);
+  useEffect(() => {
+    let m = true; const load = async () => { try { const s = await invoke<{ autoCheckUpdate: boolean }>("get_auto_check_update"); if (m) setAutoCheckUpdate(s.autoCheckUpdate); } catch {} };
+    void load(); return () => { m = false; };
+  }, []);
+  useEffect(() => {
+    let m = true; const load = async () => { try { const s = await invoke<{ maxResults: number }>("get_max_results"); if (m) setMaxResults(s.maxResults); } catch {} };
+    void load(); return () => { m = false; };
+  }, []);
+  useEffect(() => {
+    if (!autoCheckUpdate) return; let m = true;
+    const check = async () => { try { const r = await invoke<{ hasUpdate: boolean; latestVersion: string }>("check_for_update"); if (m && r.hasUpdate) setUpdateInfo(r); } catch {} };
+    const tmr = window.setTimeout(() => { void check(); }, 3000);
+    return () => { m = false; window.clearTimeout(tmr); };
+  }, [autoCheckUpdate]);
+  useEffect(() => {
+    let m = true; const load = async () => { try { const s = await invoke<LaunchSettingsResponse>("get_launch_settings"); if (m) { setLaunchAtLogin(s.launchAtLogin); setSilentStart(s.silentStart); setShowDockIcon(s.showDockIcon); } } catch (e) { if (m) setError(String(e)); } };
+    void load(); return () => { m = false; };
+  }, []);
+  useEffect(() => {
+    let m = true; const load = async () => { try { const s = await invoke<ExcludeDirSettingsResponse>("get_exclude_dir_settings"); if (m) { setExcludeExactDirs(s.exactDirs); setExcludePatternDirs(s.patternDirs); } } catch (e) { if (m) setError(String(e)); } };
+    void load(); return () => { m = false; };
+  }, []);
+  useEffect(() => {
+    let m = true; const load = async () => { try { const s = await invoke<FileManagerSettingsResponse>("get_file_manager_settings"); if (m) { setDefaultFolderAction(s.defaultFolderAction); setDefaultTerminalAction(s.defaultTerminalAction); setCustomFolderApp(s.customFolderApp); setCustomTerminalApp(s.customTerminalApp); } } catch (e) { console.error("Failed to load file manager settings", e); } };
+    void load(); return () => { m = false; };
+  }, []);
+
+  // Initialize + start watch
+  useEffect(() => {
+    let m = true;
+    const init = async () => {
+      if (m) setIsIndexLoading(true);
+      try { const initial = await invoke<InitResponse>("initialize"); if (m) { setIndexed(initial.indexed); try { const v = await invoke<string>("get_version"); if (m) setAppVersion(v); } catch {} } }
+      catch (e) { if (m) setError(String(e)); }
+      finally { if (m) setIsIndexLoading(false); }
+      try {
+        const watch = await invoke<WatchResponse>("start_watch_auto");
+        if (m) { setIsWatchRunning(watch.running); if (watch.code === "bootstrap") { setIsBuilding(true); setBuildStatus(t.buildStatusBuilding); } }
+      } catch (e) {
+        if (m) setError(String(e));
+        try { const watch = await invoke<WatchResponse>("watch_status"); if (m) setIsWatchRunning(watch.running); } catch {}
+      }
+    };
+    void init(); return () => { m = false; };
+  }, []);
+
+  // Path suggestions
+  useEffect(() => {
+    if (!isPathDropdownOpen) return; let m = true;
+    const load = async () => { try { const s = await invoke<string[]>("list_path_suggestions"); if (m) setPathSuggestions(s); } catch {} };
+    void load(); return () => { m = false; };
+  }, [isPathDropdownOpen]);
+
+  // Column resize + fit
+  useEffect(() => {
+    fitColumnsToContainer(); window.addEventListener("resize", fitColumnsToContainer);
+    return () => window.removeEventListener("resize", fitColumnsToContainer);
+  }, [fitColumnsToContainer]);
+
+  useEffect(() => {
+    const onMouseMove = (event: MouseEvent) => {
+      const state = resizeStateRef.current; if (!state) return;
+      const delta = event.clientX - state.startX; const start = state.startWidths;
+      const leftKey = state.left; const leftIndex = COLUMN_KEYS.indexOf(leftKey);
+      const rightIndex = COLUMN_KEYS.indexOf(state.right);
+      if (leftIndex < 0 || rightIndex < 0 || rightIndex !== leftIndex + 1) return;
+      const next: Record<ColumnKey, number> = { ...start };
+      if (delta >= 0) {
+        let remaining = delta;
+        for (let i = rightIndex; i < COLUMN_KEYS.length && remaining > 0; i += 1) {
+          const key = COLUMN_KEYS[i];
+          const min = { name: 160, path: 120, type: 90, size: 72, modified: 120 }[key] ?? 72;
+          const cuttable = Math.max(0, next[key] - min); if (cuttable <= 0) continue;
+          const cut = Math.min(cuttable, remaining); next[key] = Math.round(next[key] - cut); remaining -= cut;
+        }
+        next[leftKey] = Math.round(start[leftKey] + (delta - remaining));
+      } else {
+        let remaining = -delta;
+        for (let i = leftIndex; i >= 0 && remaining > 0; i -= 1) {
+          const key = COLUMN_KEYS[i];
+          const min = { name: 160, path: 120, type: 90, size: 72, modified: 120 }[key] ?? 72;
+          const cuttable = Math.max(0, next[key] - min); if (cuttable <= 0) continue;
+          const cut = Math.min(cuttable, remaining); next[key] = Math.round(next[key] - cut); remaining -= cut;
+        }
+        next[COLUMN_KEYS[rightIndex]] = Math.round(start[COLUMN_KEYS[rightIndex]] + (-delta - remaining));
+      }
+      setColumnWidths(next);
+    };
+    const finishResize = () => {
+      if (resizeStateRef.current && typeof window !== "undefined") {
+        try { window.localStorage.setItem(COLUMN_WIDTHS_STORAGE_KEY, JSON.stringify(columnWidthsRef.current)); } catch {}
+      }
+      resizeStateRef.current = null; setActiveResizer(null); document.body.style.userSelect = ""; document.body.style.cursor = "";
+    };
+    window.addEventListener("mousemove", onMouseMove); window.addEventListener("mouseup", finishResize);
+    window.addEventListener("blur", finishResize); window.addEventListener("mouseleave", finishResize);
+    return () => { window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", finishResize); window.removeEventListener("blur", finishResize); window.removeEventListener("mouseleave", finishResize); };
+  }, []);
+
+  // Build status listener
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<BuildEvent>("index://build-status", (event) => {
+      const p = event.payload;
+      if (p.phase === "started") setIsBuilding(true);
+      else { setIsBuilding(false); if (typeof p.indexed === "number") setIndexed(p.indexed); setBuildStatus(""); }
+    }).then((d) => { unlisten = d; }).catch(() => { setError("Unable to listen to build events."); });
+    return () => { if (unlisten) unlisten(); };
+  }, []);
+
+  // Volume events
+  const volumeMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const isZh = language === "zh";
+    void listen<VolumeEventType>("volume://event", (event) => {
+      const e = event.payload;
+      if (volumeMsgTimer.current) { clearTimeout(volumeMsgTimer.current); }
+      const volNameFromPath = (path: string) => { const parts = path.split("/"); return parts[parts.length - 1] || path; };
+      if (e.type === "mountDetected") { const name = volNameFromPath(e.path); setBuildStatus(isZh ? `检测到新卷 ${name}，正在索引...` : `New volume ${name} detected, indexing...`); }
+      else if (e.type === "indexComplete") { const name = volNameFromPath(e.path); setBuildStatus(isZh ? `${name} 索引完成，${e.fileCount} 个文件` : `${name} indexed, ${e.fileCount} files`); volumeMsgTimer.current = setTimeout(() => setBuildStatus(""), 5000); }
+      else if (e.type === "volumeRemoved") { const name = volNameFromPath(e.path); setBuildStatus(isZh ? `${name} 已断开，索引已清理` : `${name} disconnected, index removed`); volumeMsgTimer.current = setTimeout(() => setBuildStatus(""), 5000); }
+    }).then((d) => { unlisten = d; }).catch(() => {});
+    return () => { if (unlisten) unlisten(); if (volumeMsgTimer.current) clearTimeout(volumeMsgTimer.current); };
+  }, []);
+
+  // Persist watch cursor on unload
+  useEffect(() => {
+    const persist = () => { void invoke("persist_watch_cursor"); };
+    window.addEventListener("beforeunload", persist);
+    return () => window.removeEventListener("beforeunload", persist);
+  }, []);
+
+  // Search
+  useEffect(() => {
+    if (isIndexLoading) { setIsSearching(false); return; }
+    let cancelled = false;
+    const runSearch = async () => {
+      const needle = query.trim();
+      if (needle.length === 0) { setItems([]); setTotalFound(0); setTookMs(0); setScrollTop(0); return; }
+      setIsSearching(true); setError(null);
+      try {
+        const response = await invoke<SearchResponse>("search", buildSearchRequest(needle, activeTab, pathPrefix, caseSensitive, regexEnabled, fuzzyEnabled, sortKey, sortAscending, maxResults));
+        if (cancelled) return;
+        setItems(response.items); setTotalFound(response.total); setTookMs(response.tookMs); setScrollTop(0);
+        if (tableBodyRef.current) tableBodyRef.current.scrollTop = 0;
+      } catch (err) { if (!cancelled) { setError(String(err)); setItems([]); setTotalFound(0); setScrollTop(0); } }
+      finally { if (!cancelled) setIsSearching(false); }
+    };
+    const timer = window.setTimeout(() => { void runSearch(); }, 180);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [query, pathPrefix, activeTab, regexEnabled, caseSensitive, fuzzyEnabled, sortKey, sortAscending, isIndexLoading, maxResults]);
+
+  // Reset app filter when no longer valid
+  useEffect(() => { if (appFilter && !appFilterOptions.includes(appFilter)) setAppFilter(""); }, [appFilterOptions, appFilter]);
+
+  // Popovers click outside
+  useEffect(() => {
+    if (!showTimePopover && !showSizePopover) return;
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (showTimePopover && timePopoverRef.current && !timePopoverRef.current.contains(target)) setShowTimePopover(false);
+      if (showSizePopover && sizePopoverRef.current && !sizePopoverRef.current.contains(target)) setShowSizePopover(false);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [showTimePopover, showSizePopover]);
+
+  // Keyboard navigation
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && activeView === "search" && !contextMenu) {
+        if (!isEditableTarget(event.target)) { event.preventDefault(); moveSelectionByArrow(event.key === "ArrowDown" ? 1 : -1); }
+        return;
+      }
+      const openSelectedResult = () => {
+        const source = activeView === "pinned" ? pinnedItems : itemsRef.current;
+        const selected = source.find((i) => selectedItemPathSet.has(i.path));
+        if (selected) { event.preventDefault(); void openResult(selected.path); }
+      };
+      if (event.key === "Enter" && (activeView === "search" || activeView === "pinned") && !contextMenu && !isEditableTarget(event.target)) { openSelectedResult(); return; }
+      if ((event.metaKey || event.ctrlKey) && !event.altKey) {
+        const key = event.key.toLowerCase();
+        if (key === "o") { openSelectedResult(); return; }
+        if (key === "1") { event.preventDefault(); setActiveView("search"); return; }
+        if (key === "2") { event.preventDefault(); setActiveView("pinned"); return; }
+        if (key === "3") { event.preventDefault(); setActiveView("settings"); return; }
+        if (key === "f") { event.preventDefault(); setActiveView("search"); searchInputRef.current?.focus(); searchInputRef.current?.select(); return; }
+      }
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "a") {
+        if ((activeView !== "search" && activeView !== "pinned") || contextMenu) { if (activeView === "settings" || !isEditableTarget(event.target)) event.preventDefault(); return; }
+        if (isEditableTarget(event.target)) return;
+        event.preventDefault();
+        const source = activeView === "pinned" ? pinnedItems : itemsRef.current;
+        setSelectedItemPaths(source.map((item) => item.path)); return;
+      }
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "c") {
+        if ((activeView !== "search" && activeView !== "pinned") || contextMenu || selectedPathsInOrder.length === 0) return;
+        if (isEditableTarget(event.target)) return;
+        event.preventDefault(); blurActiveEditable(); void copySearchResults(selectedPathsInOrder); return;
+      }
+      if (event.key !== " " && event.code !== "Space") return;
+      if (event.repeat || (activeView !== "search" && activeView !== "pinned") || selectedPathsInOrder.length === 0 || contextMenu) return;
+      if (isEditableTarget(event.target)) return;
+      event.preventDefault(); blurActiveEditable(); void previewResults(selectedPathsInOrder);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    const onBlur = () => { if (isPreviewingRef.current) return; if (selectedPathsInOrder.length > 0) { setSelectedItemPaths([]); setSelectionAnchorPath(null); } };
+    window.addEventListener("blur", onBlur);
+    return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("blur", onBlur); };
+  }, [activeView, contextMenu, selectedPathsInOrder]);
+
+  // ── render ──
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -3049,41 +972,21 @@ function App() {
             <span className="logo-text">MacHunt</span>
           </div>
           <nav className="header-nav">
-            <button
-              className={activeView === "search" ? "nav-btn active" : "nav-btn"}
-              onClick={() => setActiveView("search")}
-            >
-              <span className="nav-btn-icon">⌂</span>
-              {t.searchTag}
+            <button className={activeView === "search" ? "nav-btn active" : "nav-btn"} onClick={() => setActiveView("search")}>
+              <span className="nav-btn-icon">⌂</span>{t.searchTag}
             </button>
-            <button
-              className={activeView === "pinned" ? "nav-btn active" : "nav-btn"}
-              onClick={() => setActiveView("pinned")}
-            >
-              <span className="nav-btn-icon">★</span>
-              {t.pinnedTag}
+            <button className={activeView === "pinned" ? "nav-btn active" : "nav-btn"} onClick={() => setActiveView("pinned")}>
+              <span className="nav-btn-icon">★</span>{t.pinnedTag}
             </button>
-            <button
-              className={activeView === "settings" ? "nav-btn active" : "nav-btn"}
-              onClick={() => setActiveView("settings")}
-            >
-              <span className="nav-btn-icon">⚙</span>
-              {t.settingsTitle}
+            <button className={activeView === "settings" ? "nav-btn active" : "nav-btn"} onClick={() => setActiveView("settings")}>
+              <span className="nav-btn-icon">⚙</span>{t.settingsTitle}
             </button>
           </nav>
         </div>
         <div className="header-right">
-          <button className="act-btn" onClick={() => void runBuild(false)} disabled={isBuilding}>
-            {t.build}
-          </button>
-          <button className="act-btn" onClick={() => void runBuild(true)} disabled={isBuilding}>
-            {t.rebuild}
-          </button>
-          <button
-            className={isWatchRunning ? "act-btn danger" : "act-btn primary"}
-            onClick={() => void toggleWatch()}
-            disabled={isWatchPending}
-          >
+          <button className="act-btn" onClick={() => void runBuild(false)} disabled={isBuilding}>{t.build}</button>
+          <button className="act-btn" onClick={() => void runBuild(true)} disabled={isBuilding}>{t.rebuild}</button>
+          <button className={isWatchRunning ? "act-btn danger" : "act-btn primary"} onClick={() => void toggleWatch()} disabled={isWatchPending}>
             <span className={isWatchRunning ? "watch-dot on" : "watch-dot off"} />
             {isWatchPending ? (isWatchRunning ? t.stopping : t.starting) : isWatchRunning ? t.stopWatch : t.startWatch}
           </button>
@@ -3091,1310 +994,204 @@ function App() {
       </header>
 
       {activeView === "search" ? (
-        <div className="search-view"
-          onClick={(e) => {
+        <SearchView
+          t={t}
+          query={query} setQuery={setQuery}
+          pathPrefix={pathPrefix} setPathPrefix={setPathPrefix}
+          isIndexLoading={isIndexLoading}
+          activeTab={activeTab} setActiveTab={setActiveTab}
+          regexEnabled={regexEnabled} setRegexEnabled={setRegexEnabled}
+          fuzzyEnabled={fuzzyEnabled} setFuzzyEnabled={setFuzzyEnabled}
+          caseSensitive={caseSensitive} setCaseSensitive={setCaseSensitive}
+          pathPickerRef={pathPickerRef} pathInputRef={pathInputRef}
+          pathSuggestions={pathSuggestions}
+          isPathDropdownOpen={isPathDropdownOpen} setIsPathDropdownOpen={setIsPathDropdownOpen}
+          activePathSuggestion={activePathSuggestion} setActivePathSuggestion={setActivePathSuggestion}
+          isPickingPath={isPickingPath} pickPath={pickPath}
+          handlePathInputKeyDown={handlePathInputKeyDown}
+          isPathDropdownVisible={isPathDropdownVisible}
+          visiblePathSuggestions={visiblePathSuggestions}
+          closePathDropdown={closePathDropdown}
+          applyPathSuggestion={applyPathSuggestion}
+          timeFilter={timeFilter} setTimeFilter={setTimeFilter}
+          showTimePopover={showTimePopover} setShowTimePopover={setShowTimePopover}
+          showSizePopover={showSizePopover} setShowSizePopover={setShowSizePopover}
+          timePopoverRef={timePopoverRef} sizePopoverRef={sizePopoverRef}
+          calMonth={calMonth} setCalMonth={setCalMonth}
+          calYear={calYear} setCalYear={setCalYear}
+          calSelecting={calSelecting} setCalSelecting={setCalSelecting}
+          calFrom={calFrom} setCalFrom={setCalFrom}
+          calTo={calTo} setCalTo={setCalTo}
+          customTimeFromRef={customTimeFromRef} customTimeToRef={customTimeToRef}
+          customTimeLabel={customTimeLabel}
+          setFilterVersion={setFilterVersion}
+          sizeFilter={sizeFilter} setSizeFilter={setSizeFilter}
+          customSizeMin={customSizeMin} setCustomSizeMinTemp={setCustomSizeMinTemp}
+          customSizeMax={customSizeMax} setCustomSizeMaxTemp={setCustomSizeMaxTemp}
+          customSizeUnit={customSizeUnit} setCustomSizeUnit={setCustomSizeUnit}
+          customSizeMinRef={customSizeMinRef} customSizeMaxRef={customSizeMaxRef}
+          customSizeLabel={customSizeLabel}
+          appFilter={appFilter} setAppFilter={setAppFilter}
+          appFilterOptions={appFilterOptions}
+          filteredItems={filteredItems} items={items} itemsRef={itemsRef}
+          selectedItemPathSet={selectedItemPathSet}
+          selectedItemPaths={selectedItemPaths} setSelectedItemPaths={setSelectedItemPaths}
+          selectionAnchorPath={selectionAnchorPath} setSelectionAnchorPath={setSelectionAnchorPath}
+          isSearching={isSearching} tookMs={tookMs} indexed={indexed} buildStatus={buildStatus}
+          gridTemplateColumns={gridTemplateColumns}
+          sortKey={sortKey} sortAscending={sortAscending} toggleHeaderSort={toggleHeaderSort}
+          columnWidths={columnWidths} activeResizer={activeResizer} startResize={startResize}
+          tableShellRef={tableShellRef} tableBodyRef={tableBodyRef}
+          scrollTop={scrollTop} setScrollTop={setScrollTop}
+          visibleStart={visibleStart} visibleEnd={visibleEnd}
+          visibleItems={visibleItems}
+          topSpacerHeight={topSpacerHeight} bottomSpacerHeight={bottomSpacerHeight}
+          handleScrollbarScroll={handleScrollbarScroll}
+          openResult={openResult} handleRowClick={handleRowClick}
+          openResultContextMenu={openResultContextMenu}
+          isPinned={isPinned} togglePin={togglePin}
+          searchInputRef={searchInputRef} rowRefs={rowRefs}
+          onClickOutside={(e) => {
             if (!(e.target as HTMLElement).closest(".result-row") && !(e.target as HTMLElement).closest(".context-menu-layer")) {
-              setSelectedItemPaths([]);
-              setSelectionAnchorPath(null);
+              setSelectedItemPaths([]); setSelectionAnchorPath(null);
             }
-          }}>
-          <div className="search-main">
-            <div className="search-hero">
-              <div className="search-input-container">
-                <span className="search-icon-left">⌕</span>
-                <input
-                  ref={searchInputRef}
-                  className="search-input"
-                  placeholder={t.searchPlaceholder}
-                  value={query}
-                  disabled={isIndexLoading}
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-                <span className="search-kbd">⌘F</span>
-              </div>
-            </div>
-
-            <div className="filter-chips">
-              {TAB_IDS.map((tab) => (
-                <button
-                  key={tab}
-                  className={tab === activeTab ? "chip-btn active" : "chip-btn"}
-                  onClick={() => setActiveTab(tab)}
-                >
-                  <span className="chip-icon">{TAB_ICONS[tab]}</span>
-                  {tabLabel(tab)}
-                </button>
-              ))}
-            </div>
-
-            <div className="filter-toolbar">
-              <div className="path-picker" ref={pathPickerRef}>
-                <div className="path-input-wrap">
-                  <input
-                    ref={pathInputRef}
-                    className="path-input"
-                    placeholder={t.pathPlaceholder}
-                    value={pathPrefix}
-                    disabled={isIndexLoading}
-                    autoComplete="off"
-                    autoCorrect="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    onFocus={() => {
-                      if (!isIndexLoading) {
-                        setIsPathDropdownOpen(true);
-                      }
-                    }}
-                    onClick={() => {
-                      if (!isIndexLoading && pathPrefix.trim().length > 0) {
-                        setIsPathDropdownOpen(true);
-                      }
-                    }}
-                    onBlur={(event) => {
-                      const next = event.relatedTarget;
-                      if (next instanceof Node && pathPickerRef.current?.contains(next)) {
-                        return;
-                      }
-                      closePathDropdown();
-                    }}
-                    onKeyDown={handlePathInputKeyDown}
-                    onChange={(event) => {
-                      setPathPrefix(event.target.value);
-                      setIsPathDropdownOpen(true);
-                      setActivePathSuggestion(-1);
-                    }}
-                  />
-                  {pathPrefix.trim().length > 0 && (
-                    <button
-                      type="button"
-                      className="path-clear-btn"
-                      aria-label="Clear path filter"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        setPathPrefix("");
-                        pathInputRef.current?.focus();
-                      }}
-                    >&#10005;</button>
-                  )}
-                  {isPathDropdownVisible && (
-                    <div className="path-suggest-panel">
-                      {visiblePathSuggestions.map((path, index) => (
-                        <button
-                          key={path}
-                          type="button"
-                          className={index === activePathSuggestion ? "path-suggest-item active" : "path-suggest-item"}
-                          onMouseEnter={() => setActivePathSuggestion(index)}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            applyPathSuggestion(path);
-                          }}
-                        >
-                          <span className="path-suggest-icon">›</span>
-                          <span className="path-suggest-text">{path}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <button
-                  className="act-btn"
-                  onClick={() => void pickPath()}
-                  disabled={isPickingPath || isIndexLoading}
-                >
-                  {t.choosePath}
-                </button>
-              </div>
-
-              <button
-                className={regexEnabled ? "toggle-btn active" : "toggle-btn"}
-                onClick={() => {
-                  if (fuzzyEnabled) setFuzzyEnabled(false);
-                  setRegexEnabled((prev) => !prev);
-                }}
-                title={t.regexEnabled}
-              >
-                {t.regexEnabled}
-              </button>
-              <button
-                className={fuzzyEnabled ? "toggle-btn active" : "toggle-btn"}
-                onClick={() => {
-                  if (regexEnabled) setRegexEnabled(false);
-                  setFuzzyEnabled((prev) => !prev);
-                }}
-                title={t.fuzzyEnabled}
-              >
-                {t.fuzzyEnabled}
-              </button>
-              <button
-                className={caseSensitive ? "toggle-btn active" : "toggle-btn"}
-                onClick={() => setCaseSensitive((prev) => !prev)}
-                title={t.caseSensitive}
-              >
-                Aa
-              </button>
-
-              <span className="toolbar-sep" />
-
-              {/* Time filter */}
-              <div style={{ position: "relative", flex: "1 1 0", minWidth: 0 }}>
-                <CustomSelect
-                  value={timeFilter}
-                  title={customTimeLabel ?? undefined}
-                  options={[
-                    { value: "all", label: t.timeAll },
-                    { value: "today", label: t.timeToday },
-                    { value: "week", label: t.timeWeek },
-                    { value: "month", label: t.timeMonth },
-                    { value: "year", label: t.timeYear },
-                    { value: "custom", label: customTimeLabel ?? t.timeCustom },
-                  ]}
-                  onChange={(v) => {
-                    if (v === "custom") {
-                      // Sync calendar state to current filter
-                      if (customTimeFromRef.current) {
-                        setCalFrom(new Date(customTimeFromRef.current).toISOString().slice(0, 10));
-                      } else { setCalFrom(""); }
-                      if (customTimeToRef.current) {
-                        setCalTo(new Date(customTimeToRef.current - 86399999).toISOString().slice(0, 10));
-                      } else { setCalTo(""); }
-                      setCalSelecting("from");
-                      setShowTimePopover(true); setShowSizePopover(false);
-                    } else {
-                      setShowTimePopover(false);
-                      customTimeFromRef.current = 0; customTimeToRef.current = 0;
-                      setTimeFilter(v);
-                    }
-                  }}
-                />
-                {showTimePopover && (
-                  <div className="filter-popover" ref={timePopoverRef} onClick={(e) => e.stopPropagation()}>
-                    <div className="cal-header">
-                      <button className="cal-nav" onClick={() => { if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}>‹</button>
-                      <span className="cal-title">{calYear}年 {calMonth + 1}月</span>
-                      <button className="cal-nav" onClick={() => { if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}>›</button>
-                    </div>
-                    <div className="cal-weekdays">
-                      {["日","一","二","三","四","五","六"].map(d => <span key={d} className="cal-wd">{d}</span>)}
-                    </div>
-                    <div className="cal-grid">
-                      {(() => {
-                        const first = new Date(calYear, calMonth, 1).getDay();
-                        const days = new Date(calYear, calMonth + 1, 0).getDate();
-                        const cells: Array<number | null> = [];
-                        for (let i = 0; i < first; i++) cells.push(null);
-                        for (let d = 1; d <= days; d++) cells.push(d);
-                        const fromTs = calFrom ? new Date(calFrom).getTime() : 0;
-                        const toTs = calTo ? new Date(calTo).getTime() + 86399999 : 0;
-                        return cells.map((d, i) => {
-                          if (d === null) return <span key={`e${i}`} className="cal-day empty" />;
-                          const ds = `${calYear}-${String(calMonth+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-                          const ts = new Date(ds).getTime();
-                          const inRange = fromTs && toTs && ts >= fromTs && ts <= toTs;
-                          const isFrom = calFrom === ds;
-                          const isTo = calTo === ds;
-                          let cls = "cal-day";
-                          if (isFrom || isTo) cls += " cal-range-edge";
-                          else if (inRange) cls += " cal-in-range";
-                          return (
-                            <span key={ds} className={cls} onClick={() => {
-                              if (calSelecting === "from") {
-                                setCalFrom(ds); setCalTo(""); setCalSelecting("to");
-                              } else {
-                                if (ds < calFrom) { setCalTo(calFrom); setCalFrom(ds); }
-                                else setCalTo(ds);
-                                setCalSelecting("from");
-                              }
-                            }}>{d}</span>
-                          );
-                        });
-                      })()}
-                    </div>
-                    <div className="filter-popover-row" style={{ marginTop: 8 }}>
-                      <label style={{ fontSize: "0.8rem" }}>从</label>
-                      <input className="filter-input" readOnly value={calFrom} style={{ fontSize: "0.85rem" }} />
-                      <label style={{ fontSize: "0.8rem", width: 24 }}>到</label>
-                      <input className="filter-input" readOnly value={calTo} style={{ fontSize: "0.85rem" }} />
-                    </div>
-                    <div className="filter-popover-actions">
-                      <button className="act-btn cancel" onClick={() => {
-                        setCalFrom(""); setCalTo(""); setCalSelecting("from");
-                      }}>清除</button>
-                      <button className="act-btn" onClick={() => {
-                        customTimeFromRef.current = calFrom ? new Date(calFrom).getTime() : 0;
-                        customTimeToRef.current = calTo ? new Date(calTo).getTime() + 86399999 : 0;
-                        setTimeFilter("custom");
-                        setShowTimePopover(false);
-                        setFilterVersion(v => v + 1);
-                      }}>{t.shortcutApply}</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Size filter */}
-              <div style={{ position: "relative", flex: "1 1 0", minWidth: 0 }}>
-                <CustomSelect
-                  value={sizeFilter}
-                  options={[
-                    { value: "all", label: t.sizeAll },
-                    { value: "kb", label: t.sizeKB },
-                    { value: "mb", label: t.sizeMB },
-                    { value: "gb", label: t.sizeGB },
-                    { value: "custom", label: customSizeLabel ?? t.sizeCustom },
-                  ]}
-                  onChange={(v) => {
-                    if (v === "custom") {
-                      setShowSizePopover(true); setShowTimePopover(false);
-                    } else {
-                      setShowSizePopover(false);
-                      customSizeMinRef.current = 0; customSizeMaxRef.current = 0;
-                      setSizeFilter(v);
-                    }
-                  }}
-                />
-                {showSizePopover && (
-                  <div className="filter-popover" ref={sizePopoverRef} onClick={(e) => e.stopPropagation()}>
-                    <div className="filter-popover-row">
-                      <label>{t.sizeMin}</label>
-                      <input className="filter-input" type="text" inputMode="decimal" placeholder="0"
-                        value={customSizeMin} onChange={(e) => setCustomSizeMinTemp(e.target.value)} />
-                    </div>
-                    <div className="filter-popover-row">
-                      <label>{t.sizeMax}</label>
-                      <input className="filter-input" type="text" inputMode="decimal" placeholder="100"
-                        value={customSizeMax} onChange={(e) => setCustomSizeMaxTemp(e.target.value)} />
-                    </div>
-                    <div className="filter-popover-row">
-                      <label>单位</label>
-                      <CustomSelect
-                        value={customSizeUnit}
-                        options={[
-                          { value: "KB", label: "KB" },
-                          { value: "MB", label: "MB" },
-                          { value: "GB", label: "GB" },
-                        ]}
-                        onChange={(v) => setCustomSizeUnit(v)}
-                      />
-                    </div>
-                    <div className="filter-popover-actions">
-                      <button className="act-btn" onClick={() => {
-                        const mul = customSizeUnit === "GB" ? 1073741824 : customSizeUnit === "MB" ? 1048576 : 1024;
-                        customSizeMinRef.current = (parseFloat(customSizeMin) || 0) * mul;
-                        customSizeMaxRef.current = (parseFloat(customSizeMax) || 0) * mul;
-                        setSizeFilter("custom");
-                        setShowSizePopover(false);
-                        setFilterVersion(v => v + 1);
-                      }}>{t.shortcutApply}</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* App filter */}
-              <div style={{ flex: "1 1 0", minWidth: 0 }}>
-                <CustomSelect
-                  value={appFilter}
-                  options={[
-                    { value: "", label: t.appFilterAll },
-                    ...appFilterOptions.map((app) => ({ value: app, label: app })),
-                  ]}
-                  onChange={(v) => setAppFilter(v)}
-                />
-              </div>
-            </div>
-
-            <div className="results-area" ref={tableShellRef}>
-              {filteredItems.length === 0 ? (
-                <div className="empty-state">
-                  {query.trim().length === 0
-                    ? t.emptyTypeHint
-                    : t.emptyNoMatch}
-                </div>
-              ) : (
-                <>
-                  <div className="table-header" style={{ gridTemplateColumns }}>
-                    <span className="header-cell">
-                      <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("name")}>
-                        <span className="header-sort-label">{t.header_name}</span>
-                        {sortKey === "name" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                      </button>
-                      <span
-                        className={activeResizer === "name-path" ? "column-resizer active" : "column-resizer"}
-                        onMouseDown={startResize("name", "path", "name-path")}
-                      />
-                    </span>
-                    <span className="header-cell">
-                      <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("path")}>
-                        <span className="header-sort-label">{t.header_path}</span>
-                        {sortKey === "path" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                      </button>
-                      <span
-                        className={activeResizer === "path-type" ? "column-resizer active" : "column-resizer"}
-                        onMouseDown={startResize("path", "type", "path-type")}
-                      />
-                    </span>
-                    <span className="header-cell">
-                      <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("type")}>
-                        <span className="header-sort-label">{t.header_type}</span>
-                        {sortKey === "type" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                      </button>
-                      <span
-                        className={activeResizer === "type-size" ? "column-resizer active" : "column-resizer"}
-                        onMouseDown={startResize("type", "size", "type-size")}
-                      />
-                    </span>
-                    <span className="header-cell">
-                      <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("size")}>
-                        <span className="header-sort-label">{t.header_size}</span>
-                        {sortKey === "size" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                      </button>
-                      <span
-                        className={activeResizer === "size-modified" ? "column-resizer active" : "column-resizer"}
-                        onMouseDown={startResize("size", "modified", "size-modified")}
-                      />
-                    </span>
-                    <span className="header-cell">
-                      <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("modified")}>
-                        <span className="header-sort-label">{t.header_modified}</span>
-                        {sortKey === "modified" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                      </button>
-                    </span>
-                  </div>
-
-                  <div className="table-body custom-scrollbar" ref={tableBodyRef}
-                    onScroll={(e) => { setScrollTop((e.target as HTMLDivElement).scrollTop); handleScrollbarScroll(e); }}>
-                    <div style={{ height: topSpacerHeight }} />
-                    {visibleItems.map((item, vi) => {
-                      const index = visibleStart + vi;
-                      const token = iconToken(item);
-                      return (
-                        <article
-                          key={`${item.path}-${index}`}
-                          ref={(element) => {
-                            if (element) {
-                              rowRefs.current.set(item.path, element);
-                            } else {
-                              rowRefs.current.delete(item.path);
-                            }
-                          }}
-                          className={selectedItemPathSet.has(item.path) ? "result-row selected" : "result-row"}
-                          style={{ gridTemplateColumns }}
-                          onMouseDown={(event) => {
-                            if (event.button === 0) {
-                              blurActiveEditable();
-                            }
-                          }}
-                          onClick={(event) => handleRowClick(event, item, index)}
-                          onDoubleClick={() => void openResult(item.path)}
-                          onContextMenu={(event) => openResultContextMenu(event, item)}
-                        >
-                          <div className="cell name-cell">
-                            <span className={`file-icon ${token}`}>{iconGlyph(token)}</span>
-                            <span
-                              className="name-text"
-                              onMouseEnter={(event) => setCellPreviewTooltip(event, item.name)}
-                              onMouseLeave={(event) => event.currentTarget.removeAttribute("title")}
-                            >
-                              {item.name}
-                            </span>
-                          </div>
-                          <div
-                            className="cell path-cell"
-                            onMouseEnter={(event) => setCellPreviewTooltip(event, item.parent)}
-                            onMouseLeave={(event) => event.currentTarget.removeAttribute("title")}
-                          >
-                            {item.parent}
-                          </div>
-                          <div className="cell type-cell">{typeLabel(item, t.typeFolder, t.typeFile)}</div>
-                          <div className="cell size-cell">{formatBytes(item.sizeBytes)}</div>
-                          <div className="cell date-cell">{formatDate(item.modifiedUnixMs)}</div>
-                          <button
-                            className="term-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void invoke("open_in_default_terminal", { path: item.path });
-                            }}
-                            title={t.openInDefaultTerminal}
-                          >
-                            &gt;_
-                          </button>
-                          <button
-                            className={`pin-btn ${isPinned(item.path) ? "pinned" : ""}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              togglePin(item);
-                            }}
-                            title={isPinned(item.path) ? t.menuUnpin : t.menuPin}
-                          >
-                            {isPinned(item.path) ? "★" : "☆"}
-                          </button>
-                        </article>
-                      );
-                    })}
-                    <div style={{ height: bottomSpacerHeight }} />
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-
-          <footer className="status-bar">
-            <div className="status-left">
-              {buildStatus ? (
-                <span className="status-highlight">{buildStatus}</span>
-              ) : (
-                <span className="status-highlight">{formatIndexedItems(indexed)}</span>
-              )}
-            </div>
-            <div className="status-right">
-              <span className="status-highlight">{formatShownItems(filteredItems.length)}</span>
-              <span>{isSearching ? t.searching : `${tookMs} ms`}</span>
-            </div>
-          </footer>
-        </div>
+          }}
+        />
       ) : activeView === "pinned" ? (
         <div className="pinned-view"
           onClick={(e) => {
             if (!(e.target as HTMLElement).closest(".result-row") && !(e.target as HTMLElement).closest(".context-menu-layer")) {
-              setSelectedItemPaths([]);
-              setSelectionAnchorPath(null);
+              setSelectedItemPaths([]); setSelectionAnchorPath(null);
             }
           }}>
           <div className="pinned-content">
           <header className="settings-header">
-            <div>
-              <h2>{t.pinnedTag}</h2>
-            </div>
+            <div><h2>{t.pinnedTag}</h2></div>
           </header>
-
           {pinnedItems.length === 0 ? (
             <div className="empty-state">{t.pinnedEmpty}</div>
           ) : (
             <>
               <div className="table-header" style={{ gridTemplateColumns }}>
-                <span className="header-cell">
-                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("name")}>
-                    <span className="header-sort-label">{t.header_name}</span>
-                    {sortKey === "name" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                  </button>
-                  <span
-                    className={activeResizer === "name-path" ? "column-resizer active" : "column-resizer"}
-                    onMouseDown={startResize("name", "path", "name-path")}
-                  />
-                </span>
-                <span className="header-cell">
-                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("path")}>
-                    <span className="header-sort-label">{t.header_path}</span>
-                    {sortKey === "path" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                  </button>
-                  <span
-                    className={activeResizer === "path-type" ? "column-resizer active" : "column-resizer"}
-                    onMouseDown={startResize("path", "type", "path-type")}
-                  />
-                </span>
-                <span className="header-cell">
-                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("type")}>
-                    <span className="header-sort-label">{t.header_type}</span>
-                    {sortKey === "type" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                  </button>
-                  <span
-                    className={activeResizer === "type-size" ? "column-resizer active" : "column-resizer"}
-                    onMouseDown={startResize("type", "size", "type-size")}
-                  />
-                </span>
-                <span className="header-cell">
-                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("size")}>
-                    <span className="header-sort-label">{t.header_size}</span>
-                    {sortKey === "size" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                  </button>
-                  <span
-                    className={activeResizer === "size-modified" ? "column-resizer active" : "column-resizer"}
-                    onMouseDown={startResize("size", "modified", "size-modified")}
-                  />
-                </span>
-                <span className="header-cell">
-                  <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort("modified")}>
-                    <span className="header-sort-label">{t.header_modified}</span>
-                    {sortKey === "modified" && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
-                  </button>
-                </span>
+                {(["name", "path", "type", "size", "modified"] as const).map((key, i, arr) => (
+                  <span className="header-cell" key={key}>
+                    <button type="button" className="header-sort-btn" onClick={() => toggleHeaderSort(key)}>
+                      <span className="header-sort-label">{t[`header_${key}` as const]}</span>
+                      {sortKey === key && <span className="header-sort-indicator">{sortAscending ? "▲" : "▼"}</span>}
+                    </button>
+                    {i < arr.length - 1 && (
+                      <span
+                        className={activeResizer === `${key}-${arr[i+1]}` ? "column-resizer active" : "column-resizer"}
+                        onMouseDown={startResize(key, arr[i+1], `${key}-${arr[i+1]}`)}
+                      />
+                    )}
+                  </span>
+                ))}
               </div>
-
               <div className="table-body custom-scrollbar" onScroll={handleScrollbarScroll}>
                 {sortedPinnedItems.map((item, index) => {
                   const token = iconToken(item);
                   return (
                     <article
                       key={`${item.path}-${index}`}
-                      ref={(element) => {
-                        if (element) {
-                          rowRefs.current.set(item.path, element);
-                        } else {
-                          rowRefs.current.delete(item.path);
-                        }
-                      }}
+                      ref={(el) => { if (el) rowRefs.current.set(item.path, el); else rowRefs.current.delete(item.path); }}
                       className={selectedItemPathSet.has(item.path) ? "result-row selected" : "result-row"}
                       style={{ gridTemplateColumns }}
                       onClick={(event) => handleRowClick(event, item, index)}
                       onDoubleClick={() => void openResult(item.path)}
                       onContextMenu={(event) => openResultContextMenu(event, item)}
                     >
-                      <div className="cell name-cell">
-                        <span className={`file-icon ${token}`}>{iconGlyph(token)}</span>
-                        <span className="name-text">{item.name}</span>
-                      </div>
+                      <div className="cell name-cell"><span className={`file-icon ${token}`}>{iconGlyph(token)}</span><span className="name-text">{item.name}</span></div>
                       <div className="cell path-cell">{item.parent}</div>
                       <div className="cell type-cell">{typeLabel(item, t.typeFolder, t.typeFile)}</div>
                       <div className="cell size-cell">{formatBytes(item.sizeBytes)}</div>
                       <div className="cell date-cell">{formatDate(item.modifiedUnixMs)}</div>
-                          <button
-                            className="term-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void invoke("open_in_default_terminal", { path: item.path });
-                            }}
-                            title={t.openInDefaultTerminal}
-                          >
-                            &gt;_
-                          </button>
-                          <button
-                            className="pin-btn pinned"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              togglePin(item);
-                            }}
-                            title={t.menuUnpin}
-                          >
-                            ★
-                          </button>
+                      <button className="term-btn" onClick={(e) => { e.stopPropagation(); void invoke("open_in_default_terminal", { path: item.path }); }} title={t.openInDefaultTerminal}>&gt;_</button>
+                      <button className="pin-btn pinned" onClick={(e) => { e.stopPropagation(); togglePin(item); }} title={t.menuUnpin}>★</button>
                     </article>
                   );
                 })}
               </div>
             </>
           )}
-
           </div>
           <footer className="status-bar">
-            <div className="status-left">
-              <span className="status-highlight">{fmt(t.pinnedCount, { count: pinnedItems.length })}</span>
-            </div>
+            <div className="status-left"><span className="status-highlight">{fmt(t.pinnedCount, { count: pinnedItems.length })}</span></div>
             <div className="status-right" />
           </footer>
         </div>
       ) : (
-        <div className="settings-view custom-scrollbar" onScroll={handleScrollbarScroll}>
-          <header className="settings-header">
-            <div>
-              <h2>{t.settingsTitle}</h2>
-              <p>{t.settingsDesc}</p>
-            </div>
-          </header>
-
-          <div className="settings-grid">
-            {/* Appearance Module */}
-            <article className="set-card">
-              <div className="set-card-header">
-                <div className="set-card-icon">◉</div>
-                <div>
-                  <div className="set-card-title">{t.themeModeTitle}</div>
-                  <div className="set-card-subtitle">{t.themeCurrent}: {resolvedTheme === "dark" ? t.themeDarkTitle : t.themeLightTitle}</div>
-                </div>
-              </div>
-              <div className="theme-cards">
-                {settingsThemeOptions.map((option) => (
-                  <div
-                    key={option.mode}
-                    className={themeMode === option.mode ? "tilt-card active" : "tilt-card"}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setThemeMode(option.mode)}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setThemeMode(option.mode); } }}
-                    onMouseMove={(e) => {
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      const x = ((e.clientX - rect.left) / rect.width - 0.5) * 8;
-                      const y = ((e.clientY - rect.top) / rect.height - 0.5) * -8;
-                      e.currentTarget.style.setProperty("--tilt-x", `${x}deg`);
-                      e.currentTarget.style.setProperty("--tilt-y", `${y}deg`);
-                      e.currentTarget.style.setProperty("--glow-x", `${((e.clientX - rect.left) / rect.width) * 100}%`);
-                      e.currentTarget.style.setProperty("--glow-y", `${((e.clientY - rect.top) / rect.height) * 100}%`);
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.setProperty("--tilt-x", "0deg");
-                      e.currentTarget.style.setProperty("--tilt-y", "0deg");
-                    }}
-                  >
-                    <div className={`theme-preview theme-preview-${option.mode}`}>
-                      <div className="tp-bar"/><div className="tp-bar"/><div className="tp-bar"/>
-                    </div>
-                    <div className="tilt-card-label"><span className="dot"/>{option.title}</div>
-                    <div className="tilt-card-desc">{option.description}</div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="rule-section">
-                <div className="rule-section-title">{t.languageTitle}</div>
-                <div className="lang-cards">
-                  {settingsLanguageOptions.map((option) => (
-                    <div
-                      key={option.code}
-                      className={language === option.code ? "tilt-card active" : "tilt-card"}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setLanguage(option.code)}
-                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setLanguage(option.code); } }}
-                      onMouseMove={(e) => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const x = ((e.clientX - rect.left) / rect.width - 0.5) * 8;
-                        const y = ((e.clientY - rect.top) / rect.height - 0.5) * -8;
-                        e.currentTarget.style.setProperty("--tilt-x", `${x}deg`);
-                        e.currentTarget.style.setProperty("--tilt-y", `${y}deg`);
-                        e.currentTarget.style.setProperty("--glow-x", `${((e.clientX - rect.left) / rect.width) * 100}%`);
-                        e.currentTarget.style.setProperty("--glow-y", `${((e.clientY - rect.top) / rect.height) * 100}%`);
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.setProperty("--tilt-x", "0deg");
-                        e.currentTarget.style.setProperty("--tilt-y", "0deg");
-                      }}
-                    >
-                      <div className="tilt-card-label"><span className="dot"/>{option.title}</div>
-                      <div className="tilt-card-desc">{option.description}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </article>
-
-            {/* Preferences Module */}
-            <article className="set-card">
-              <div className="set-card-header">
-                <div className="set-card-icon">⚙</div>
-                <div>
-                  <div className="set-card-title">{t.shortcutTitle}</div>
-                  <div className="set-card-subtitle">{t.shortcutDesc}</div>
-                </div>
-              </div>
-              <p className="set-card-hint">{t.shortcutInputHint}</p>
-              <div className="form-row">
-                <input
-                  className="form-input"
-                  value={displayShortcut(shortcutDraft)}
-                  placeholder={t.shortcutInputPlaceholder}
-                  readOnly
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
-                  onKeyDown={(event) => {
-                    if (event.key === "Tab") {
-                      return;
-                    }
-                    if (event.key === "Escape") {
-                      event.currentTarget.blur();
-                      return;
-                    }
-                    if (event.key === "Backspace" || event.key === "Delete") {
-                      event.preventDefault();
-                      setShortcutDraft("");
-                      setShortcutStatus("");
-                      return;
-                    }
-
-                    const next = shortcutFromKeyboardEvent(event);
-                    event.preventDefault();
-                    if (!next) {
-                      setShortcutStatus(t.shortcutNeedModifier);
-                      return;
-                    }
-
-                    setShortcutDraft(next);
-                    setShortcutStatus("");
-                    void applyWindowToggleShortcut(next);
-                  }}
-                />
-                <button
-                  className="act-btn"
-                  disabled={isShortcutSaving}
-                  onClick={() => void applyWindowToggleShortcut(shortcutDraft)}
-                >
-                  {t.shortcutApply}
-                </button>
-                <button
-                  className="act-btn"
-                  disabled={isShortcutSaving}
-                  onClick={() => void resetWindowToggleShortcut()}
-                >
-                  {t.shortcutReset}
-                </button>
-              </div>
-              <div className="option-meta">
-                {t.shortcutCurrent}: {displayShortcut(windowToggleShortcut)}
-              </div>
-              {shortcutStatus && <div className="status-msg">{shortcutStatus}</div>}
-
-              <div className="rule-section">
-                <div className="rule-section-title">{t.startupTitle}</div>
-                <p className="set-card-desc">{t.startupDesc}</p>
-                <div className="toggle-cards">
-                  <label className="toggle-card">
-                    <div className="toggle-card-copy">
-                      <div className="toggle-card-title">{t.startupLaunchAtLogin}</div>
-                      <div className="toggle-card-desc">{t.startupLaunchAtLoginDesc}</div>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={launchAtLogin}
-                      aria-label={t.startupLaunchAtLogin}
-                      className={launchAtLogin ? "ns-switch on" : "ns-switch"}
-                      disabled={isLaunchSettingsSaving}
-                      onClick={() => void applyLaunchSettings(!launchAtLogin, silentStart, showDockIcon)}
-                    >
-                      <span className="ns-switch-knob" />
-                    </button>
-                  </label>
-                  <label className="toggle-card">
-                    <div className="toggle-card-copy">
-                      <div className="toggle-card-title">{t.startupSilentStart}</div>
-                      <div className="toggle-card-desc">{t.startupSilentStartDesc}</div>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={silentStart}
-                      aria-label={t.startupSilentStart}
-                      className={silentStart ? "ns-switch on" : "ns-switch"}
-                      disabled={isLaunchSettingsSaving}
-                      onClick={() => void applyLaunchSettings(launchAtLogin, !silentStart, showDockIcon)}
-                    >
-                      <span className="ns-switch-knob" />
-                    </button>
-                  </label>
-                  <label className="toggle-card">
-                    <div className="toggle-card-copy">
-                      <div className="toggle-card-title">{t.startupShowDockIcon}</div>
-                      <div className="toggle-card-desc">{t.startupShowDockIconDesc}</div>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={showDockIcon}
-                      aria-label={t.startupShowDockIcon}
-                      className={showDockIcon ? "ns-switch on" : "ns-switch"}
-                      disabled={isLaunchSettingsSaving}
-                      onClick={() => void applyLaunchSettings(launchAtLogin, silentStart, !showDockIcon)}
-                    >
-                      <span className="ns-switch-knob" />
-                    </button>
-                  </label>
-                </div>
-                {launchSettingsStatus && <div className="status-msg">{launchSettingsStatus}</div>}
-              </div>
-            </article>
-
-            {/* Max Results Module */}
-            <article className="set-card">
-              <div className="set-card-header">
-                <div className="set-card-icon">☰</div>
-                <div>
-                  <div className="set-card-title">{t.maxResultsTitle}</div>
-                </div>
-              </div>
-              <div className="form-row">
-                <CustomSelect
-                  triggerClassName="form-select"
-                  value={String(maxResults)}
-                  disabled={isMaxResultsSaving}
-                  options={[
-                    { value: "500", label: "500" },
-                    { value: "1000", label: "1000" },
-                    { value: "2000", label: "2000" },
-                    { value: "5000", label: "5000" },
-                    { value: "10000", label: "10000" },
-                  ]}
-                  onChange={(val) => {
-                    const n = parseInt(val, 10);
-                    if (!isNaN(n)) {
-                      void applyMaxResults(n);
-                    }
-                  }}
-                />
-              </div>
-              {maxResultsStatus && <div className="status-msg">{maxResultsStatus}</div>}
-            </article>
-
-            {/* About Module */}
-            <article className="set-card">
-              <div className="set-card-header">
-                <div className="set-card-icon">ℹ</div>
-                <div>
-                  <div className="set-card-title">{t.updateTitle}</div>
-                  <div className="set-card-subtitle">{appVersion ? `${t.versionLabel}: v${appVersion}` : t.updateDesc}</div>
-                </div>
-              </div>
-              <label className="toggle-card">
-                <div className="toggle-card-copy">
-                  <div className="toggle-card-title">{t.updateAutoCheck}</div>
-                  <div className="toggle-card-desc">{t.updateAutoCheckDesc}</div>
-                </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={autoCheckUpdate}
-                  aria-label={t.updateAutoCheck}
-                  className={autoCheckUpdate ? "ns-switch on" : "ns-switch"}
-                  disabled={isAutoCheckSaving}
-                  onClick={() => void applyAutoCheckUpdate(!autoCheckUpdate)}
-                >
-                  <span className="ns-switch-knob" />
-                </button>
-              </label>
-              <div className="update-info">
-                {isCheckingUpdate && <div className="update-status">{t.updateChecking}</div>}
-                {!isCheckingUpdate && updateInfo && updateInfo.hasUpdate && (
-                  <div className="update-available">
-                    <span>{fmt(t.updateNewVersion, { version: updateInfo.latestVersion })}</span>
-                    <button className="act-btn primary"
-                      onClick={() => openUrl("https://github.com/dacj4n/MacHunt/releases/latest")}
-                    >{t.updateDownload}</button>
-                  </div>
-                )}
-                {!isCheckingUpdate && updateInfo && !updateInfo.hasUpdate && updateInfo.latestVersion !== "" && (
-                  <div className="update-status">{t.updateNoUpdate}</div>
-                )}
-              </div>
-              <div className="form-row">
-                <button className="act-btn" disabled={isCheckingUpdate} onClick={() => void checkForUpdatesManually()}>
-                  {t.updateCheckNow}
-                </button>
-              </div>
-              {autoCheckStatus && <div className="status-msg">{autoCheckStatus}</div>}
-            </article>
-
-            {/* File Manager & Terminal Module */}
-            <article className="set-card">
-              <div className="set-card-header">
-                <div className="set-card-icon">⌘</div>
-                <div>
-                  <div className="set-card-title">{t.fileManagerTitle}</div>
-                  <div className="set-card-subtitle">{t.fileManagerDesc}</div>
-                </div>
-              </div>
-
-              <div className="rule-section">
-                <div className="rule-section-title">{t.defaultFolderAction}</div>
-                <div className="form-row">
-                  <CustomSelect
-                    triggerClassName="form-select"
-                    value={defaultFolderAction}
-                    options={[
-                      { value: "Finder", label: t.folderActionFinder },
-                      { value: "QSpace Pro", label: t.folderActionQSpace },
-                      ...(defaultFolderAction && !["Finder", "QSpace Pro"].includes(defaultFolderAction)
-                        ? [{
-                            value: defaultFolderAction,
-                            label: defaultFolderAction.includes("|") ? defaultFolderAction.split("|")[0] : defaultFolderAction,
-                          }]
-                        : []),
-                      { value: "__custom__", label: t.folderActionCustom },
-                    ]}
-                    onChange={async (val) => {
-                      if (val === "__custom__") {
-                        const appStr = await pickApp();
-                        if (appStr) {
-                          setDefaultFolderAction(appStr);
-                          setCustomFolderApp(appStr);
-                          void applyFileManagerSettings(appStr, defaultTerminalAction, appStr, customTerminalApp);
-                        }
-                      } else {
-                        setDefaultFolderAction(val);
-                        setCustomFolderApp("");
-                        void applyFileManagerSettings(val, defaultTerminalAction, "", customTerminalApp);
-                      }
-                    }}
-                    style={{ flex: 1 }}
-                  />
-                </div>
-              </div>
-
-              <div className="rule-section">
-                <div className="rule-section-title">{t.defaultTerminalAction}</div>
-                <div className="form-row">
-                  <CustomSelect
-                    triggerClassName="form-select"
-                    value={defaultTerminalAction}
-                    options={[
-                      { value: "Terminal", label: t.terminalActionTerminal },
-                      { value: "WezTerm", label: t.terminalActionWezTerm },
-                      { value: "iTerm", label: "iTerm2" },
-                      { value: "kitty", label: "Kitty" },
-                      { value: "Warp", label: "Warp" },
-                      ...(defaultTerminalAction && !["Terminal", "WezTerm", "iTerm", "kitty", "Warp"].includes(defaultTerminalAction)
-                        ? [{
-                            value: defaultTerminalAction,
-                            label: defaultTerminalAction.includes("|") ? defaultTerminalAction.split("|")[0] : defaultTerminalAction,
-                          }]
-                        : []),
-                      { value: "__custom__", label: t.terminalActionCustom },
-                    ]}
-                    onChange={async (val) => {
-                      if (val === "__custom__") {
-                        const appStr = await pickApp();
-                        if (appStr) {
-                          setDefaultTerminalAction(appStr);
-                          setCustomTerminalApp(appStr);
-                          void applyFileManagerSettings(defaultFolderAction, appStr, customFolderApp, appStr);
-                        }
-                      } else {
-                        setDefaultTerminalAction(val);
-                        setCustomTerminalApp("");
-                        void applyFileManagerSettings(defaultFolderAction, val, customFolderApp, "");
-                      }
-                    }}
-                    style={{ flex: 1 }}
-                  />
-                </div>
-              </div>
-            </article>
-
-            {/* Indexing Module */}
-            <article className="set-card">
-              <div className="set-card-header">
-                <div className="set-card-icon">⊞</div>
-                <div>
-                  <div className="set-card-title">{t.autoVacuumTitle}</div>
-                  <div className="set-card-subtitle">{t.autoVacuumDesc}</div>
-                </div>
-              </div>
-              <label className="toggle-card">
-                <div className="toggle-card-copy">
-                  <div className="toggle-card-title">{t.autoVacuumOn}</div>
-                  <div className="toggle-card-desc">{t.autoVacuumOnDesc}</div>
-                </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={autoVacuumOnRebuild}
-                  aria-label={t.autoVacuumOn}
-                  className={autoVacuumOnRebuild ? "ns-switch on" : "ns-switch"}
-                  disabled={isAutoVacuumSettingsSaving}
-                  onClick={() => void applyAutoVacuumSettings(!autoVacuumOnRebuild)}
-                >
-                  <span className="ns-switch-knob" />
-                </button>
-              </label>
-              {autoVacuumSettingsStatus && <div className="status-msg">{autoVacuumSettingsStatus}</div>}
-
-              <div className="rule-cols">
-              <div className="rule-section">
-                <div className="rule-section-title">{t.watchRootsTitle}</div>
-                <p className="set-card-desc">{t.watchRootsDesc}</p>
-                <div className="form-row">
-                  <input
-                    className="form-input"
-                    value={watchRootDraft}
-                    placeholder={t.watchRootsInputPlaceholder}
-                    disabled={isWatchRootSaving}
-                    autoComplete="off"
-                    autoCorrect="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    onChange={(event) => setWatchRootDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        void addWatchRoot();
-                      }
-                    }}
-                  />
-                  <button
-                    className="act-btn"
-                    disabled={isWatchRootSaving || isPickingPath}
-                    onClick={() => void pickWatchRoot()}
-                  >
-                    {t.choosePath}
-                  </button>
-                  <button
-                    className="act-btn"
-                    disabled={isWatchRootSaving || watchRootDraft.trim().length === 0}
-                    onClick={() => void addWatchRoot()}
-                  >
-                    {t.excludeAdd}
-                  </button>
-                </div>
-                {watchRoots.length === 0 ? (
-                  <div className="set-card-hint">{t.watchRootsEmptyHint}</div>
-                ) : (
-                  <div className="rule-list">
-                    {watchRoots.map((root) => (
-                      <div key={`watch-root-${root}`} className="rule-item">
-                        <span className="rule-tag">root</span>
-                        <span className="rule-value">{root}</span>
-                        <button
-                          className="act-btn"
-                          disabled={isWatchRootSaving}
-                          onClick={() => void removeWatchRoot(root)}
-                        >
-                          {t.removeRule}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {watchRootStatus && <div className="status-msg">{watchRootStatus}</div>}
-              </div>
-
-              <div className="rule-section">
-                <div className="rule-section-title">{t.excludeDirsTitle}</div>
-                <p className="set-card-desc">{t.excludeDirsDesc}</p>
-                <p className="set-card-hint">{t.excludeWildcardHint}</p>
-                <div className="form-row">
-                  <CustomSelect
-                    triggerClassName="form-select"
-                    value={excludeRuleType}
-                    disabled={isExcludeDirSaving}
-                    options={[
-                      { value: "exact", label: t.excludeRuleExact },
-                      { value: "pattern", label: t.excludeRulePattern },
-                    ]}
-                    onChange={(val) => setExcludeRuleType(val as ExcludeRuleType)}
-                    style={{ width: "auto", flexShrink: 0 }}
-                  />
-                </div>
-                <div className="form-row">
-                  <input
-                    className="form-input"
-                    value={excludeRuleDraft}
-                    placeholder={
-                      excludeRuleType === "exact"
-                        ? t.excludeRuleInputPlaceholderExact
-                        : t.excludeRuleInputPlaceholderPattern
-                    }
-                    disabled={isExcludeDirSaving}
-                    autoComplete="off"
-                    autoCorrect="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    onChange={(event) => setExcludeRuleDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        void addExcludeRule();
-                      }
-                    }}
-                  />
-                  {excludeRuleType === "exact" && (
-                    <button
-                      className="act-btn"
-                      disabled={isExcludeDirSaving || isPickingPath}
-                      onClick={() => void pickExcludeRulePath()}
-                    >
-                      {t.choosePath}
-                    </button>
-                  )}
-                  <button
-                    className="act-btn"
-                    disabled={isExcludeDirSaving || excludeRuleDraft.trim().length === 0}
-                    onClick={() => void addExcludeRule()}
-                  >
-                    {t.excludeAdd}
-                  </button>
-                </div>
-
-                <div className="rule-section">
-                  <div className="rule-section-title">{t.excludeExactListTitle}</div>
-                  {excludeExactDirs.length === 0 ? (
-                    <div className="set-card-hint">{t.excludeEmptyHint}</div>
-                  ) : (
-                    <div className="rule-list">
-                      {excludeExactDirs.map((rule) => (
-                        <div key={`exact-${rule}`} className="rule-item">
-                          <span className="rule-tag">{t.excludeRuleExact}</span>
-                          <span className="rule-value">{rule}</span>
-                          <button
-                            className="act-btn"
-                            disabled={isExcludeDirSaving}
-                            onClick={() => void removeExcludeRule("exact", rule)}
-                          >
-                            {t.removeRule}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="rule-section">
-                  <div className="rule-section-title">{t.excludePatternListTitle}</div>
-                  {excludePatternDirs.length === 0 ? (
-                    <div className="set-card-hint">{t.excludeEmptyHint}</div>
-                  ) : (
-                    <div className="rule-list">
-                      {excludePatternDirs.map((rule) => (
-                        <div key={`pattern-${rule}`} className="rule-item">
-                          <span className="rule-tag">{t.excludeRulePattern}</span>
-                          <span className="rule-value">{rule}</span>
-                          <button
-                            className="act-btn"
-                            disabled={isExcludeDirSaving}
-                            onClick={() => void removeExcludeRule("pattern", rule)}
-                          >
-                            {t.removeRule}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {excludeDirStatus && <div className="status-msg">{excludeDirStatus}</div>}
-              </div>
-              </div>
-            </article>
-
-          </div>
-        </div>
+        <SettingsView
+          t={t}
+          themeMode={themeMode} setThemeMode={setThemeMode}
+          resolvedTheme={resolvedTheme}
+          language={language} setLanguage={setLanguage}
+          windowToggleShortcut={windowToggleShortcut}
+          shortcutDraft={shortcutDraft} setShortcutDraft={setShortcutDraft}
+          shortcutStatus={shortcutStatus} setShortcutStatus={setShortcutStatus}
+          isShortcutSaving={isShortcutSaving}
+          applyWindowToggleShortcut={applyWindowToggleShortcut}
+          resetWindowToggleShortcut={resetWindowToggleShortcut}
+          launchAtLogin={launchAtLogin} silentStart={silentStart} showDockIcon={showDockIcon}
+          isLaunchSettingsSaving={isLaunchSettingsSaving} launchSettingsStatus={launchSettingsStatus}
+          applyLaunchSettings={applyLaunchSettings}
+          maxResults={maxResults} isMaxResultsSaving={isMaxResultsSaving} maxResultsStatus={maxResultsStatus}
+          applyMaxResults={applyMaxResults}
+          appVersion={appVersion}
+          autoCheckUpdate={autoCheckUpdate} isAutoCheckSaving={isAutoCheckSaving} autoCheckStatus={autoCheckStatus}
+          applyAutoCheckUpdate={applyAutoCheckUpdate}
+          isCheckingUpdate={isCheckingUpdate} updateInfo={updateInfo}
+          checkForUpdatesManually={checkForUpdatesManually}
+          openUrl={openUrl}
+          defaultFolderAction={defaultFolderAction} setDefaultFolderAction={setDefaultFolderAction}
+          defaultTerminalAction={defaultTerminalAction} setDefaultTerminalAction={setDefaultTerminalAction}
+          customFolderApp={customFolderApp} setCustomFolderApp={setCustomFolderApp}
+          customTerminalApp={customTerminalApp} setCustomTerminalApp={setCustomTerminalApp}
+          applyFileManagerSettings={applyFileManagerSettings}
+          pickApp={pickApp}
+          autoVacuumOnRebuild={autoVacuumOnRebuild}
+          isAutoVacuumSettingsSaving={isAutoVacuumSettingsSaving} autoVacuumSettingsStatus={autoVacuumSettingsStatus}
+          applyAutoVacuumSettings={applyAutoVacuumSettings}
+          watchRootDraft={watchRootDraft} setWatchRootDraft={setWatchRootDraft}
+          watchRoots={watchRoots} isWatchRootSaving={isWatchRootSaving} watchRootStatus={watchRootStatus}
+          addWatchRoot={addWatchRoot} removeWatchRoot={removeWatchRoot} pickWatchRoot={pickWatchRoot}
+          excludeRuleType={excludeRuleType} setExcludeRuleType={setExcludeRuleType}
+          excludeRuleDraft={excludeRuleDraft} setExcludeRuleDraft={setExcludeRuleDraft}
+          excludeExactDirs={excludeExactDirs} excludePatternDirs={excludePatternDirs}
+          excludeDirStatus={excludeDirStatus} isExcludeDirSaving={isExcludeDirSaving}
+          addExcludeRule={addExcludeRule} removeExcludeRule={removeExcludeRule}
+          pickExcludeRulePath={pickExcludeRulePath}
+          isPickingPath={isPickingPath}
+          handleScrollbarScroll={handleScrollbarScroll}
+        />
       )}
 
       {error && <aside className="error-banner">{error}</aside>}
 
       {contextMenu && (
-        <div
-          className="context-menu-layer"
-          onMouseDown={closeContextMenu}
-          onContextMenu={(event) => event.preventDefault()}
-        >
-          <div
-            className="context-menu"
-            style={{ left: contextMenu.x, top: contextMenu.y }}
-            onMouseDown={(event) => event.stopPropagation()}
-            onContextMenu={(event) => event.preventDefault()}
-          >
-            <button
-              className="context-menu-item"
-              onClick={() => void runContextAction(() => openResult(contextMenu.item.path))}
-            >
-              {t.menuOpen}
-            </button>
-
-            <div
-              className="context-submenu-wrap"
-              onMouseEnter={openOpenWithMenu}
-              onMouseLeave={scheduleCloseOpenWithMenu}
-            >
-              <button className="context-menu-item">
-                <span>{t.menuOpenWith}</span>
-                <span className="context-menu-arrow">›</span>
-              </button>
-              {openWithVisible && (
-                <div
-                  className="context-submenu"
-                  onMouseEnter={openOpenWithMenu}
-                  onMouseLeave={scheduleCloseOpenWithMenu}
-                >
-                  <button
-                    className="context-menu-item"
-                    onClick={() => void runContextAction(() => revealInFinder(contextMenu.item.path))}
-                  >
-                    {t.menuFinder}
-                  </button>
-                  <button
-                    className="context-menu-item"
-                    onClick={() => void runContextAction(() => openInQSpace(contextMenu.item.path))}
-                  >
-                    {t.menuQSpace}
-                  </button>
-                  <button
-                    className="context-menu-item"
-                    onClick={() => void runContextAction(() => openInTerminal(contextMenu.item.path))}
-                  >
-                    {t.menuTerminal}
-                  </button>
-                  <button
-                    className="context-menu-item"
-                    onClick={() => void runContextAction(() => openInWezTerm(contextMenu.item.path))}
-                  >
-                    {t.menuWezTerm}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="context-menu-sep" />
-
-            <button
-              className="context-menu-item"
-              onClick={() => void runContextAction(() => copyText(contextMenu.item.name))}
-            >
-              {t.menuCopyName}
-            </button>
-            <button
-              className="context-menu-item"
-              onClick={() => void runContextAction(() => copyText(contextMenu.item.path))}
-            >
-              {t.menuCopyPath}
-            </button>
-            <button
-              className="context-menu-item"
-              onClick={() =>
-                void runContextAction(() =>
-                  copySearchResults(contextMenu.multiSelection ? selectedPathsInOrder : [contextMenu.item.path])
-                )
-              }
-            >
-              {contextMenu.multiSelection ? t.menuCopyAllResults : t.menuCopyResult}
-            </button>
-            {contextMenu.multiSelection && (
-              <>
-                <button
-                  className="context-menu-item"
-                  onClick={() => void runContextAction(copyAllSelectedNames)}
-                >
-                  {t.menuCopyAllNames}
-                </button>
-                <button
-                  className="context-menu-item"
-                  onClick={() => void runContextAction(copyAllSelectedPaths)}
-                >
-                  {t.menuCopyAllPaths}
-                </button>
-              </>
-            )}
-            <div className="context-menu-sep" />
-            <button
-              className="context-menu-item"
-              onClick={() => void runContextAction(async () => {
-                const paths = contextMenu.multiSelection ? selectedPathsInOrder : [contextMenu.item.path];
-                for (const p of paths) {
-                  const target = contextMenu.multiSelection
-                    ? items.find((it) => it.path === p)
-                    : contextMenu.item;
-                  if (target) togglePin(target);
-                }
-                setSelectedItemPaths([]);
-                setSelectionAnchorPath(null);
-              })}
-            >
-              {isPinned(contextMenu.item.path) ? t.menuUnpin : t.menuPin}
-            </button>
-            <button
-              className="context-menu-item danger"
-              onClick={() => void runContextAction(async () => {
-                const paths = contextMenu.multiSelection ? selectedPathsInOrder : [contextMenu.item.path];
-                for (const p of paths) {
-                  await moveToTrash(p);
-                }
-              })}
-            >
-              {t.menuTrash}
-            </button>
-          </div>
-        </div>
+        <ContextMenu
+          contextMenu={contextMenu}
+          selectedPathsInOrder={selectedPathsInOrder}
+          items={items}
+          isPinned={isPinned}
+          openResult={openResult}
+          revealInFinder={revealInFinder}
+          openInQSpace={openInQSpace}
+          openInTerminal={openInTerminal}
+          openInWezTerm={openInWezTerm}
+          copyText={copyText}
+          copySearchResults={copySearchResults}
+          moveToTrash={moveToTrash}
+          togglePin={togglePin}
+          t={t}
+          closeContextMenu={closeContextMenu}
+          openOpenWithMenu={openOpenWithMenu}
+          scheduleCloseOpenWithMenu={scheduleCloseOpenWithMenu}
+          openWithVisible={openWithVisible}
+          setOpenWithVisible={setOpenWithVisible}
+          setSelectedItemPaths={setSelectedItemPaths}
+          setSelectionAnchorPath={setSelectionAnchorPath}
+        />
       )}
     </div>
   );
