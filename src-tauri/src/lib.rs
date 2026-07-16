@@ -65,6 +65,7 @@ struct GuiSettings {
     default_terminal_action: String,
     custom_folder_app: String,
     custom_terminal_app: String,
+    max_results: usize,
 }
 
 impl Default for GuiSettings {
@@ -83,6 +84,7 @@ impl Default for GuiSettings {
             default_terminal_action: "Terminal".to_string(),
             custom_folder_app: String::new(),
             custom_terminal_app: String::new(),
+            max_results: 500,
         }
     }
 }
@@ -182,6 +184,11 @@ fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         .map_err(|_| "Failed to access custom terminal app".to_string())?
         .clone();
 
+    let max_results = *state
+        .max_results
+        .lock()
+        .map_err(|_| "Failed to access max_results setting".to_string())?;
+
     Ok(GuiSettings {
         window_toggle_shortcut,
         launch_at_login,
@@ -196,6 +203,7 @@ fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         default_terminal_action,
         custom_folder_app,
         custom_terminal_app,
+        max_results,
     })
 }
 
@@ -216,6 +224,7 @@ struct AppState {
     default_terminal_action: Mutex<String>,
     custom_folder_app: Mutex<String>,
     custom_terminal_app: Mutex<String>,
+    max_results: Mutex<usize>,
     is_quitting: AtomicBool,
 }
 
@@ -261,6 +270,7 @@ impl AppState {
             default_terminal_action: Mutex::new(settings.default_terminal_action),
             custom_folder_app: Mutex::new(settings.custom_folder_app),
             custom_terminal_app: Mutex::new(settings.custom_terminal_app),
+            max_results: Mutex::new(settings.max_results),
             is_quitting: AtomicBool::new(false),
         }
     }
@@ -371,6 +381,12 @@ struct UpdateCheckResponse {
 #[serde(rename_all = "camelCase")]
 struct AutoCheckUpdateResponse {
     auto_check_update: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MaxResultsResponse {
+    max_results: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -1549,8 +1565,12 @@ async fn search(
     .map_err(|e| e.to_string())?;
 
     let total = items.len();
-    // Safety cap: never return more than 1000 items
-    items.truncate(1000);
+    // Safety cap: use user-configured max_results
+    let max_results = *state
+        .max_results
+        .lock()
+        .map_err(|_| "Failed to access max_results setting".to_string())?;
+    items.truncate(max_results);
 
     Ok(SearchResponse {
         items,
@@ -1945,6 +1965,36 @@ fn set_auto_check_update(
     Ok(AutoCheckUpdateResponse {
         auto_check_update,
     })
+}
+
+#[tauri::command]
+fn get_max_results(
+    state: tauri::State<'_, AppState>,
+) -> Result<MaxResultsResponse, String> {
+    let max_results = *state
+        .max_results
+        .lock()
+        .map_err(|_| "Failed to access max_results setting".to_string())?;
+    Ok(MaxResultsResponse { max_results })
+}
+
+#[tauri::command]
+fn set_max_results(
+    max_results: usize,
+    state: tauri::State<'_, AppState>,
+) -> Result<MaxResultsResponse, String> {
+    {
+        let mut guard = state
+            .max_results
+            .lock()
+            .map_err(|_| "Failed to access max_results setting".to_string())?;
+        *guard = max_results;
+    }
+
+    let settings = snapshot_gui_settings(&state)?;
+    save_gui_settings(&settings)?;
+
+    Ok(MaxResultsResponse { max_results })
 }
 
 #[tauri::command]
@@ -2448,6 +2498,8 @@ pub fn run() {
             set_auto_vacuum_settings,
             get_auto_check_update,
             set_auto_check_update,
+            get_max_results,
+            set_max_results,
             check_for_update,
             get_exclude_dir_settings,
             set_exclude_dir_settings,

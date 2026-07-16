@@ -173,6 +173,11 @@ const I18N = {
     autoVacuumSaved: "索引维护设置已保存",
     autoVacuumSaving: "正在保存索引维护设置...",
     autoVacuumSaveFailed: "保存索引维护设置失败",
+    maxResultsTitle: "搜索结果数量",
+    maxResultsDesc: "控制每次搜索最多返回的结果数量（50-10000）。",
+    maxResultsSaved: "结果数量设置已保存",
+    maxResultsSaving: "正在保存结果数量设置...",
+    maxResultsSaveFailed: "保存结果数量设置失败",
     excludeDirsTitle: "排除目录",
     excludeDirsDesc: "这些规则会在构建/重建索引时跳过匹配目录。支持完整目录和正则（同时兼容 * 通配符）。",
     excludeWildcardHint: "* 仅匹配单层目录，** 匹配所有层级。例如 /Volumes/* 只跳过一级，/Volumes/** 跳过全部。",
@@ -342,6 +347,11 @@ const I18N = {
     autoVacuumSaved: "Index maintenance setting saved",
     autoVacuumSaving: "Saving index maintenance setting...",
     autoVacuumSaveFailed: "Failed to save index maintenance setting",
+    maxResultsTitle: "Max Search Results",
+    maxResultsDesc: "Control the maximum number of results returned per search (50-10000).",
+    maxResultsSaved: "Max results setting saved",
+    maxResultsSaving: "Saving max results setting...",
+    maxResultsSaveFailed: "Failed to save max results setting",
     excludeDirsTitle: "Excluded Directories",
     excludeDirsDesc: "These rules are applied during build/rebuild to skip matching directories. Supports exact paths and regex (also accepts * wildcards).",
     excludeWildcardHint: "* matches only one directory level, ** matches all levels. e.g. /Volumes/* skips one level, /Volumes/** skips everything under.",
@@ -774,7 +784,8 @@ function buildSearchRequest(
   regexEnabled: boolean,
   fuzzyEnabled: boolean,
   sortKey: SortKey,
-  sortAscending: boolean
+  sortAscending: boolean,
+  limit: number
 ) {
   const includeFiles = tab !== "folders";
   const includeDirs = tab === "all" || tab === "folders";
@@ -789,7 +800,7 @@ function buildSearchRequest(
       pathPrefix: pathPrefix.trim() || null,
       includeFiles,
       includeDirs,
-      limit: 1000,
+      limit,
       extensions,
       sortKey,
       sortAscending,
@@ -1117,6 +1128,9 @@ function App() {
   const [isAutoCheckSaving, setIsAutoCheckSaving] = useState(false);
   const [autoCheckStatus, setAutoCheckStatus] = useState("");
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [maxResults, setMaxResults] = useState(500);
+  const [isMaxResultsSaving, setIsMaxResultsSaving] = useState(false);
+  const [maxResultsStatus, setMaxResultsStatus] = useState("");
   const [updateInfo, setUpdateInfo] = useState<{ hasUpdate: boolean; latestVersion: string } | null>(null);
   const [excludeRuleType, setExcludeRuleType] = useState<ExcludeRuleType>("exact");
   const [excludeRuleDraft, setExcludeRuleDraft] = useState("");
@@ -1725,6 +1739,19 @@ function App() {
     return () => { mounted = false; };
   }, []);
 
+  // Load max-results setting
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      try {
+        const settings = await invoke<{ maxResults: number }>("get_max_results");
+        if (mounted) setMaxResults(settings.maxResults);
+      } catch { /* keep default */ }
+    };
+    void load();
+    return () => { mounted = false; };
+  }, []);
+
   // Auto-check for updates on startup (after settings load)
   useEffect(() => {
     if (!autoCheckUpdate) return;
@@ -2192,7 +2219,7 @@ function App() {
       try {
         const response = await invoke<SearchResponse>(
           "search",
-          buildSearchRequest(needle, activeTab, pathPrefix, caseSensitive, regexEnabled, fuzzyEnabled, sortKey, sortAscending)
+          buildSearchRequest(needle, activeTab, pathPrefix, caseSensitive, regexEnabled, fuzzyEnabled, sortKey, sortAscending, maxResults)
         );
         if (cancelled) {
           return;
@@ -2224,7 +2251,7 @@ function App() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, pathPrefix, activeTab, regexEnabled, caseSensitive, fuzzyEnabled, sortKey, sortAscending, isIndexLoading]);
+  }, [query, pathPrefix, activeTab, regexEnabled, caseSensitive, fuzzyEnabled, sortKey, sortAscending, isIndexLoading, maxResults]);
 
   const runBuild = async (rebuild: boolean) => {
     if (isBuilding) {
@@ -2358,6 +2385,27 @@ function App() {
       setError(String(err));
     } finally {
       setIsAutoCheckSaving(false);
+    }
+  };
+
+  const applyMaxResults = async (nextMaxResults: number) => {
+    if (isMaxResultsSaving) return;
+    const clamped = Math.max(50, Math.min(10000, Math.round(nextMaxResults)));
+    setMaxResults(clamped);
+    setIsMaxResultsSaving(true);
+    setMaxResultsStatus(t.maxResultsSaving);
+    setError(null);
+    try {
+      const saved = await invoke<{ maxResults: number }>("set_max_results", {
+        maxResults: clamped
+      });
+      setMaxResults(saved.maxResults);
+      setMaxResultsStatus(t.maxResultsSaved);
+    } catch (err) {
+      setMaxResultsStatus(t.maxResultsSaveFailed);
+      setError(String(err));
+    } finally {
+      setIsMaxResultsSaving(false);
     }
   };
 
@@ -3810,6 +3858,37 @@ function App() {
                 </div>
                 {launchSettingsStatus && <div className="status-msg">{launchSettingsStatus}</div>}
               </div>
+            </article>
+
+            {/* Max Results Module */}
+            <article className="set-card">
+              <div className="set-card-header">
+                <div className="set-card-icon">☰</div>
+                <div>
+                  <div className="set-card-title">{t.maxResultsTitle}</div>
+                </div>
+              </div>
+              <div className="form-row">
+                <CustomSelect
+                  triggerClassName="form-select"
+                  value={String(maxResults)}
+                  disabled={isMaxResultsSaving}
+                  options={[
+                    { value: "500", label: "500" },
+                    { value: "1000", label: "1000" },
+                    { value: "2000", label: "2000" },
+                    { value: "5000", label: "5000" },
+                    { value: "10000", label: "10000" },
+                  ]}
+                  onChange={(val) => {
+                    const n = parseInt(val, 10);
+                    if (!isNaN(n)) {
+                      void applyMaxResults(n);
+                    }
+                  }}
+                />
+              </div>
+              {maxResultsStatus && <div className="status-msg">{maxResultsStatus}</div>}
             </article>
 
             {/* About Module */}
