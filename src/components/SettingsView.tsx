@@ -70,6 +70,11 @@ export interface SettingsViewProps {
   removeExcludeRule: (type: ExcludeRuleType, rule: string) => Promise<void>;
   pickExcludeRulePath: () => Promise<void>;
   isPickingPath: boolean;
+  runBuild: (rebuild: boolean) => Promise<void>;
+  isBuilding: boolean;
+  isWatchRunning: boolean;
+  isWatchPending: boolean;
+  toggleWatch: () => Promise<void>;
   handleScrollbarScroll: (e: React.UIEvent<HTMLElement>) => void;
 }
 
@@ -99,7 +104,7 @@ export function SettingsView(props: SettingsViewProps) {
     excludeRuleType, setExcludeRuleType, excludeRuleDraft, setExcludeRuleDraft,
     excludeExactDirs, excludePatternDirs, excludeDirStatus, isExcludeDirSaving,
     addExcludeRule, removeExcludeRule, pickExcludeRulePath,
-    isPickingPath, handleScrollbarScroll,
+    isPickingPath, runBuild, isBuilding, isWatchRunning, isWatchPending, toggleWatch, handleScrollbarScroll,
   } = props;
 
   const settingsThemeOptions: Array<{ mode: ThemeMode; title: string; description: string }> = [
@@ -498,6 +503,20 @@ export function SettingsView(props: SettingsViewProps) {
               <div className="set-card-subtitle">{t.autoVacuumDesc}</div>
             </div>
           </div>
+
+          <div className="form-row" style={{ marginBottom: 12 }}>
+            <button className="act-btn" onClick={() => void runBuild(false)} disabled={isBuilding}>
+              {t.build}
+            </button>
+            <button className="act-btn" onClick={() => void runBuild(true)} disabled={isBuilding}>
+              {t.rebuild}
+            </button>
+            <button className={isWatchRunning ? "act-btn danger" : "act-btn primary"} onClick={() => void toggleWatch()} disabled={isWatchPending}>
+              <span className={isWatchRunning ? "watch-dot on" : "watch-dot off"} />
+              {isWatchPending ? (isWatchRunning ? t.stopping : t.starting) : isWatchRunning ? t.stopWatch : t.startWatch}
+            </button>
+          </div>
+
           <label className="toggle-card">
             <div className="toggle-card-copy">
               <div className="toggle-card-title">{t.autoVacuumOn}</div>

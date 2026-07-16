@@ -117,7 +117,7 @@ pub fn register_window_toggle_shortcut<R: tauri::Runtime>(
         .map_err(|e| e.to_string())
 }
 
-/// Make the window movable by dragging any part of its background.
+/// Hide traffic light buttons and make the window movable by dragging its background.
 pub fn make_window_movable_by_background(app: &tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -132,6 +132,17 @@ pub fn make_window_movable_by_background(app: &tauri::AppHandle) -> Result<(), S
 
         unsafe {
             let ns_window: Retained<NSObject> = Retained::retain(ns_window_ptr as *mut _).unwrap();
+
+            // Hide traffic light buttons (close, minimize, zoom)
+            let _: () = msg_send![&ns_window, setTitlebarAppearsTransparent: true];
+            let close_btn: *mut NSObject = msg_send![&ns_window, standardWindowButton: 0u32]; // NSWindowCloseButton
+            let mini_btn: *mut NSObject = msg_send![&ns_window, standardWindowButton: 1u32]; // NSWindowMiniaturizeButton
+            let zoom_btn: *mut NSObject = msg_send![&ns_window, standardWindowButton: 2u32]; // NSWindowZoomButton
+            if !close_btn.is_null() { let _: () = msg_send![close_btn, setHidden: true]; }
+            if !mini_btn.is_null() { let _: () = msg_send![mini_btn, setHidden: true]; }
+            if !zoom_btn.is_null() { let _: () = msg_send![zoom_btn, setHidden: true]; }
+
+            // Make background draggable
             let _: () = msg_send![&ns_window, setMovableByWindowBackground: true];
         }
     }

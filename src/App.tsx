@@ -983,14 +983,6 @@ function App() {
             </button>
           </nav>
         </div>
-        <div className="header-right">
-          <button className="act-btn" onClick={() => void runBuild(false)} disabled={isBuilding}>{t.build}</button>
-          <button className="act-btn" onClick={() => void runBuild(true)} disabled={isBuilding}>{t.rebuild}</button>
-          <button className={isWatchRunning ? "act-btn danger" : "act-btn primary"} onClick={() => void toggleWatch()} disabled={isWatchPending}>
-            <span className={isWatchRunning ? "watch-dot on" : "watch-dot off"} />
-            {isWatchPending ? (isWatchRunning ? t.stopping : t.starting) : isWatchRunning ? t.stopWatch : t.startWatch}
-          </button>
-        </div>
       </header>
 
       {activeView === "search" ? (
@@ -1162,6 +1154,8 @@ function App() {
           addExcludeRule={addExcludeRule} removeExcludeRule={removeExcludeRule}
           pickExcludeRulePath={pickExcludeRulePath}
           isPickingPath={isPickingPath}
+          runBuild={runBuild} isBuilding={isBuilding}
+          isWatchRunning={isWatchRunning} isWatchPending={isWatchPending} toggleWatch={toggleWatch}
           handleScrollbarScroll={handleScrollbarScroll}
         />
       )}

@@ -226,7 +226,6 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 var(--sp-gutter);
-  padding-left: 88px;
   background: rgba(16, 19, 27, 0.85);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);

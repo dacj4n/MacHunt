@@ -212,7 +212,10 @@ bool activate_ignoring_other_apps(void) {
 
 bool deactivate_app(void) {
   if (g_previous_app != nil) {
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     [g_previous_app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+    #pragma clang diagnostic pop
     g_previous_app = nil;
   }
   return true;
