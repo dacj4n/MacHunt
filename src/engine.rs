@@ -363,8 +363,8 @@ impl Engine {
                 // ── New mounts → auto-index ──
                 let new_volumes: Vec<String> = current
                     .difference(&known)
+                    .filter(|&x| is_external(x))
                     .cloned()
-                    .filter(is_external)
                     .collect();
 
                 for vol_path in &new_volumes {
@@ -402,8 +402,8 @@ impl Engine {
                 // ── Unmounted volumes → delete index immediately ──
                 let removed_volumes: Vec<String> = known
                     .difference(&current)
+                    .filter(|&x| is_external(x))
                     .cloned()
-                    .filter(is_external)
                     .collect();
 
                 for vol_path in &removed_volumes {
