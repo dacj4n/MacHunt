@@ -1,12 +1,10 @@
 import { useState } from "react";
 import { CustomSelect } from "./CustomSelect";
-import type { Language, ThemeMode, ExcludeRuleType, FileManagerSettingsResponse } from "../types";
+import type { Language, ExcludeRuleType, FileManagerSettingsResponse } from "../types";
 import { displayShortcut, shortcutFromKeyboardEvent } from "../utils";
 
 export interface SettingsViewProps {
   t: Record<string, string>;
-  themeMode: ThemeMode;
-  setThemeMode: (v: ThemeMode) => void;
   language: Language;
   setLanguage: (v: Language) => void;
   windowToggleShortcut: string;
@@ -90,7 +88,7 @@ export interface SettingsViewProps {
 export function SettingsView(props: SettingsViewProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const {
-    t, themeMode, setThemeMode,
+    t,
     language, setLanguage,
     windowToggleShortcut, shortcutDraft, setShortcutDraft,
     shortcutStatus, setShortcutStatus, isShortcutSaving,
@@ -122,11 +120,6 @@ export function SettingsView(props: SettingsViewProps) {
     runBuild, isBuilding, isWatchRunning, isWatchPending, toggleWatch, handleScrollbarScroll,
   } = props;
 
-  const settingsThemeOptions: Array<{ mode: ThemeMode; title: string; description: string }> = [
-    { mode: "dark", title: t.themeDarkTitle, description: t.themeDarkDesc },
-    { mode: "light", title: t.themeLightTitle, description: t.themeLightDesc }
-  ];
-
   const settingsLanguageOptions: Array<{ code: Language; title: string; description: string }> = [
     { code: "zh", title: t.languageZhTitle, description: "界面使用中文。" },
     { code: "en", title: t.languageEnTitle, description: "Interface in English." }
@@ -142,24 +135,24 @@ export function SettingsView(props: SettingsViewProps) {
       </header>
 
       <div className="settings-grid">
-        {/* Appearance Module */}
+        {/* Language Module */}
         <article className="set-card">
           <div className="set-card-header">
             <div className="set-card-icon">◉</div>
             <div>
-              <div className="set-card-title">{t.themeModeTitle}</div>
-              <div className="set-card-subtitle">{t.themeCurrent}: {themeMode === "dark" ? t.themeDarkTitle : t.themeLightTitle}</div>
+              <div className="set-card-title">{t.languageTitle}</div>
+              <div className="set-card-subtitle">{language === "zh" ? "中文" : "English"}</div>
             </div>
           </div>
-          <div className="theme-cards">
-            {settingsThemeOptions.map((option) => (
+          <div className="lang-cards">
+            {settingsLanguageOptions.map((option) => (
               <div
-                key={option.mode}
-                className={themeMode === option.mode ? "tilt-card active" : "tilt-card"}
+                key={option.code}
+                className={language === option.code ? "tilt-card active" : "tilt-card"}
                 role="button"
                 tabIndex={0}
-                onClick={() => setThemeMode(option.mode)}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setThemeMode(option.mode); } }}
+                onClick={() => setLanguage(option.code)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setLanguage(option.code); } }}
                 onMouseMove={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect();
                   const x = ((e.clientX - rect.left) / rect.width - 0.5) * 8;
@@ -174,45 +167,10 @@ export function SettingsView(props: SettingsViewProps) {
                   e.currentTarget.style.setProperty("--tilt-y", "0deg");
                 }}
               >
-                <div className={`theme-preview theme-preview-${option.mode}`}>
-                  <div className="tp-bar"/><div className="tp-bar"/><div className="tp-bar"/>
-                </div>
                 <div className="tilt-card-label"><span className="dot"/>{option.title}</div>
                 <div className="tilt-card-desc">{option.description}</div>
               </div>
             ))}
-          </div>
-
-          <div className="rule-section">
-            <div className="rule-section-title">{t.languageTitle}</div>
-            <div className="lang-cards">
-              {settingsLanguageOptions.map((option) => (
-                <div
-                  key={option.code}
-                  className={language === option.code ? "tilt-card active" : "tilt-card"}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setLanguage(option.code)}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setLanguage(option.code); } }}
-                  onMouseMove={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = ((e.clientX - rect.left) / rect.width - 0.5) * 8;
-                    const y = ((e.clientY - rect.top) / rect.height - 0.5) * -8;
-                    e.currentTarget.style.setProperty("--tilt-x", `${x}deg`);
-                    e.currentTarget.style.setProperty("--tilt-y", `${y}deg`);
-                    e.currentTarget.style.setProperty("--glow-x", `${((e.clientX - rect.left) / rect.width) * 100}%`);
-                    e.currentTarget.style.setProperty("--glow-y", `${((e.clientY - rect.top) / rect.height) * 100}%`);
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.setProperty("--tilt-x", "0deg");
-                    e.currentTarget.style.setProperty("--tilt-y", "0deg");
-                  }}
-                >
-                  <div className="tilt-card-label"><span className="dot"/>{option.title}</div>
-                  <div className="tilt-card-desc">{option.description}</div>
-                </div>
-              ))}
-            </div>
           </div>
         </article>
 

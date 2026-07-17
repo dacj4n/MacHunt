@@ -1,7 +1,6 @@
 export type TabId = "all" | "files" | "folders" | "documents" | "images" | "media" | "code" | "archives";
 export type SortKey = "name" | "path" | "type" | "size" | "modified";
 export type ColumnKey = "name" | "path" | "type" | "size" | "modified";
-export type ThemeMode = "light" | "dark";
 export type ViewMode = "search" | "pinned" | "settings";
 export type VolumeEventType = { type: "mountDetected"; path: string; name: string }
   | { type: "indexComplete"; path: string; fileCount: number; totalIndexed: number }

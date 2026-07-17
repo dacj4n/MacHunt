@@ -6,7 +6,7 @@ import "./App.css";
 
 import { I18N } from "./i18n";
 import type {
-  TabId, SortKey, ColumnKey, ThemeMode, ViewMode, VolumeEventType,
+  TabId, SortKey, ColumnKey, ViewMode, VolumeEventType,
   Language, ExcludeRuleType, SearchResultItem, ContextMenuState,
   SearchResponse, InitResponse, BuildResponse, BuildEvent, WatchResponse,
   LaunchSettingsResponse, AutoVacuumSettingsResponse, ExcludeDirSettingsResponse,
@@ -15,13 +15,13 @@ import type {
 import {
   DEFAULT_WINDOW_TOGGLE_SHORTCUT, DEFAULT_COLUMN_WIDTHS, COLUMN_KEYS,
   EVENT_OPEN_SETTINGS, EVENT_FOCUS_SEARCH,
-  loadStoredTheme, detectDefaultLanguage,
+  detectDefaultLanguage,
   loadStoredRegexEnabled, loadStoredCaseSensitive, loadStoredFuzzyEnabled,
   loadPinnedItems, savePinnedItems, loadStoredColumnWidths,
   buildSearchRequest, displayShortcut, shortcutFromKeyboardEvent,
   fmt, isEditableTarget, blurActiveEditable, extensionOf, appForExt,
   COLUMN_WIDTHS_STORAGE_KEY, LANGUAGE_STORAGE_KEY, REGEX_ENABLED_STORAGE_KEY,
-  CASE_SENSITIVE_STORAGE_KEY, FUZZY_ENABLED_STORAGE_KEY, THEME_STORAGE_KEY,
+  CASE_SENSITIVE_STORAGE_KEY, FUZZY_ENABLED_STORAGE_KEY,
   PINNED_STORAGE_KEY,
   iconToken, iconGlyph, typeLabel, formatBytes, formatDate,
 } from "./utils";
@@ -35,7 +35,6 @@ const VISIBLE_BUFFER = 10;
 function App() {
   // ── core state ──
   const [activeView, setActiveView] = useState<ViewMode>("search");
-  const [themeMode, setThemeMode] = useState<ThemeMode>(loadStoredTheme);
   const [language, setLanguage] = useState<Language>(detectDefaultLanguage());
   const t = I18N[language];
 
@@ -730,14 +729,11 @@ function App() {
   }, [items]);
 
   useEffect(() => { const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY); if (stored === "zh" || stored === "en") setLanguage(stored); }, []);
-  useEffect(() => { localStorage.setItem(THEME_STORAGE_KEY, themeMode); }, [themeMode]);
   useEffect(() => { localStorage.setItem(REGEX_ENABLED_STORAGE_KEY, regexEnabled ? "1" : "0"); }, [regexEnabled]);
   useEffect(() => { localStorage.setItem(CASE_SENSITIVE_STORAGE_KEY, caseSensitive ? "1" : "0"); }, [caseSensitive]);
   useEffect(() => { localStorage.setItem(FUZZY_ENABLED_STORAGE_KEY, fuzzyEnabled ? "1" : "0"); }, [fuzzyEnabled]);
   useEffect(() => { localStorage.setItem(LANGUAGE_STORAGE_KEY, language); }, [language]);
   useEffect(() => { void invoke("set_menu_language", { language }); }, [language]);
-  useEffect(() => { document.documentElement.setAttribute("data-theme", themeMode); }, [themeMode]);
-  useEffect(() => { void invoke("set_window_appearance", { dark: themeMode === "dark" }); }, [themeMode]);
 
   useEffect(() => { if (isIndexLoading) closePathDropdown(); }, [isIndexLoading]);
 
@@ -1173,7 +1169,6 @@ function App() {
       ) : (
         <SettingsView
           t={t}
-          themeMode={themeMode} setThemeMode={setThemeMode}
           language={language} setLanguage={setLanguage}
           windowToggleShortcut={windowToggleShortcut}
           shortcutDraft={shortcutDraft} setShortcutDraft={setShortcutDraft}

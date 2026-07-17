@@ -1,4 +1,4 @@
-import type { ColumnKey, Language, SearchResultItem, SortKey, TabId, ThemeMode } from "./types";
+import type { ColumnKey, Language, SearchResultItem, SortKey, TabId } from "./types";
 
 // ── Constants ──
 export const DEFAULT_WINDOW_TOGGLE_SHORTCUT = "CmdOrCtrl+Shift+KeyD";
@@ -19,7 +19,6 @@ export const MIN_COLUMN_WIDTHS: Record<ColumnKey, number> = {
 };
 export const COLUMN_KEYS: ColumnKey[] = ["name", "path", "type", "size", "modified"];
 
-export const THEME_STORAGE_KEY = "machunt.theme.mode";
 export const LANGUAGE_STORAGE_KEY = "machunt.language";
 export const COLUMN_WIDTHS_STORAGE_KEY = "machunt.table.column.widths";
 export const LEGACY_SEARCH_MODE_STORAGE_KEY = "machunt.search.mode";
@@ -374,17 +373,6 @@ export function buildSearchRequest(
       sortAscending,
     }
   };
-}
-
-export function loadStoredTheme(): ThemeMode {
-  if (typeof window === "undefined") {
-    return "dark";
-  }
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-  if (stored === "light" || stored === "dark") {
-    return stored;
-  }
-  return "dark";
 }
 
 export function detectDefaultLanguage(): Language {
