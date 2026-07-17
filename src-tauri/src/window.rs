@@ -136,6 +136,12 @@ pub fn make_window_movable_by_background(app: &tauri::AppHandle) -> Result<(), S
         unsafe {
             let ns_window: Retained<NSObject> = Retained::retain(ns_window_ptr as *mut _).unwrap();
 
+            // Force DarkAqua appearance from the start (avoid flash on light mode systems)
+            let dark_appearance: *mut NSObject = msg_send![objc2::class!(NSAppearance), appearanceNamed: objc2_app_kit::NSAppearanceNameDarkAqua];
+            if !dark_appearance.is_null() {
+                let _: () = msg_send![&ns_window, setAppearance: &*dark_appearance];
+            }
+
             // Hide traffic light buttons
             let _: () = msg_send![&ns_window, setTitlebarAppearsTransparent: true];
             let close_btn: *mut NSObject = msg_send![&ns_window, standardWindowButton: 0u32];
