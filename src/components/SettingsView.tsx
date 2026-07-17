@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { CustomSelect } from "./CustomSelect";
 import type { Language, ThemeMode, ExcludeRuleType, FileManagerSettingsResponse } from "../types";
 import { displayShortcut, shortcutFromKeyboardEvent } from "../utils";
@@ -88,6 +89,7 @@ export interface SettingsViewProps {
 }
 
 export function SettingsView(props: SettingsViewProps) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const {
     t, themeMode, setThemeMode, resolvedTheme,
     language, setLanguage,
@@ -509,287 +511,302 @@ export function SettingsView(props: SettingsViewProps) {
           </div>
         </article>
 
-        {/* Indexing Module */}
-        <article className="set-card">
-          <div className="set-card-header">
+        {/* Advanced Features entry */}
+        <article className="set-card" style={{ cursor: "pointer" }} onClick={() => setShowAdvanced(true)}>
+          <div className="set-card-header" style={{ borderBottom: "none", marginBottom: 0, paddingBottom: 0 }}>
             <div className="set-card-icon">⊞</div>
-            <div>
-              <div className="set-card-title">{t.autoVacuumTitle}</div>
-              <div className="set-card-subtitle">{t.autoVacuumDesc}</div>
+            <div style={{ flex: 1 }}>
+              <div className="set-card-title">{t.advancedTitle}</div>
+              <div className="set-card-subtitle">{t.advancedDesc}</div>
             </div>
-          </div>
-
-          <div className="form-row" style={{ marginBottom: 12 }}>
-            <button className="act-btn" onClick={() => void runBuild(false)} disabled={isBuilding}>
-              {t.build}
-            </button>
-            <button className="act-btn" onClick={() => void runBuild(true)} disabled={isBuilding}>
-              {t.rebuild}
-            </button>
-            <button className={isWatchRunning ? "act-btn danger" : "act-btn primary"} onClick={() => void toggleWatch()} disabled={isWatchPending}>
-              <span className={isWatchRunning ? "watch-dot on" : "watch-dot off"} />
-              {isWatchPending ? (isWatchRunning ? t.stopping : t.starting) : isWatchRunning ? t.stopWatch : t.startWatch}
-            </button>
-          </div>
-
-          <label className="toggle-card">
-            <div className="toggle-card-copy">
-              <div className="toggle-card-title">{t.autoVacuumOn}</div>
-              <div className="toggle-card-desc">{t.autoVacuumOnDesc}</div>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={autoVacuumOnRebuild}
-              aria-label={t.autoVacuumOn}
-              className={autoVacuumOnRebuild ? "ns-switch on" : "ns-switch"}
-              disabled={isAutoVacuumSettingsSaving}
-              onClick={() => void applyAutoVacuumSettings(!autoVacuumOnRebuild)}
-            >
-              <span className="ns-switch-knob" />
-            </button>
-          </label>
-          {autoVacuumSettingsStatus && <div className="status-msg">{autoVacuumSettingsStatus}</div>}
-
-          <div className="rule-cols">
-          <div className="rule-section">
-            <div className="rule-section-title">{t.watchRootsTitle}</div>
-            <p className="set-card-desc">{t.watchRootsDesc}</p>
-            <div className="form-row">
-              <input
-                className="form-input"
-                value={watchRootDraft}
-                placeholder={t.watchRootsInputPlaceholder}
-                disabled={isWatchRootSaving}
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                onFocus={(e) => { const t = e.target; requestAnimationFrame(() => t.select()); }}
-                onChange={(event) => setWatchRootDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void addWatchRoot();
-                  }
-                }}
-              />
-              <button
-                className="act-btn"
-                disabled={isWatchRootSaving || isPickingPath}
-                onClick={() => void pickWatchRoot()}
-              >
-                {t.choosePath}
-              </button>
-              <button
-                className="act-btn"
-                disabled={isWatchRootSaving || watchRootDraft.trim().length === 0}
-                onClick={() => void addWatchRoot()}
-              >
-                {t.excludeAdd}
-              </button>
-            </div>
-            {watchRoots.length === 0 ? (
-              <div className="set-card-hint">{t.watchRootsEmptyHint}</div>
-            ) : (
-              <div className="rule-list">
-                {watchRoots.map((root) => (
-                  <div key={`watch-root-${root}`} className="rule-item">
-                    <span className="rule-tag">root</span>
-                    <span className="rule-value">{root}</span>
-                    <button
-                      className="act-btn"
-                      disabled={isWatchRootSaving}
-                      onClick={() => void removeWatchRoot(root)}
-                    >
-                      {t.removeRule}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {watchRootStatus && <div className="status-msg">{watchRootStatus}</div>}
-          </div>
-
-          <div className="rule-section">
-            <div className="rule-section-title">{t.excludeDirsTitle}</div>
-            <p className="set-card-desc">{t.excludeDirsDesc}</p>
-            <p className="set-card-hint">{t.excludeWildcardHint}</p>
-            <div className="form-row">
-              <CustomSelect
-                triggerClassName="form-select"
-                value={excludeRuleType}
-                disabled={isExcludeDirSaving}
-                options={[
-                  { value: "exact", label: t.excludeRuleExact },
-                  { value: "pattern", label: t.excludeRulePattern },
-                ]}
-                onChange={(val) => setExcludeRuleType(val as ExcludeRuleType)}
-                style={{ width: "auto", flexShrink: 0 }}
-              />
-            </div>
-            <div className="form-row">
-              <input
-                className="form-input"
-                value={excludeRuleDraft}
-                placeholder={
-                  excludeRuleType === "exact"
-                    ? t.excludeRuleInputPlaceholderExact
-                    : t.excludeRuleInputPlaceholderPattern
-                }
-                disabled={isExcludeDirSaving}
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                onFocus={(e) => { const t = e.target; requestAnimationFrame(() => t.select()); }}
-                onChange={(event) => setExcludeRuleDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void addExcludeRule();
-                  }
-                }}
-              />
-              {excludeRuleType === "exact" && (
-                <button
-                  className="act-btn"
-                  disabled={isExcludeDirSaving || isPickingPath}
-                  onClick={() => void pickExcludeRulePath()}
-                >
-                  {t.choosePath}
-                </button>
-              )}
-              <button
-                className="act-btn"
-                disabled={isExcludeDirSaving || excludeRuleDraft.trim().length === 0}
-                onClick={() => void addExcludeRule()}
-              >
-                {t.excludeAdd}
-              </button>
-            </div>
-
-            <div className="rule-section">
-              <div className="rule-section-title">{t.excludeExactListTitle}</div>
-              {excludeExactDirs.length === 0 ? (
-                <div className="set-card-hint">{t.excludeEmptyHint}</div>
-              ) : (
-                <div className="rule-list">
-                  {excludeExactDirs.map((rule) => (
-                    <div key={`exact-${rule}`} className="rule-item">
-                      <span className="rule-tag">{t.excludeRuleExact}</span>
-                      <span className="rule-value">{rule}</span>
-                      <button
-                        className="act-btn"
-                        disabled={isExcludeDirSaving}
-                        onClick={() => void removeExcludeRule("exact", rule)}
-                      >
-                        {t.removeRule}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="rule-section">
-              <div className="rule-section-title">{t.excludePatternListTitle}</div>
-              {excludePatternDirs.length === 0 ? (
-                <div className="set-card-hint">{t.excludeEmptyHint}</div>
-              ) : (
-                <div className="rule-list">
-                  {excludePatternDirs.map((rule) => (
-                    <div key={`pattern-${rule}`} className="rule-item">
-                      <span className="rule-tag">{t.excludeRulePattern}</span>
-                      <span className="rule-value">{rule}</span>
-                      <button
-                        className="act-btn"
-                        disabled={isExcludeDirSaving}
-                        onClick={() => void removeExcludeRule("pattern", rule)}
-                      >
-                        {t.removeRule}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {excludeDirStatus && <div className="status-msg">{excludeDirStatus}</div>}
-          </div>
-
-          <div className="rule-section">
-            <div className="rule-section-title">{t.excludeFilesTitle}</div>
-            <p className="set-card-desc">{t.excludeFilesDesc}</p>
-
-            <label className="toggle-card" style={{ marginBottom: 10 }}>
-              <div className="toggle-card-copy">
-                <div className="toggle-card-title">{t.excludeDotFilesLabel}</div>
-                <div className="toggle-card-desc">{t.excludeDotFilesDesc}</div>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={excludeDotFiles}
-                className={excludeDotFiles ? "ns-switch on" : "ns-switch"}
-                disabled={isExcludeFileSaving}
-                onClick={() => void toggleExcludeDotFiles(!excludeDotFiles)}
-              >
-                <span className="ns-switch-knob" />
-              </button>
-            </label>
-
-            <div className="rule-section-title" style={{ marginTop: 4 }}>{t.excludeFilePatternsTitle}</div>
-            <p className="set-card-desc">{t.excludeFilePatternsDesc}</p>
-            <div className="form-row">
-              <input
-                className="form-input"
-                value={excludeFilePatternDraft}
-                placeholder={t.excludeFilePatternInputPlaceholder}
-                disabled={isExcludeFileSaving}
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                onFocus={(e) => { const t = e.target; requestAnimationFrame(() => t.select()); }}
-                onChange={(event) => setExcludeFilePatternDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void addExcludeFilePattern();
-                  }
-                }}
-              />
-              <button
-                className="act-btn"
-                disabled={isExcludeFileSaving || excludeFilePatternDraft.trim().length === 0}
-                onClick={() => void addExcludeFilePattern()}
-              >
-                {t.excludeAdd}
-              </button>
-            </div>
-
-            {excludeFilePatterns.length > 0 && (
-              <div className="rule-list" style={{ marginTop: 8 }}>
-                {excludeFilePatterns.map((rule) => (
-                  <div key={`file-${rule}`} className="rule-item">
-                    <span className="rule-value">{rule}</span>
-                    <button
-                      className="act-btn"
-                      disabled={isExcludeFileSaving}
-                      onClick={() => void removeExcludeFilePattern(rule)}
-                    >
-                      {t.removeRule}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {excludeFileStatus && <div className="status-msg">{excludeFileStatus}</div>}
-          </div>
+            <span style={{ fontSize: "1.2rem", color: "var(--pn-outline)" }}>→</span>
           </div>
         </article>
+
+        {/* Advanced Features Modal */}
+        {showAdvanced && (
+          <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowAdvanced(false); }}>
+            <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3>{t.advancedTitle}</h3>
+                <button className="modal-close" onClick={() => setShowAdvanced(false)}>✕</button>
+              </div>
+              <div className="modal-body custom-scrollbar">
+
+                {/* Build & Watch controls */}
+                <div className="rule-section">
+                  <div className="rule-section-title">{t.indexControlTitle}</div>
+                  <div className="form-row" style={{ marginBottom: 12 }}>
+                    <button className="act-btn" onClick={() => void runBuild(false)} disabled={isBuilding}>
+                      {t.build}
+                    </button>
+                    <button className="act-btn" onClick={() => void runBuild(true)} disabled={isBuilding}>
+                      {t.rebuild}
+                    </button>
+                    <button className={isWatchRunning ? "act-btn danger" : "act-btn primary"} onClick={() => void toggleWatch()} disabled={isWatchPending}>
+                      <span className={isWatchRunning ? "watch-dot on" : "watch-dot off"} />
+                      {isWatchPending ? (isWatchRunning ? t.stopping : t.starting) : isWatchRunning ? t.stopWatch : t.startWatch}
+                    </button>
+                  </div>
+
+                  <label className="toggle-card">
+                    <div className="toggle-card-copy">
+                      <div className="toggle-card-title">{t.autoVacuumOn}</div>
+                      <div className="toggle-card-desc">{t.autoVacuumOnDesc}</div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={autoVacuumOnRebuild}
+                      aria-label={t.autoVacuumOn}
+                      className={autoVacuumOnRebuild ? "ns-switch on" : "ns-switch"}
+                      disabled={isAutoVacuumSettingsSaving}
+                      onClick={() => void applyAutoVacuumSettings(!autoVacuumOnRebuild)}
+                    >
+                      <span className="ns-switch-knob" />
+                    </button>
+                  </label>
+                  {autoVacuumSettingsStatus && <div className="status-msg">{autoVacuumSettingsStatus}</div>}
+                </div>
+
+                {/* Watch Roots */}
+                <div className="rule-section">
+                  <div className="rule-section-title">{t.watchRootsTitle}</div>
+                  <p className="set-card-desc">{t.watchRootsDesc}</p>
+                  <div className="form-row">
+                    <input
+                      className="form-input"
+                      value={watchRootDraft}
+                      placeholder={t.watchRootsInputPlaceholder}
+                      disabled={isWatchRootSaving}
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      onFocus={(e) => { const el = e.target; requestAnimationFrame(() => el.select()); }}
+                      onChange={(event) => setWatchRootDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void addWatchRoot();
+                        }
+                      }}
+                    />
+                    <button
+                      className="act-btn"
+                      disabled={isWatchRootSaving || isPickingPath}
+                      onClick={() => void pickWatchRoot()}
+                    >
+                      {t.choosePath}
+                    </button>
+                    <button
+                      className="act-btn"
+                      disabled={isWatchRootSaving || watchRootDraft.trim().length === 0}
+                      onClick={() => void addWatchRoot()}
+                    >
+                      {t.excludeAdd}
+                    </button>
+                  </div>
+                  {watchRoots.length > 0 && (
+                    <div className="rule-list">
+                      {watchRoots.map((root) => (
+                        <div key={`watch-root-${root}`} className="rule-item">
+                          <span className="rule-tag">root</span>
+                          <span className="rule-value">{root}</span>
+                          <button
+                            className="act-btn"
+                            disabled={isWatchRootSaving}
+                            onClick={() => void removeWatchRoot(root)}
+                          >
+                            {t.removeRule}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {watchRootStatus && <div className="status-msg">{watchRootStatus}</div>}
+                </div>
+
+                {/* Exclude Dirs */}
+                <div className="rule-section">
+                  <div className="rule-section-title">{t.excludeDirsTitle}</div>
+                  <p className="set-card-desc">{t.excludeDirsDesc}</p>
+                  <p className="set-card-hint">{t.excludeWildcardHint}</p>
+                  <div className="form-row">
+                    <CustomSelect
+                      triggerClassName="form-select"
+                      value={excludeRuleType}
+                      disabled={isExcludeDirSaving}
+                      options={[
+                        { value: "exact", label: t.excludeRuleExact },
+                        { value: "pattern", label: t.excludeRulePattern },
+                      ]}
+                      onChange={(val) => setExcludeRuleType(val as ExcludeRuleType)}
+                      style={{ width: "auto", flexShrink: 0 }}
+                    />
+                  </div>
+                  <div className="form-row">
+                    <input
+                      className="form-input"
+                      value={excludeRuleDraft}
+                      placeholder={
+                        excludeRuleType === "exact"
+                          ? t.excludeRuleInputPlaceholderExact
+                          : t.excludeRuleInputPlaceholderPattern
+                      }
+                      disabled={isExcludeDirSaving}
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      onFocus={(e) => { const el = e.target; requestAnimationFrame(() => el.select()); }}
+                      onChange={(event) => setExcludeRuleDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void addExcludeRule();
+                        }
+                      }}
+                    />
+                    {excludeRuleType === "exact" && (
+                      <button
+                        className="act-btn"
+                        disabled={isExcludeDirSaving || isPickingPath}
+                        onClick={() => void pickExcludeRulePath()}
+                      >
+                        {t.choosePath}
+                      </button>
+                    )}
+                    <button
+                      className="act-btn"
+                      disabled={isExcludeDirSaving || excludeRuleDraft.trim().length === 0}
+                      onClick={() => void addExcludeRule()}
+                    >
+                      {t.excludeAdd}
+                    </button>
+                  </div>
+
+                  {excludeExactDirs.length > 0 && (
+                    <div className="rule-section">
+                      <div className="rule-section-title">{t.excludeExactListTitle}</div>
+                      <div className="rule-list">
+                        {excludeExactDirs.map((rule) => (
+                          <div key={`exact-${rule}`} className="rule-item">
+                            <span className="rule-tag">{t.excludeRuleExact}</span>
+                            <span className="rule-value">{rule}</span>
+                            <button
+                              className="act-btn"
+                              disabled={isExcludeDirSaving}
+                              onClick={() => void removeExcludeRule("exact", rule)}
+                            >
+                              {t.removeRule}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {excludePatternDirs.length > 0 && (
+                    <div className="rule-section">
+                      <div className="rule-section-title">{t.excludePatternListTitle}</div>
+                      <div className="rule-list">
+                        {excludePatternDirs.map((rule) => (
+                          <div key={`pattern-${rule}`} className="rule-item">
+                            <span className="rule-tag">{t.excludeRulePattern}</span>
+                            <span className="rule-value">{rule}</span>
+                            <button
+                              className="act-btn"
+                              disabled={isExcludeDirSaving}
+                              onClick={() => void removeExcludeRule("pattern", rule)}
+                            >
+                              {t.removeRule}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {excludeDirStatus && <div className="status-msg">{excludeDirStatus}</div>}
+                </div>
+
+                {/* Exclude Files */}
+                <div className="rule-section">
+                  <div className="rule-section-title">{t.excludeFilesTitle}</div>
+                  <p className="set-card-desc">{t.excludeFilesDesc}</p>
+
+                  <label className="toggle-card" style={{ marginBottom: 10 }}>
+                    <div className="toggle-card-copy">
+                      <div className="toggle-card-title">{t.excludeDotFilesLabel}</div>
+                      <div className="toggle-card-desc">{t.excludeDotFilesDesc}</div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={excludeDotFiles}
+                      className={excludeDotFiles ? "ns-switch on" : "ns-switch"}
+                      disabled={isExcludeFileSaving}
+                      onClick={() => void toggleExcludeDotFiles(!excludeDotFiles)}
+                    >
+                      <span className="ns-switch-knob" />
+                    </button>
+                  </label>
+
+                  <div className="rule-section-title" style={{ marginTop: 4 }}>{t.excludeFilePatternsTitle}</div>
+                  <p className="set-card-desc">{t.excludeFilePatternsDesc}</p>
+                  <div className="form-row">
+                    <input
+                      className="form-input"
+                      value={excludeFilePatternDraft}
+                      placeholder={t.excludeFilePatternInputPlaceholder}
+                      disabled={isExcludeFileSaving}
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      onFocus={(e) => { const el = e.target; requestAnimationFrame(() => el.select()); }}
+                      onChange={(event) => setExcludeFilePatternDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void addExcludeFilePattern();
+                        }
+                      }}
+                    />
+                    <button
+                      className="act-btn"
+                      disabled={isExcludeFileSaving || excludeFilePatternDraft.trim().length === 0}
+                      onClick={() => void addExcludeFilePattern()}
+                    >
+                      {t.excludeAdd}
+                    </button>
+                  </div>
+
+                  {excludeFilePatterns.length > 0 && (
+                    <div className="rule-list" style={{ marginTop: 8 }}>
+                      {excludeFilePatterns.map((rule) => (
+                        <div key={`file-${rule}`} className="rule-item">
+                          <span className="rule-value">{rule}</span>
+                          <button
+                            className="act-btn"
+                            disabled={isExcludeFileSaving}
+                            onClick={() => void removeExcludeFilePattern(rule)}
+                          >
+                            {t.removeRule}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {excludeFileStatus && <div className="status-msg">{excludeFileStatus}</div>}
+                </div>
+
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>
