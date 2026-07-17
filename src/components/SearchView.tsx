@@ -333,11 +333,11 @@ export function SearchView(props: SearchViewProps) {
               <div className="filter-popover" ref={timePopoverRef} onClick={(e) => e.stopPropagation()}>
                 <div className="cal-header">
                   <button className="cal-nav" onClick={() => { if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }}>‹</button>
-                  <span className="cal-title">{calYear}年 {calMonth + 1}月</span>
+                  <span className="cal-title">{fmt(t.calYearMonth, { year: calYear, month: calMonth + 1 })}</span>
                   <button className="cal-nav" onClick={() => { if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }}>›</button>
                 </div>
                 <div className="cal-weekdays">
-                  {["日","一","二","三","四","五","六"].map(d => <span key={d} className="cal-wd">{d}</span>)}
+                  {t.calWeekdays.split(",").map((d: string) => <span key={d} className="cal-wd">{d}</span>)}
                 </div>
                 <div className="cal-grid">
                   {(() => {
@@ -373,15 +373,15 @@ export function SearchView(props: SearchViewProps) {
                   })()}
                 </div>
                 <div className="filter-popover-row" style={{ marginTop: 8 }}>
-                  <label style={{ fontSize: "0.8rem" }}>从</label>
+                  <label style={{ fontSize: "0.8rem" }}>{t.calFrom}</label>
                   <input className="filter-input" readOnly value={calFrom} style={{ fontSize: "0.85rem" }} />
-                  <label style={{ fontSize: "0.8rem", width: 24 }}>到</label>
+                  <label style={{ fontSize: "0.8rem", width: 24 }}>{t.calTo}</label>
                   <input className="filter-input" readOnly value={calTo} style={{ fontSize: "0.85rem" }} />
                 </div>
                 <div className="filter-popover-actions">
                   <button className="act-btn cancel" onClick={() => {
                     setCalFrom(""); setCalTo(""); setCalSelecting("from");
-                  }}>清除</button>
+                  }}>{t.calClear}</button>
                   <button className="act-btn" onClick={() => {
                     customTimeFromRef.current = calFrom ? new Date(calFrom).getTime() : 0;
                     customTimeToRef.current = calTo ? new Date(calTo).getTime() + 86399999 : 0;
@@ -428,7 +428,7 @@ export function SearchView(props: SearchViewProps) {
                     value={customSizeMax} onChange={(e) => setCustomSizeMaxTemp(e.target.value)} />
                 </div>
                 <div className="filter-popover-row">
-                  <label>单位</label>
+                  <label>{t.sizeUnit}</label>
                   <CustomSelect
                     value={customSizeUnit}
                     options={[
