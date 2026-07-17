@@ -1835,6 +1835,8 @@ body {
   color: var(--pn-on-surface);
   outline: none;
   cursor: text !important;
+  -webkit-user-select: text;
+  user-select: text;
   box-shadow: var(--shadow-inset-dark), var(--shadow-inset-light);
   transition: box-shadow var(--ease);
 }

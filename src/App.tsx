@@ -997,8 +997,8 @@ function App() {
         if (key === "f") { event.preventDefault(); setActiveView("search"); searchInputRef.current?.focus(); searchInputRef.current?.select(); return; }
       }
       if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "a") {
-        if ((activeView !== "search" && activeView !== "pinned") || contextMenu) { if (activeView === "settings" || !isEditableTarget(event.target)) event.preventDefault(); return; }
         if (isEditableTarget(event.target)) return;
+        if ((activeView !== "search" && activeView !== "pinned") || contextMenu) { event.preventDefault(); return; }
         event.preventDefault();
         const source = activeView === "pinned" ? pinnedItems : itemsRef.current;
         setSelectedItemPaths(source.map((item) => item.path)); return;

@@ -565,6 +565,7 @@ export function SettingsView(props: SettingsViewProps) {
                 autoCorrect="off"
                 autoCapitalize="off"
                 spellCheck={false}
+                onFocus={(e) => { const t = e.target; requestAnimationFrame(() => t.select()); }}
                 onChange={(event) => setWatchRootDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
@@ -641,6 +642,7 @@ export function SettingsView(props: SettingsViewProps) {
                 autoCorrect="off"
                 autoCapitalize="off"
                 spellCheck={false}
+                onFocus={(e) => { const t = e.target; requestAnimationFrame(() => t.select()); }}
                 onChange={(event) => setExcludeRuleDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
@@ -749,6 +751,7 @@ export function SettingsView(props: SettingsViewProps) {
                 autoCorrect="off"
                 autoCapitalize="off"
                 spellCheck={false}
+                onFocus={(e) => { const t = e.target; requestAnimationFrame(() => t.select()); }}
                 onChange={(event) => setExcludeFilePatternDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
