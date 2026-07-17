@@ -734,6 +734,7 @@ function App() {
   useEffect(() => { localStorage.setItem(FUZZY_ENABLED_STORAGE_KEY, fuzzyEnabled ? "1" : "0"); }, [fuzzyEnabled]);
   useEffect(() => { localStorage.setItem(LANGUAGE_STORAGE_KEY, language); }, [language]);
   useEffect(() => { void invoke("set_menu_language", { language }); }, [language]);
+  useEffect(() => { void invoke("set_window_appearance", { dark: true }); }, []);
 
   useEffect(() => { if (isIndexLoading) closePathDropdown(); }, [isIndexLoading]);
 
