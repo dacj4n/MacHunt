@@ -135,6 +135,7 @@ pub fn run() {
             commands::list_app_groups,
             commands::group_results_by_app,
             window::set_window_appearance,
+            window::start_dragging,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Tauri application");

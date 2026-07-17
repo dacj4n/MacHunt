@@ -142,8 +142,7 @@ pub fn make_window_movable_by_background(app: &tauri::AppHandle) -> Result<(), S
             if !mini_btn.is_null() { let _: () = msg_send![mini_btn, setHidden: true]; }
             if !zoom_btn.is_null() { let _: () = msg_send![zoom_btn, setHidden: true]; }
 
-            // Make background draggable
-            let _: () = msg_send![&ns_window, setMovableByWindowBackground: true];
+
         }
     }
     #[cfg(not(target_os = "macos"))]
@@ -189,4 +188,13 @@ pub fn set_window_appearance(app: tauri::AppHandle, dark: bool) -> Result<(), St
         let _ = (app, dark);
     }
     Ok(())
+}
+
+/// Start dragging the window. Call from header mousedown (excluding inputs/buttons).
+#[tauri::command]
+pub fn start_dragging(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found".to_string())?;
+    window.start_dragging().map_err(|e| e.to_string())
 }

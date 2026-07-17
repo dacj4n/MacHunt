@@ -992,7 +992,19 @@ function App() {
   // ── render ──
   return (
     <div className="app-shell">
-      <header className="app-header">
+      <header
+        className="app-header"
+        onMouseDown={(e) => {
+          const target = e.target as HTMLElement;
+          if (target.tagName === "INPUT" || target.tagName === "BUTTON" || target.closest("button")) return;
+          // Defer drag start to mouse move to avoid teleport on shortcut activation
+          const onMove = () => {
+            window.removeEventListener("mousemove", onMove);
+            void invoke("start_dragging");
+          };
+          window.addEventListener("mousemove", onMove, { once: true });
+        }}
+      >
         <div className="header-left">
           <div className="logo-wrap">
             <span className="logo-icon">⚡</span>
