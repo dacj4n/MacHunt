@@ -45,17 +45,17 @@ MacHunt scans your entire filesystem into a local SQLite FTS5 index. CLI searche
 <thead>
 <tr>
 <th width="50%" align="center">Quick Look Preview</th>
-<th width="50%" align="center">Path Filter & Context Menu</th>
+<th width="50%" align="center">Settings</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/quicklook.png"><img src="./screenshots/quicklook.png" alt="Quick Look" width="100%" style="max-width: 100%;"></a></td>
-<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/context-menu.png"><img src="./screenshots/context-menu.png" alt="Context Menu" width="100%" style="max-width: 100%;"></a></td>
+<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/settings.png"><img src="./screenshots/settings.png" alt="Settings" width="100%" style="max-width: 100%;"></a></td>
 </tr>
 <tr>
 <td align="center"><strong>Space-triggered native Quick Look</strong></td>
-<td align="center"><strong>Finder picker, right-click actions</strong></td>
+<td align="center"><strong>Settings</strong></td>
 </tr>
 </tbody>
 </table>

@@ -45,17 +45,17 @@ MacHunt 将你的整个文件系统扫描到本地 SQLite FTS5 索引中。CLI �
 <thead>
 <tr>
 <th width="50%" align="center">Quick Look 预览</th>
-<th width="50%" align="center">路径过滤与右键菜单</th>
+<th width="50%" align="center">设置</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/quicklook.png"><img src="./screenshots/quicklook.png" alt="Quick Look" width="100%" style="max-width: 100%;"></a></td>
-<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/context-menu.png"><img src="./screenshots/context-menu.png" alt="右键菜单" width="100%" style="max-width: 100%;"></a></td>
+<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/settings.png"><img src="./screenshots/settings.png" alt="设置" width="100%" style="max-width: 100%;"></a></td>
 </tr>
 <tr>
 <td align="center"><strong>空格触发原生 Quick Look，支持多选</strong></td>
-<td align="center"><strong>Finder 选取、右键操作</strong></td>
+<td align="center"><strong>设置</strong></td>
 </tr>
 </tbody>
 </table>
