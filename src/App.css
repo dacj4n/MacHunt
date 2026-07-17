@@ -745,11 +745,6 @@ body {
 }
 
 .custom-select-panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  right: 0;
-  z-index: 180;
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: var(--r-lg);
   background: var(--pn-surface-container);

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export function CustomSelect<T extends string>({
   value,
@@ -18,6 +19,7 @@ export function CustomSelect<T extends string>({
   style?: React.CSSProperties;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({});
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -35,6 +37,31 @@ export function CustomSelect<T extends string>({
     };
     document.addEventListener("mousedown", handleMouseDown);
     return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, [isOpen]);
+
+  // Calculate panel position relative to viewport
+  const updatePosition = () => {
+    if (!triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    setPanelStyle({
+      position: "fixed",
+      top: rect.bottom + 8,
+      left: rect.left,
+      width: rect.width,
+      zIndex: 9999,
+    });
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      updatePosition();
+      window.addEventListener("resize", updatePosition);
+      window.addEventListener("scroll", updatePosition, true);
+      return () => {
+        window.removeEventListener("resize", updatePosition);
+        window.removeEventListener("scroll", updatePosition, true);
+      };
+    }
   }, [isOpen]);
 
   const selectedLabel =
@@ -55,8 +82,8 @@ export function CustomSelect<T extends string>({
       >
         {selectedLabel}
       </button>
-      {isOpen && !disabled && (
-        <div className="custom-select-panel" ref={panelRef}>
+      {isOpen && !disabled && createPortal(
+        <div className="custom-select-panel" ref={panelRef} style={panelStyle}>
           {options.map((opt) => (
             <button
               key={opt.value}
@@ -73,7 +100,8 @@ export function CustomSelect<T extends string>({
               <span>{opt.label}</span>
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
