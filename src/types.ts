@@ -65,6 +65,11 @@ export interface ExcludeDirSettingsResponse {
   patternDirs: string[];
 }
 
+export interface ExcludeFileSettingsResponse {
+  excludeDotFiles: boolean;
+  filePatterns: string[];
+}
+
 export interface WatchRootsSettingsResponse {
   roots: string[];
 }

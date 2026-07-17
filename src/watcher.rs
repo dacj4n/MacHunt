@@ -1,5 +1,5 @@
 use crate::db::Db;
-use crate::filters::{is_excluded, ExcludeRules};
+use crate::filters::{is_excluded, is_file_excluded, ExcludeRules, FileExcludeRules};
 use crate::utils::{should_skip_path, Logger};
 use core_foundation_sys::runloop::{
     CFRunLoopGetCurrent, CFRunLoopRef, CFRunLoopRun, CFRunLoopStop,
@@ -99,6 +99,7 @@ struct WatchContext {
     last_event_id: Arc<AtomicU64>,
     include_dirs: bool,
     exclude_rules: Arc<ExcludeRules>,
+    file_exclude_rules: Arc<FileExcludeRules>,
     history_done: std::sync::atomic::AtomicBool,
 }
 
@@ -124,10 +125,14 @@ fn upsert_file(ctx: &WatchContext, path: &Path) {
     if should_skip_path(path) {
         return;
     }
-    if is_excluded(path, path.is_dir(), &ctx.exclude_rules) {
+    let is_dir = path.is_dir();
+    if is_excluded(path, is_dir, &ctx.exclude_rules) {
         return;
     }
-    if !ctx.include_dirs && path.is_dir() {
+    if is_file_excluded(path, is_dir, &ctx.file_exclude_rules) {
+        return;
+    }
+    if !ctx.include_dirs && is_dir {
         return;
     }
     let file_name_lower = match path.file_name().and_then(|n| n.to_str()) {
@@ -314,6 +319,7 @@ pub fn start_watch(
     since_event_id: Option<u64>,
     watch_roots: Vec<String>,
     exclude_rules: Arc<ExcludeRules>,
+    file_exclude_rules: Arc<FileExcludeRules>,
 ) {
     {
         let mut runtime = lock_watch_runtime();
@@ -362,6 +368,7 @@ pub fn start_watch(
             last_event_id,
             include_dirs,
             exclude_rules,
+            file_exclude_rules,
             history_done: std::sync::atomic::AtomicBool::new(false),
         });
         let ctx_ptr = Box::into_raw(ctx);

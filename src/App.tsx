@@ -10,7 +10,7 @@ import type {
   Language, ExcludeRuleType, SearchResultItem, ContextMenuState,
   SearchResponse, InitResponse, BuildResponse, BuildEvent, WatchResponse,
   LaunchSettingsResponse, AutoVacuumSettingsResponse, ExcludeDirSettingsResponse,
-  WatchRootsSettingsResponse, FileManagerSettingsResponse,
+  ExcludeFileSettingsResponse, WatchRootsSettingsResponse, FileManagerSettingsResponse,
 } from "./types";
 import {
   DEFAULT_WINDOW_TOGGLE_SHORTCUT, DEFAULT_COLUMN_WIDTHS, COLUMN_KEYS,
@@ -78,6 +78,13 @@ function App() {
   const [excludePatternDirs, setExcludePatternDirs] = useState<string[]>([]);
   const [excludeDirStatus, setExcludeDirStatus] = useState("");
   const [isExcludeDirSaving, setIsExcludeDirSaving] = useState(false);
+
+  // ── exclude files ──
+  const [excludeDotFiles, setExcludeDotFiles] = useState(false);
+  const [excludeFilePatterns, setExcludeFilePatterns] = useState<string[]>([]);
+  const [excludeFilePatternDraft, setExcludeFilePatternDraft] = useState("");
+  const [excludeFileStatus, setExcludeFileStatus] = useState("");
+  const [isExcludeFileSaving, setIsExcludeFileSaving] = useState(false);
 
   // ── watch roots ──
   const [watchRootDraft, setWatchRootDraft] = useState("");
@@ -590,6 +597,25 @@ function App() {
     if (type === "exact") await applyExcludeDirSettings(excludeExactDirs.filter((r) => r !== rule), excludePatternDirs);
     else await applyExcludeDirSettings(excludeExactDirs, excludePatternDirs.filter((r) => r !== rule));
   };
+  // ── exclude file settings ──
+  const applyExcludeFileSettings = async (dotFiles: boolean, patterns: string[]) => {
+    if (isExcludeFileSaving) return;
+    setIsExcludeFileSaving(true); setExcludeFileStatus(""); setError(null);
+    try {
+      const saved = await invoke<ExcludeFileSettingsResponse>("set_exclude_file_settings", { excludeDotFiles: dotFiles, filePatterns: patterns });
+      setExcludeDotFiles(saved.excludeDotFiles); setExcludeFilePatterns(saved.filePatterns); setExcludeFileStatus(t.excludeFileSaved);
+    } catch (err) { setExcludeFileStatus(t.excludeFileSaveFailed); setError(String(err)); }
+    finally { setIsExcludeFileSaving(false); }
+  };
+  const toggleExcludeDotFiles = async (val: boolean) => { await applyExcludeFileSettings(val, excludeFilePatterns); };
+  const addExcludeFilePattern = async () => {
+    const pattern = excludeFilePatternDraft.trim(); if (!pattern) return;
+    await applyExcludeFileSettings(excludeDotFiles, [...excludeFilePatterns, pattern]);
+    setExcludeFilePatternDraft("");
+  };
+  const removeExcludeFilePattern = async (pattern: string) => {
+    await applyExcludeFileSettings(excludeDotFiles, excludeFilePatterns.filter((r) => r !== pattern));
+  };
   const applyWatchRoots = async (nextRoots: string[]) => {
     if (isWatchRootSaving) return;
     setIsWatchRootSaving(true); setWatchRootStatus(""); setError(null);
@@ -771,6 +797,10 @@ function App() {
   }, []);
   useEffect(() => {
     let m = true; const load = async () => { try { const s = await invoke<ExcludeDirSettingsResponse>("get_exclude_dir_settings"); if (m) { setExcludeExactDirs(s.exactDirs); setExcludePatternDirs(s.patternDirs); } } catch (e) { if (m) setError(String(e)); } };
+    void load(); return () => { m = false; };
+  }, []);
+  useEffect(() => {
+    let m = true; const load = async () => { try { const s = await invoke<ExcludeFileSettingsResponse>("get_exclude_file_settings"); if (m) { setExcludeDotFiles(s.excludeDotFiles); setExcludeFilePatterns(s.filePatterns); } } catch (e) { if (m) setError(String(e)); } };
     void load(); return () => { m = false; };
   }, []);
   useEffect(() => {
@@ -1193,6 +1223,11 @@ function App() {
           addExcludeRule={addExcludeRule} removeExcludeRule={removeExcludeRule}
           pickExcludeRulePath={pickExcludeRulePath}
           isPickingPath={isPickingPath}
+          excludeDotFiles={excludeDotFiles} toggleExcludeDotFiles={toggleExcludeDotFiles}
+          excludeFilePatterns={excludeFilePatterns}
+          excludeFilePatternDraft={excludeFilePatternDraft} setExcludeFilePatternDraft={setExcludeFilePatternDraft}
+          excludeFileStatus={excludeFileStatus} isExcludeFileSaving={isExcludeFileSaving}
+          addExcludeFilePattern={addExcludeFilePattern} removeExcludeFilePattern={removeExcludeFilePattern}
           runBuild={runBuild} isBuilding={isBuilding}
           isWatchRunning={isWatchRunning} isWatchPending={isWatchPending} toggleWatch={toggleWatch}
           handleScrollbarScroll={handleScrollbarScroll}

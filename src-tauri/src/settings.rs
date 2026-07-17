@@ -26,6 +26,10 @@ fn default_exclude_pattern_dirs() -> Vec<String> {
     ]
 }
 
+fn default_exclude_file_patterns() -> Vec<String> {
+    vec![".DS_Store".to_string()]
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct GuiSettings {
@@ -39,6 +43,9 @@ pub struct GuiSettings {
     pub auto_check_update: bool,
     pub exclude_exact_dirs: Vec<String>,
     pub exclude_pattern_dirs: Vec<String>,
+    pub exclude_dot_files: bool,
+    #[serde(default = "default_exclude_file_patterns")]
+    pub exclude_file_patterns: Vec<String>,
     pub watch_roots: Vec<String>,
     pub default_folder_action: String,
     pub default_terminal_action: String,
@@ -58,6 +65,8 @@ impl Default for GuiSettings {
             auto_check_update: default_auto_check_update(),
             exclude_exact_dirs: Vec::new(),
             exclude_pattern_dirs: default_exclude_pattern_dirs(),
+            exclude_dot_files: false,
+            exclude_file_patterns: default_exclude_file_patterns(),
             watch_roots: Vec::new(),
             default_folder_action: "Finder".to_string(),
             default_terminal_action: "Terminal".to_string(),
@@ -113,6 +122,8 @@ pub struct AppState {
     pub auto_check_update: Mutex<bool>,
     pub exclude_exact_dirs: Mutex<Vec<String>>,
     pub exclude_pattern_dirs: Mutex<Vec<String>>,
+    pub exclude_dot_files: Mutex<bool>,
+    pub exclude_file_patterns: Mutex<Vec<String>>,
     pub watch_roots: Mutex<Vec<String>>,
     pub default_folder_action: Mutex<String>,
     pub default_terminal_action: Mutex<String>,
@@ -146,6 +157,12 @@ impl AppState {
                 settings.exclude_pattern_dirs.clone(),
             )
             .unwrap_or_else(|_| (Vec::new(), Vec::new()));
+        let (_exclude_dot_files, exclude_file_patterns) = engine
+            .set_exclude_file_settings(
+                settings.exclude_dot_files,
+                settings.exclude_file_patterns.clone(),
+            )
+            .unwrap_or_else(|_| (false, Vec::new()));
         let watch_roots = engine.set_watch_roots(settings.watch_roots.clone());
         Self {
             engine,
@@ -159,6 +176,8 @@ impl AppState {
             auto_check_update: Mutex::new(settings.auto_check_update),
             exclude_exact_dirs: Mutex::new(exclude_exact_dirs),
             exclude_pattern_dirs: Mutex::new(exclude_pattern_dirs),
+            exclude_dot_files: Mutex::new(settings.exclude_dot_files),
+            exclude_file_patterns: Mutex::new(exclude_file_patterns),
             watch_roots: Mutex::new(watch_roots),
             default_folder_action: Mutex::new(settings.default_folder_action),
             default_terminal_action: Mutex::new(settings.default_terminal_action),
@@ -186,6 +205,8 @@ pub fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         auto_check_update: *state.auto_check_update.lock().map_err(|_| "Failed to access auto-check-update setting".to_string())?,
         exclude_exact_dirs: lock_get!(exclude_exact_dirs, Vec<String>),
         exclude_pattern_dirs: lock_get!(exclude_pattern_dirs, Vec<String>),
+        exclude_dot_files: *state.exclude_dot_files.lock().map_err(|_| "Failed to access exclude-dot-files setting".to_string())?,
+        exclude_file_patterns: lock_get!(exclude_file_patterns, Vec<String>),
         watch_roots: lock_get!(watch_roots, Vec<String>),
         default_folder_action: lock_get!(default_folder_action, String),
         default_terminal_action: lock_get!(default_terminal_action, String),

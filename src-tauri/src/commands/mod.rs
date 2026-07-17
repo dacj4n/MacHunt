@@ -85,6 +85,13 @@ pub struct ExcludeDirSettingsResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ExcludeFileSettingsResponse {
+    pub exclude_dot_files: bool,
+    pub file_patterns: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WatchRootsSettingsResponse {
     pub roots: Vec<String>,
 }
@@ -228,6 +235,34 @@ pub fn set_exclude_dir_settings(
     let settings = snapshot_gui_settings(&state)?;
     save_gui_settings(&settings)?;
     Ok(ExcludeDirSettingsResponse { exact_dirs: saved_exact_dirs, pattern_dirs: saved_pattern_dirs })
+}
+
+// ── Exclude file settings (needs engine sync) ──
+#[tauri::command]
+pub fn get_exclude_file_settings(state: tauri::State<'_, AppState>) -> Result<ExcludeFileSettingsResponse, String> {
+    let (exclude_dot_files, file_patterns) = state.engine.get_exclude_file_settings();
+    Ok(ExcludeFileSettingsResponse { exclude_dot_files, file_patterns })
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn set_exclude_file_settings(
+    excludeDotFiles: bool,
+    filePatterns: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<ExcludeFileSettingsResponse, String> {
+    let (saved_dot_files, saved_patterns) = state.engine.set_exclude_file_settings(excludeDotFiles, filePatterns)?;
+    {
+        let mut guard = state.exclude_dot_files.lock().map_err(|_| "Failed to access exclude dot files setting".to_string())?;
+        *guard = saved_dot_files;
+    }
+    {
+        let mut guard = state.exclude_file_patterns.lock().map_err(|_| "Failed to access exclude file patterns setting".to_string())?;
+        *guard = saved_patterns.clone();
+    }
+    let settings = snapshot_gui_settings(&state)?;
+    save_gui_settings(&settings)?;
+    Ok(ExcludeFileSettingsResponse { exclude_dot_files: saved_dot_files, file_patterns: saved_patterns })
 }
 
 // ── Watch roots (needs engine sync) ──

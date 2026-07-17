@@ -897,6 +897,20 @@ impl Db {
         out
     }
 
+    /// Escape LIKE special characters (% and _) with the default escape char \.
+    fn escape_like(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() * 2);
+        for ch in s.chars() {
+            match ch {
+                '%' => out.push_str("\\%"),
+                '_' => out.push_str("\\_"),
+                '\\' => out.push_str("\\\\"),
+                _ => out.push(ch),
+            }
+        }
+        out
+    }
+
     fn path_prefix_clause(prefix: Option<&str>) -> (String, Option<String>) {
         match prefix {
             Some(p) if !p.is_empty() => {
@@ -985,11 +999,10 @@ impl Db {
                 let sql = format!(
                     "SELECT d.path, f.name FROM files f
                      JOIN dirs d ON d.id = f.dir_id
-                     WHERE f.name_lower LIKE ?{}{}{} {} LIMIT ?",
+                     WHERE f.name_lower LIKE ? ESCAPE '\\'{}{}{} {} LIMIT ?",
                     path_clause, ext_clause, type_clause, sort
                 );
-                // LIKE treats * as a literal character, so no escaping needed.
-                let pattern = format!("%{}%", q.to_lowercase());
+                let pattern = format!("%{}%", Self::escape_like(&q.to_lowercase()));
                 return Self::exec_name_query(&conn, &sql, pattern, &path_param, lim);
             }
         }
@@ -1079,6 +1092,8 @@ impl Db {
                  WHERE f.name_lower LIKE ?{}{}{} {} LIMIT ?",
                 path_clause, ext_clause, type_clause, sort
             );
+            // The pattern passed in already contains LIKE wildcards (%)
+            // and the literal fragment from extract_literal has no wildcard chars.
             Self::exec_name_query(
                 &conn, &sql,
                 pattern.to_string(), &path_param, lim,
@@ -1165,9 +1180,10 @@ impl Db {
         };
 
         // Build LIKE conditions for every token — all must appear as substrings.
+        // Escape LIKE wildcards (% and _) so they match literally.
         let like_conditions: Vec<String> = tokens
             .iter()
-            .map(|t| format!("f.name_lower LIKE '%{}%'", t.replace('\'', "''")))
+            .map(|t| format!("f.name_lower LIKE '%{}%' ESCAPE '\\'", Self::escape_like(t)))
             .collect();
         let like_clause = like_conditions.join(" AND ");
 

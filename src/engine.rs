@@ -1,7 +1,8 @@
 use crate::builder;
 use crate::db::Db;
 use crate::filters::{
-    compile_exclude_rules, sanitize_owned_rules, sanitize_roots, validate_pattern_rules,
+    compile_exclude_rules, compile_file_exclude_rules, sanitize_owned_rules, sanitize_roots,
+    validate_pattern_rules,
 };
 use crate::model::{SearchMode, SearchOptions, SortKey, VolumeEvent};
 use crate::search;
@@ -22,6 +23,8 @@ pub struct Engine {
     include_dirs: Arc<AtomicBool>,
     exclude_exact_dirs: Arc<Mutex<Vec<String>>>,
     exclude_pattern_dirs: Arc<Mutex<Vec<String>>>,
+    exclude_dot_files: Arc<Mutex<bool>>,
+    exclude_file_patterns: Arc<Mutex<Vec<String>>>,
     watch_roots: Arc<Mutex<Vec<String>>>,
     cleanup_running: Arc<AtomicBool>,
     volume_event_tx: Arc<Mutex<Option<Sender<VolumeEvent>>>>,
@@ -54,6 +57,8 @@ impl Engine {
             include_dirs,
             exclude_exact_dirs,
             exclude_pattern_dirs,
+            exclude_dot_files: Arc::new(Mutex::new(false)),
+            exclude_file_patterns: Arc::new(Mutex::new(Vec::new())),
             watch_roots: Arc::new(Mutex::new(watch_roots)),
             cleanup_running: Arc::new(AtomicBool::new(false)),
             volume_event_tx: Arc::new(Mutex::new(None)),
@@ -96,17 +101,32 @@ impl Engine {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
+        let exclude_dot_files = *self
+            .exclude_dot_files
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let exclude_file_patterns = self
+            .exclude_file_patterns
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
         let watch_roots = self
             .watch_roots
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
 
+        let file_exclude_rules = Arc::new(compile_file_exclude_rules(
+            exclude_dot_files,
+            &exclude_file_patterns,
+        ));
+
         let filters = builder::BuildFilterSettings {
             include_dirs,
             exclude_exact_dirs,
             exclude_pattern_dirs,
             watch_roots: Some(watch_roots),
+            file_exclude_rules,
         };
 
         let is_incremental = !auto_vacuum_on_rebuild && path.is_some();
@@ -147,6 +167,45 @@ impl Engine {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
         (exact_dirs, pattern_dirs)
+    }
+
+    pub fn get_exclude_file_settings(&self) -> (bool, Vec<String>) {
+        let dot_files = *self
+            .exclude_dot_files
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let patterns = self
+            .exclude_file_patterns
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        (dot_files, patterns)
+    }
+
+    pub fn set_exclude_file_settings(
+        &self,
+        exclude_dot_files: bool,
+        file_patterns: Vec<String>,
+    ) -> Result<(bool, Vec<String>), String> {
+        let sanitized = sanitize_owned_rules(file_patterns);
+        validate_pattern_rules(&sanitized)?;
+
+        {
+            let mut guard = self
+                .exclude_dot_files
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *guard = exclude_dot_files;
+        }
+        {
+            let mut guard = self
+                .exclude_file_patterns
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *guard = sanitized.clone();
+        }
+
+        Ok((exclude_dot_files, sanitized))
     }
 
     pub fn set_exclude_dir_settings(
@@ -226,6 +285,18 @@ impl Engine {
             .clone();
         let exclude_rules = compile_exclude_rules(&exclude_exact_dirs, &exclude_pattern_dirs);
 
+        let exclude_dot_files = *self
+            .exclude_dot_files
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let exclude_file_patterns = self
+            .exclude_file_patterns
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let file_exclude_rules =
+            Arc::new(compile_file_exclude_rules(exclude_dot_files, &exclude_file_patterns));
+
         watcher::start_watch(
             self.db.clone(),
             self.logger.clone(),
@@ -234,6 +305,7 @@ impl Engine {
             since_event_id,
             watch_roots,
             Arc::new(exclude_rules),
+            file_exclude_rules,
         );
 
         // Start lazy dead-path GC to compensate for removing the

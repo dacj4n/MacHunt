@@ -126,6 +126,8 @@ pub fn run() {
             commands::check_for_update,
             commands::get_exclude_dir_settings,
             commands::set_exclude_dir_settings,
+            commands::get_exclude_file_settings,
+            commands::set_exclude_file_settings,
             commands::get_watch_roots_settings,
             commands::set_watch_roots_settings,
             commands::get_file_manager_settings,

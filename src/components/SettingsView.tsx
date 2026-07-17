@@ -70,6 +70,15 @@ export interface SettingsViewProps {
   removeExcludeRule: (type: ExcludeRuleType, rule: string) => Promise<void>;
   pickExcludeRulePath: () => Promise<void>;
   isPickingPath: boolean;
+  excludeDotFiles: boolean;
+  toggleExcludeDotFiles: (v: boolean) => Promise<void>;
+  excludeFilePatterns: string[];
+  excludeFilePatternDraft: string;
+  setExcludeFilePatternDraft: (v: string) => void;
+  excludeFileStatus: string;
+  isExcludeFileSaving: boolean;
+  addExcludeFilePattern: () => Promise<void>;
+  removeExcludeFilePattern: (pattern: string) => Promise<void>;
   runBuild: (rebuild: boolean) => Promise<void>;
   isBuilding: boolean;
   isWatchRunning: boolean;
@@ -104,7 +113,12 @@ export function SettingsView(props: SettingsViewProps) {
     excludeRuleType, setExcludeRuleType, excludeRuleDraft, setExcludeRuleDraft,
     excludeExactDirs, excludePatternDirs, excludeDirStatus, isExcludeDirSaving,
     addExcludeRule, removeExcludeRule, pickExcludeRulePath,
-    isPickingPath, runBuild, isBuilding, isWatchRunning, isWatchPending, toggleWatch, handleScrollbarScroll,
+    isPickingPath,
+    excludeDotFiles, toggleExcludeDotFiles,
+    excludeFilePatterns, excludeFilePatternDraft, setExcludeFilePatternDraft,
+    excludeFileStatus, isExcludeFileSaving,
+    addExcludeFilePattern, removeExcludeFilePattern,
+    runBuild, isBuilding, isWatchRunning, isWatchPending, toggleWatch, handleScrollbarScroll,
   } = props;
 
   const settingsThemeOptions: Array<{ mode: ThemeMode; title: string; description: string }> = [
@@ -700,6 +714,76 @@ export function SettingsView(props: SettingsViewProps) {
             </div>
 
             {excludeDirStatus && <div className="status-msg">{excludeDirStatus}</div>}
+          </div>
+
+          <div className="rule-section">
+            <div className="rule-section-title">{t.excludeFilesTitle}</div>
+            <p className="set-card-desc">{t.excludeFilesDesc}</p>
+
+            <label className="toggle-card" style={{ marginBottom: 10 }}>
+              <div className="toggle-card-copy">
+                <div className="toggle-card-title">{t.excludeDotFilesLabel}</div>
+                <div className="toggle-card-desc">{t.excludeDotFilesDesc}</div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={excludeDotFiles}
+                className={excludeDotFiles ? "ns-switch on" : "ns-switch"}
+                disabled={isExcludeFileSaving}
+                onClick={() => void toggleExcludeDotFiles(!excludeDotFiles)}
+              >
+                <span className="ns-switch-knob" />
+              </button>
+            </label>
+
+            <div className="rule-section-title" style={{ marginTop: 4 }}>{t.excludeFilePatternsTitle}</div>
+            <p className="set-card-desc">{t.excludeFilePatternsDesc}</p>
+            <div className="form-row">
+              <input
+                className="form-input"
+                value={excludeFilePatternDraft}
+                placeholder={t.excludeFilePatternInputPlaceholder}
+                disabled={isExcludeFileSaving}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                onChange={(event) => setExcludeFilePatternDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void addExcludeFilePattern();
+                  }
+                }}
+              />
+              <button
+                className="act-btn"
+                disabled={isExcludeFileSaving || excludeFilePatternDraft.trim().length === 0}
+                onClick={() => void addExcludeFilePattern()}
+              >
+                {t.excludeAdd}
+              </button>
+            </div>
+
+            {excludeFilePatterns.length > 0 && (
+              <div className="rule-list" style={{ marginTop: 8 }}>
+                {excludeFilePatterns.map((rule) => (
+                  <div key={`file-${rule}`} className="rule-item">
+                    <span className="rule-value">{rule}</span>
+                    <button
+                      className="act-btn"
+                      disabled={isExcludeFileSaving}
+                      onClick={() => void removeExcludeFilePattern(rule)}
+                    >
+                      {t.removeRule}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {excludeFileStatus && <div className="status-msg">{excludeFileStatus}</div>}
           </div>
           </div>
         </article>

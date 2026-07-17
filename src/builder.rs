@@ -1,5 +1,5 @@
 use crate::db::Db;
-use crate::filters::{compile_exclude_rules, is_excluded, ExcludeRules};
+use crate::filters::{compile_exclude_rules, is_excluded, is_file_excluded, ExcludeRules, FileExcludeRules};
 use crate::utils::{get_root_directories, normalize_path_for_index, should_skip_path};
 use crossbeam::channel::Sender;
 use std::path::PathBuf;
@@ -16,6 +16,7 @@ pub struct BuildFilterSettings {
     pub exclude_exact_dirs: Vec<String>,
     pub exclude_pattern_dirs: Vec<String>,
     pub watch_roots: Option<Vec<String>>,
+    pub file_exclude_rules: Arc<FileExcludeRules>,
 }
 
 fn scan_root(
@@ -23,6 +24,7 @@ fn scan_root(
     tx: Sender<Vec<(String, PathBuf, bool)>>,
     include_dirs: bool,
     exclude_rules: Arc<ExcludeRules>,
+    file_exclude_rules: Arc<FileExcludeRules>,
 ) {
     let mut batch = Vec::with_capacity(BATCH_SIZE);
 
@@ -38,10 +40,14 @@ fn scan_root(
         .filter_map(|e| e.ok())
     {
         let file_type = entry.file_type();
-        if is_excluded(entry.path(), file_type.is_dir(), &exclude_rules) {
+        let is_dir = file_type.is_dir();
+        if is_excluded(entry.path(), is_dir, &exclude_rules) {
             continue;
         }
-        if !(file_type.is_file() || include_dirs && file_type.is_dir()) {
+        if is_file_excluded(entry.path(), is_dir, &file_exclude_rules) {
+            continue;
+        }
+        if !(file_type.is_file() || include_dirs && is_dir) {
             continue;
         }
         if let Some(name) = entry.file_name().to_str() {
@@ -98,6 +104,7 @@ pub fn build_index(
         &filters.exclude_exact_dirs,
         &filters.exclude_pattern_dirs,
     ));
+    let file_exclude_rules = filters.file_exclude_rules.clone();
     let include_dirs = filters.include_dirs;
 
     let (tx, rx) = crossbeam::channel::bounded::<Vec<(String, PathBuf, bool)>>(256);
@@ -107,7 +114,8 @@ pub fn build_index(
         .map(|root| {
             let tx = tx.clone();
             let exclude_rules = exclude_rules.clone();
-            thread::spawn(move || scan_root(root, tx, include_dirs, exclude_rules))
+            let file_exclude_rules = file_exclude_rules.clone();
+            thread::spawn(move || scan_root(root, tx, include_dirs, exclude_rules, file_exclude_rules))
         })
         .collect();
     drop(tx);
