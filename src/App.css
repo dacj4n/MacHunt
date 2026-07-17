@@ -279,7 +279,7 @@ body {
   grid-template-rows: 64px 1fr;
   height: 100%;
   overflow: hidden;
-  background: rgba(12, 12, 18, 0.45);
+  background: rgba(12, 12, 18, 0.2);
   border-radius: 24px;
   border: none;
   box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.08), 0 8px 40px rgba(0, 0, 0, 0.4);
@@ -697,7 +697,7 @@ body {
   z-index: 180;
   border: none;
   border-radius: var(--r-lg);
-  background: rgba(14, 13, 20, 0.88);
+  background: rgba(16, 15, 20, 0.88);
   box-shadow: var(--glass-shadow-lg);
   padding: 6px;
   max-height: 260px;
@@ -759,7 +759,7 @@ body {
   min-width: 100%;
   border: none;
   border-radius: var(--r-lg);
-  background: rgb(16, 15, 20);
+  background: rgb(18, 17, 20);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   padding: 6px;
   max-height: 260px;
@@ -914,7 +914,7 @@ body {
   z-index: 100;
   border: none;
   border-radius: var(--r-lg);
-  background: rgba(14, 13, 20, 0.88);
+  background: rgba(16, 15, 20, 0.88);
   padding: 12px;
   box-shadow: var(--glass-shadow-lg);
   display: flex;
@@ -1349,7 +1349,7 @@ body {
   min-width: 220px;
   border: none;
   border-radius: var(--r-lg);
-  background: rgba(14, 13, 20, 0.88);
+  background: rgba(16, 15, 20, 0.88);
   box-shadow: var(--glass-shadow-lg);
   padding: 6px;
 }
@@ -1408,7 +1408,7 @@ body {
   min-width: 210px;
   border: none;
   border-radius: var(--r-lg);
-  background: rgba(14, 13, 20, 0.88);
+  background: rgba(16, 15, 20, 0.88);
   box-shadow: var(--glass-shadow-lg);
   padding: 6px;
 }
@@ -1427,7 +1427,7 @@ body {
 .modal-panel {
   width: min(720px, 90vw);
   max-height: 85vh;
-  background-color: rgba(14, 13, 20, 0.88) !important;
+  background-color: rgba(16, 15, 20, 0.88) !important;
   backdrop-filter: blur(30px) saturate(180%);
   -webkit-backdrop-filter: blur(30px) saturate(180%);
   border: none;
@@ -1638,7 +1638,7 @@ body {
 /* ===== TILT CARDS ===== */
 .theme-cards {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
 }
 
@@ -1731,31 +1731,6 @@ body {
 .theme-preview-light .tp-bar:last-child {
   max-width: 48px;
   background: #eeeff3;
-  margin-right: 6px;
-}
-
-.theme-preview-system {
-  background: linear-gradient(135deg, #f4f5f7 0%, #f4f5f7 48%, #10131b 52%, #10131b 100%);
-  position: relative;
-}
-.theme-preview-system .tp-bar {
-  flex: 1;
-  margin: 6px 4px;
-  border-radius: 3px;
-  position: relative;
-  z-index: 1;
-}
-.theme-preview-system .tp-bar:first-child {
-  max-width: 32px;
-  background: rgba(0,0,0,0.1);
-  margin-left: 6px;
-}
-.theme-preview-system .tp-bar:nth-child(2) {
-  background: rgba(0,0,0,0.06);
-}
-.theme-preview-system .tp-bar:last-child {
-  max-width: 48px;
-  background: rgba(255,255,255,0.12);
   margin-right: 6px;
 }
 

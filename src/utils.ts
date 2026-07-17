@@ -376,29 +376,15 @@ export function buildSearchRequest(
   };
 }
 
-export function systemPrefersDark(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-    return false;
-  }
-  return window.matchMedia("(prefers-color-scheme: dark)").matches;
-}
-
-export function resolveTheme(themeMode: ThemeMode, systemDark: boolean): "light" | "dark" {
-  if (themeMode === "system") {
-    return systemDark ? "dark" : "light";
-  }
-  return themeMode;
-}
-
 export function loadStoredTheme(): ThemeMode {
   if (typeof window === "undefined") {
-    return "system";
+    return "dark";
   }
   const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
   if (stored === "light" || stored === "dark") {
     return stored;
   }
-  return "system";
+  return "dark";
 }
 
 export function detectDefaultLanguage(): Language {

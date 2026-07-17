@@ -7,7 +7,6 @@ export interface SettingsViewProps {
   t: Record<string, string>;
   themeMode: ThemeMode;
   setThemeMode: (v: ThemeMode) => void;
-  resolvedTheme: "light" | "dark";
   language: Language;
   setLanguage: (v: Language) => void;
   windowToggleShortcut: string;
@@ -91,7 +90,7 @@ export interface SettingsViewProps {
 export function SettingsView(props: SettingsViewProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const {
-    t, themeMode, setThemeMode, resolvedTheme,
+    t, themeMode, setThemeMode,
     language, setLanguage,
     windowToggleShortcut, shortcutDraft, setShortcutDraft,
     shortcutStatus, setShortcutStatus, isShortcutSaving,
@@ -124,9 +123,8 @@ export function SettingsView(props: SettingsViewProps) {
   } = props;
 
   const settingsThemeOptions: Array<{ mode: ThemeMode; title: string; description: string }> = [
-    { mode: "system", title: t.themeSystemTitle, description: t.themeSystemDesc },
-    { mode: "light", title: t.themeLightTitle, description: t.themeLightDesc },
-    { mode: "dark", title: t.themeDarkTitle, description: t.themeDarkDesc }
+    { mode: "dark", title: t.themeDarkTitle, description: t.themeDarkDesc },
+    { mode: "light", title: t.themeLightTitle, description: t.themeLightDesc }
   ];
 
   const settingsLanguageOptions: Array<{ code: Language; title: string; description: string }> = [
@@ -150,7 +148,7 @@ export function SettingsView(props: SettingsViewProps) {
             <div className="set-card-icon">◉</div>
             <div>
               <div className="set-card-title">{t.themeModeTitle}</div>
-              <div className="set-card-subtitle">{t.themeCurrent}: {resolvedTheme === "dark" ? t.themeDarkTitle : t.themeLightTitle}</div>
+              <div className="set-card-subtitle">{t.themeCurrent}: {themeMode === "dark" ? t.themeDarkTitle : t.themeLightTitle}</div>
             </div>
           </div>
           <div className="theme-cards">

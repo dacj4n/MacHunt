@@ -15,7 +15,7 @@ import type {
 import {
   DEFAULT_WINDOW_TOGGLE_SHORTCUT, DEFAULT_COLUMN_WIDTHS, COLUMN_KEYS,
   EVENT_OPEN_SETTINGS, EVENT_FOCUS_SEARCH,
-  loadStoredTheme, detectDefaultLanguage, systemPrefersDark, resolveTheme,
+  loadStoredTheme, detectDefaultLanguage,
   loadStoredRegexEnabled, loadStoredCaseSensitive, loadStoredFuzzyEnabled,
   loadPinnedItems, savePinnedItems, loadStoredColumnWidths,
   buildSearchRequest, displayShortcut, shortcutFromKeyboardEvent,
@@ -36,9 +36,7 @@ function App() {
   // ── core state ──
   const [activeView, setActiveView] = useState<ViewMode>("search");
   const [themeMode, setThemeMode] = useState<ThemeMode>(loadStoredTheme);
-  const [systemDark, setSystemDark] = useState(systemPrefersDark());
   const [language, setLanguage] = useState<Language>(detectDefaultLanguage());
-  const resolvedTheme = resolveTheme(themeMode, systemDark);
   const t = I18N[language];
 
   // ── shortcut state ──
@@ -738,17 +736,8 @@ function App() {
   useEffect(() => { localStorage.setItem(FUZZY_ENABLED_STORAGE_KEY, fuzzyEnabled ? "1" : "0"); }, [fuzzyEnabled]);
   useEffect(() => { localStorage.setItem(LANGUAGE_STORAGE_KEY, language); }, [language]);
   useEffect(() => { void invoke("set_menu_language", { language }); }, [language]);
-  useEffect(() => { document.documentElement.setAttribute("data-theme", resolvedTheme); }, [resolvedTheme]);
-
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches);
-    setSystemDark(media.matches);
-    if (typeof media.addEventListener === "function") { media.addEventListener("change", onChange); return () => media.removeEventListener("change", onChange); }
-    const legacyListener = (event: MediaQueryListEvent) => onChange(event);
-    media.addListener(legacyListener); return () => media.removeListener(legacyListener);
-  }, []);
+  useEffect(() => { document.documentElement.setAttribute("data-theme", themeMode); }, [themeMode]);
+  useEffect(() => { void invoke("set_window_appearance", { dark: themeMode === "dark" }); }, [themeMode]);
 
   useEffect(() => { if (isIndexLoading) closePathDropdown(); }, [isIndexLoading]);
 
@@ -1185,7 +1174,6 @@ function App() {
         <SettingsView
           t={t}
           themeMode={themeMode} setThemeMode={setThemeMode}
-          resolvedTheme={resolvedTheme}
           language={language} setLanguage={setLanguage}
           windowToggleShortcut={windowToggleShortcut}
           shortcutDraft={shortcutDraft} setShortcutDraft={setShortcutDraft}
