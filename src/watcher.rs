@@ -311,6 +311,7 @@ unsafe extern "C" fn fsevent_callback(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn start_watch(
     db: Db,
     logger: Logger,
