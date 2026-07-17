@@ -193,13 +193,13 @@ Runs WAL checkpoint (always). Optional `--vacuum` reclaims DB file space.
 
 ```
 ┌──────────┐     ┌───────────────┐     ┌──────────┐
-│  WalkDir  │ ──→ │  SQLite FTS5  │ ←── │ FSEvents │
-│  (build)  │     │  (trigram)    │     │  (watch) │
+│  WalkDir │ ──→ │  SQLite FTS5  │ ←── │ FSEvents │
+│  (build) │     │  (trigram)    │     │  (watch) │
 └──────────┘     └───────┬───────┘     └──────────┘
                          │
                     ┌────▼────┐
-                    │  Search  │
-                    │ <5ms     │
+                    │  Search │
+                    │ <5ms    │
                     └─────────┘
 ```
 
