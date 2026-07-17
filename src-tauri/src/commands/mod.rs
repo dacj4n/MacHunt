@@ -626,9 +626,17 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateCheckRespon
 }
 
 fn semver(s: &str) -> Option<(u32, u32, u32)> {
-    let parts: Vec<&str> = s.split('.').collect();
-    if parts.len() != 3 { return None; }
-    Some((parts[0].parse::<u32>().ok()?, parts[1].parse::<u32>().ok()?, parts[2].parse::<u32>().ok()?))
+    // Extract the first three numeric components, ignoring suffixes like "_fix"
+    let numeric: Vec<u32> = s.split('.')
+        .flat_map(|p| p.split(|c: char| !c.is_ascii_digit()).next())
+        .filter_map(|n| n.parse::<u32>().ok())
+        .take(3)
+        .collect();
+    if numeric.len() == 3 {
+        Some((numeric[0], numeric[1], numeric[2]))
+    } else {
+        None
+    }
 }
 
 #[tauri::command]
