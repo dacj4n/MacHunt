@@ -117,8 +117,9 @@ pub fn register_window_toggle_shortcut<R: tauri::Runtime>(
         .map_err(|e| e.to_string())
 }
 
-/// Hide traffic light buttons, install NSVisualEffectView for system-level Liquid Glass,
-/// and make the window movable by header drag.
+/// Hide traffic light buttons and add NSVisualEffectView as the system's
+/// Liquid Glass backdrop. The webview sits on top, fully transparent,
+/// so CSS background colors render normally (no WKWebView compositing bug).
 pub fn make_window_movable_by_background(app: &tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -144,67 +145,60 @@ pub fn make_window_movable_by_background(app: &tauri::AppHandle) -> Result<(), S
             if !mini_btn.is_null() { let _: () = msg_send![mini_btn, setHidden: true]; }
             if !zoom_btn.is_null() { let _: () = msg_send![zoom_btn, setHidden: true]; }
 
-            // Full size content view + transparent background
+            // Full-size content view (extend content under titlebar)
             let current_mask: u64 = msg_send![&ns_window, styleMask];
             let _: () = msg_send![&ns_window, setStyleMask: current_mask | (1u64 << 15)];
+
+            // Make window transparent
             let _: () = msg_send![&ns_window, setOpaque: Bool::NO];
             let _: () = msg_send![&ns_window, setHasShadow: Bool::NO];
-            let _: () = msg_send![&ns_window, setMovableByWindowBackground: Bool::NO];
             let clear_color: *mut NSObject = msg_send![objc2::class!(NSColor), clearColor];
             let _: () = msg_send![&ns_window, setBackgroundColor: clear_color];
 
-            // Get the WKWebView inside the content view
+            // Get content view, round corners, and insert NSVisualEffectView
+            // as the system-level Liquid Glass backdrop. The visual effect view
+            // is system GPU composited — no flicker on drag/resize.
             let content_view: *mut NSObject = msg_send![&*ns_window, contentView];
             if !content_view.is_null() {
                 let cv: Retained<NSObject> = Retained::retain(content_view).unwrap();
                 let bounds: NSRect = msg_send![&*cv, bounds];
                 let _: () = msg_send![&*cv, setWantsLayer: true];
-
-                // Set content view's layer corner radius so window corners are rounded
                 let cv_layer: *mut NSObject = msg_send![&*cv, layer];
                 if !cv_layer.is_null() {
                     let _: () = msg_send![cv_layer, setCornerRadius: 24.0_f64];
                     let _: () = msg_send![cv_layer, setMasksToBounds: true];
                 }
 
-                // Find the WKWebView — it's the first subview of the content view in Tauri 2
+                // Find the WKWebView (Tauri 2 puts it as the first subview of contentView)
                 let subviews: *mut NSObject = msg_send![&*cv, subviews];
-                let webview_ptr: *mut NSObject = msg_send![subviews, firstObject];
-                if !webview_ptr.is_null() {
-                    let wv: Retained<NSObject> = Retained::retain(webview_ptr).unwrap();
-
-                    // Make the WKWebView layer-backed and set opaque=NO so NSVisualEffectView shows through
+                let first_obj: *mut NSObject = msg_send![subviews, firstObject];
+                if !first_obj.is_null() {
+                    let wv: Retained<NSObject> = Retained::retain(first_obj).unwrap();
                     let _: () = msg_send![&*wv, setWantsLayer: true];
-
-                    // Set WKWebView background to transparent via its layer
+                    // Set WKWebView background to clear so NSVisualEffectView shows through
                     let wv_layer: *mut NSObject = msg_send![&*wv, layer];
                     if !wv_layer.is_null() {
+                        // CGColor NULL = transparent
                         let _: () = msg_send![wv_layer, setBackgroundColor: std::ptr::null::<NSObject>()];
                     }
 
-                    // Create NSVisualEffectView for system-managed Liquid Glass
+                    // Create NSVisualEffectView as system-level Liquid Glass
                     let vv_alloc: *mut NSObject = msg_send![objc2::class!(NSVisualEffectView), alloc];
                     let vv_ptr: *mut NSObject = msg_send![vv_alloc, initWithFrame: bounds];
                     if !vv_ptr.is_null() {
                         let vv: Retained<NSObject> = Retained::retain(vv_ptr).unwrap();
-
-                        // NSVisualEffectMaterialToolTip = 17 (deep dark with vibrancy)
-                        let _: () = msg_send![&*vv, setMaterial: 17i64];
-                        // NSVisualEffectStateActive = 1
+                        // NSVisualEffectMaterialHUDWindow = 21 (Spotlight-like)
+                        let _: () = msg_send![&*vv, setMaterial: 21i64];
+                        // NSVisualEffectStateFollowsWindowActiveState = 1
                         let _: () = msg_send![&*vv, setState: 1i64];
-                        // NSVisualEffectBlendingModeBehindWindow = 0 (translucent)
+                        // NSVisualEffectBlendingModeBehindWindow = 0
                         let _: () = msg_send![&*vv, setBlendingMode: 0i64];
-                        // NSViewWidthSizable(2) | NSViewHeightSizable(16) = 18
+                        // autoresize mask = 18 (width+height sizable)
                         let _: () = msg_send![&*vv, setAutoresizingMask: 18u64];
                         let _: () = msg_send![&*vv, setWantsLayer: true];
 
-                        // Add NSVisualEffectView BELOW the WKWebView
-                        // positioned: NSWindowBelow = -1
+                        // Insert BELOW the WKWebView (NSWindowBelow = -1)
                         let _: () = msg_send![&*cv, addSubview: &*vv, positioned: -1i64, relativeTo: &*wv];
-
-                        // Bring WKWebView back to front (above the visual effect view)
-                        // Send to front so it captures clicks
-                        let _: () = msg_send![&*wv, setAutoresizingMask: 18u64];
                     }
                 }
             }

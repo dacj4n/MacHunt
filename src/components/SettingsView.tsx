@@ -377,54 +377,6 @@ export function SettingsView(props: SettingsViewProps) {
           {maxResultsStatus && <div className="status-msg">{maxResultsStatus}</div>}
         </article>
 
-        {/* About Module */}
-        <article className="set-card">
-          <div className="set-card-header">
-            <div className="set-card-icon">ℹ</div>
-            <div>
-              <div className="set-card-title">{t.updateTitle}</div>
-              <div className="set-card-subtitle">{appVersion ? `${t.versionLabel}: v${appVersion}` : t.updateDesc}</div>
-            </div>
-          </div>
-          <label className="toggle-card">
-            <div className="toggle-card-copy">
-              <div className="toggle-card-title">{t.updateAutoCheck}</div>
-              <div className="toggle-card-desc">{t.updateAutoCheckDesc}</div>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={autoCheckUpdate}
-              aria-label={t.updateAutoCheck}
-              className={autoCheckUpdate ? "ns-switch on" : "ns-switch"}
-              disabled={isAutoCheckSaving}
-              onClick={() => void applyAutoCheckUpdate(!autoCheckUpdate)}
-            >
-              <span className="ns-switch-knob" />
-            </button>
-          </label>
-          <div className="update-info">
-            {isCheckingUpdate && <div className="update-status">{t.updateChecking}</div>}
-            {!isCheckingUpdate && updateInfo && updateInfo.hasUpdate && (
-              <div className="update-available">
-                <span>{fmtStr(t.updateNewVersion, { version: updateInfo.latestVersion })}</span>
-                <button className="act-btn primary"
-                  onClick={() => openUrl("https://github.com/dacj4n/MacHunt/releases/latest")}
-                >{t.updateDownload}</button>
-              </div>
-            )}
-            {!isCheckingUpdate && updateInfo && !updateInfo.hasUpdate && updateInfo.latestVersion !== "" && (
-              <div className="update-status">{t.updateNoUpdate}</div>
-            )}
-          </div>
-          <div className="form-row">
-            <button className="act-btn" disabled={isCheckingUpdate} onClick={() => void checkForUpdatesManually()}>
-              {t.updateCheckNow}
-            </button>
-          </div>
-          {autoCheckStatus && <div className="status-msg">{autoCheckStatus}</div>}
-        </article>
-
         {/* File Manager & Terminal Module */}
         <article className="set-card">
           <div className="set-card-header">
@@ -509,6 +461,54 @@ export function SettingsView(props: SettingsViewProps) {
               />
             </div>
           </div>
+        </article>
+
+        {/* About Module */}
+        <article className="set-card">
+          <div className="set-card-header">
+            <div className="set-card-icon">ℹ</div>
+            <div>
+              <div className="set-card-title">{t.updateTitle}</div>
+              <div className="set-card-subtitle">{appVersion ? `${t.versionLabel}: v${appVersion}` : t.updateDesc}</div>
+            </div>
+          </div>
+          <label className="toggle-card">
+            <div className="toggle-card-copy">
+              <div className="toggle-card-title">{t.updateAutoCheck}</div>
+              <div className="toggle-card-desc">{t.updateAutoCheckDesc}</div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoCheckUpdate}
+              aria-label={t.updateAutoCheck}
+              className={autoCheckUpdate ? "ns-switch on" : "ns-switch"}
+              disabled={isAutoCheckSaving}
+              onClick={() => void applyAutoCheckUpdate(!autoCheckUpdate)}
+            >
+              <span className="ns-switch-knob" />
+            </button>
+          </label>
+          <div className="update-info">
+            {isCheckingUpdate && <div className="update-status">{t.updateChecking}</div>}
+            {!isCheckingUpdate && updateInfo && updateInfo.hasUpdate && (
+              <div className="update-available">
+                <span>{fmtStr(t.updateNewVersion, { version: updateInfo.latestVersion })}</span>
+                <button className="act-btn primary"
+                  onClick={() => openUrl("https://github.com/dacj4n/MacHunt/releases/latest")}
+                >{t.updateDownload}</button>
+              </div>
+            )}
+            {!isCheckingUpdate && updateInfo && !updateInfo.hasUpdate && updateInfo.latestVersion !== "" && (
+              <div className="update-status">{t.updateNoUpdate}</div>
+            )}
+          </div>
+          <div className="form-row">
+            <button className="act-btn" disabled={isCheckingUpdate} onClick={() => void checkForUpdatesManually()}>
+              {t.updateCheckNow}
+            </button>
+          </div>
+          {autoCheckStatus && <div className="status-msg">{autoCheckStatus}</div>}
         </article>
 
         {/* Advanced Features entry */}
