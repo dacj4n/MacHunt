@@ -54,7 +54,7 @@ MacHunt 将你的整个文件系统扫描到本地 SQLite FTS5 索引中。CLI �
 <td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/settings.png"><img src="./screenshots/settings.png" alt="设置" width="100%" style="max-width: 100%;"></a></td>
 </tr>
 <tr>
-<td align="center"><strong>空格触发原生 Quick Look，支持多选</strong></td>
+<td align="center"><strong>空格触发原生 Quick Look</strong></td>
 <td align="center"><strong>设置</strong></td>
 </tr>
 </tbody>
