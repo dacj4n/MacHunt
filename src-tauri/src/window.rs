@@ -1,5 +1,5 @@
 use crate::settings::AppState;
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 pub const EVENT_OPEN_SETTINGS: &str = "app://open-settings";
@@ -43,7 +43,6 @@ pub fn show_main_window_internal<R: tauri::Runtime>(
     window.show().map_err(|e| e.to_string())?;
     let _ = window.unminimize();
     window.set_focus().map_err(|e| e.to_string())?;
-    let _ = app.emit(EVENT_FOCUS_SEARCH, ());
     Ok(())
 }
 

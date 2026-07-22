@@ -130,6 +130,7 @@ pub struct AppState {
     pub custom_folder_app: Mutex<String>,
     pub custom_terminal_app: Mutex<String>,
     pub max_results: Mutex<usize>,
+    pub language: Mutex<String>,
     pub is_quitting: AtomicBool,
 }
 
@@ -184,6 +185,7 @@ impl AppState {
             custom_folder_app: Mutex::new(settings.custom_folder_app),
             custom_terminal_app: Mutex::new(settings.custom_terminal_app),
             max_results: Mutex::new(settings.max_results),
+            language: Mutex::new(String::from("zh")),
             is_quitting: AtomicBool::new(false),
         }
     }

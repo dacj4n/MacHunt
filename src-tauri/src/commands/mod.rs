@@ -685,15 +685,29 @@ pub fn get_version(app: tauri::AppHandle) -> String {
 }
 
 #[tauri::command]
-pub fn set_menu_language(_language: String, app: tauri::AppHandle) -> Result<(), String> {
+pub fn set_menu_language(language: String, app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    // Persist the choice in AppState
+    {
+        let mut guard = state.language.lock().map_err(|_| "Failed to access language setting".to_string())?;
+        *guard = language.clone();
+    }
+
+    let lang_ref = language.as_str();
+
+    // Update the macOS application menu ("Preferences" / "偏好设置")
     use crate::menu::{MENU_OPEN_SETTINGS_ID, settings_menu_text};
     if let Some(menu) = app.menu() {
         if let Some(item) = menu.get(MENU_OPEN_SETTINGS_ID) {
             if let Some(menu_item) = item.as_menuitem() {
-                menu_item.set_text(settings_menu_text()).map_err(|e| e.to_string())?;
+                menu_item.set_text(settings_menu_text(Some(lang_ref)))
+                    .map_err(|e| e.to_string())?;
             }
         }
     }
+
+    // Update the existing tray menu text — no new NSStatusItem
+    crate::tray::update_tray_menu_language(&app);
+
     Ok(())
 }
 

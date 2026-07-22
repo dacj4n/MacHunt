@@ -5,6 +5,7 @@ mod file_ops;
 mod menu;
 mod commands;
 mod ffi;
+mod tray;
 
 use crate::settings::AppState;
 use crate::window::{register_window_toggle_shortcut, show_main_window_internal, hide_main_window_internal};
@@ -88,6 +89,11 @@ pub fn run() {
 
             // Make window draggable by background (no titlebar)
             let _ = window::make_window_movable_by_background(&app.handle().clone());
+
+            // Create menu bar tray icon
+            if let Err(e) = tray::create_tray_icon(&app.handle().clone()) {
+                eprintln!("Failed to create tray icon: {}", e);
+            }
 
             Ok(())
         })

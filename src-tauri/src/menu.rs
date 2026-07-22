@@ -2,8 +2,33 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 
 pub const MENU_OPEN_SETTINGS_ID: &str = "open_settings";
 
-pub fn settings_menu_text() -> &'static str {
-    "Preferences"
+pub fn settings_menu_text(language: Option<&str>) -> &'static str {
+    match language {
+        Some("zh") => "偏好设置",
+        _ => "Preferences",
+    }
+}
+
+/// Localised tray menu labels.
+pub struct TrayLabels {
+    pub search: &'static str,
+    pub settings: &'static str,
+    pub quit: &'static str,
+}
+
+pub fn tray_labels(language: Option<&str>) -> TrayLabels {
+    match language {
+        Some("zh") => TrayLabels {
+            search: "搜索",
+            settings: "设置...",
+            quit: "退出 MacHunt",
+        },
+        _ => TrayLabels {
+            search: "Search",
+            settings: "Settings...",
+            quit: "Quit MacHunt",
+        },
+    }
 }
 
 pub fn build_menu(app: &tauri::AppHandle) -> Result<Menu<tauri::Wry>, tauri::Error> {
@@ -19,7 +44,7 @@ pub fn build_menu(app: &tauri::AppHandle) -> Result<Menu<tauri::Wry>, tauri::Err
                 &MenuItem::with_id(
                     app,
                     MENU_OPEN_SETTINGS_ID,
-                    settings_menu_text(),
+                    settings_menu_text(None),
                     true,
                     Some("CmdOrCtrl+,"),
                 )?,
