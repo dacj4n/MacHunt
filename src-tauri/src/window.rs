@@ -1,9 +1,10 @@
 use crate::settings::AppState;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 pub const EVENT_OPEN_SETTINGS: &str = "app://open-settings";
 pub const EVENT_FOCUS_SEARCH: &str = "app://focus-search";
+pub const EVENT_OPEN_PINNED: &str = "app://open-pinned";
 
 pub fn normalize_shortcut_input(raw: &str) -> Result<String, String> {
     let shortcut = raw.trim();
@@ -86,6 +87,7 @@ pub fn toggle_main_window_internal<R: tauri::Runtime>(
     let visible = window.is_visible().map_err(|e| e.to_string())?;
     if !visible {
         show_main_window_internal(app, state)?;
+        let _ = app.emit(EVENT_FOCUS_SEARCH, ());
         return Ok(true);
     }
 
@@ -93,6 +95,7 @@ pub fn toggle_main_window_internal<R: tauri::Runtime>(
     let focused = window.is_focused().map_err(|e| e.to_string())?;
     if minimized || !focused {
         show_main_window_internal(app, state)?;
+        let _ = app.emit(EVENT_FOCUS_SEARCH, ());
         return Ok(true);
     }
 

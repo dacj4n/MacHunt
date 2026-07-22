@@ -14,7 +14,7 @@ import type {
 } from "./types";
 import {
   DEFAULT_WINDOW_TOGGLE_SHORTCUT, DEFAULT_COLUMN_WIDTHS, COLUMN_KEYS,
-  EVENT_OPEN_SETTINGS, EVENT_FOCUS_SEARCH,
+  EVENT_OPEN_SETTINGS, EVENT_FOCUS_SEARCH, EVENT_OPEN_PINNED,
   detectDefaultLanguage,
   loadStoredRegexEnabled, loadStoredCaseSensitive, loadStoredFuzzyEnabled,
   loadPinnedItems, savePinnedItems, loadStoredColumnWidths,
@@ -747,6 +747,11 @@ function App() {
     let unlistenFocus: (() => void) | undefined;
     void listen(EVENT_FOCUS_SEARCH, () => { setActiveView("search"); window.requestAnimationFrame(() => { searchInputRef.current?.focus(); searchInputRef.current?.select(); }); }).then((d) => { unlistenFocus = d; }).catch(() => {});
     return () => { if (unlistenFocus) unlistenFocus(); };
+  }, []);
+  useEffect(() => {
+    let unlistenPinned: (() => void) | undefined;
+    void listen(EVENT_OPEN_PINNED, () => setActiveView("pinned")).then((d) => { unlistenPinned = d; }).catch(() => {});
+    return () => { if (unlistenPinned) unlistenPinned(); };
   }, []);
 
   // Load settings

@@ -28,6 +28,7 @@ export const FUZZY_ENABLED_STORAGE_KEY = "machunt.search.fuzzy_enabled";
 export const PINNED_STORAGE_KEY = "machunt.pinned.items";
 export const EVENT_OPEN_SETTINGS = "app://open-settings";
 export const EVENT_FOCUS_SEARCH = "app://focus-search";
+export const EVENT_OPEN_PINNED = "app://open-pinned";
 export const TAB_IDS: TabId[] = ["all", "files", "folders", "documents", "images", "media", "code", "archives"];
 
 export const TAB_EXTENSIONS: Record<TabId, string[] | null> = {

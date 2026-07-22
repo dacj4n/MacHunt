@@ -12,6 +12,7 @@ pub fn settings_menu_text(language: Option<&str>) -> &'static str {
 /// Localised tray menu labels.
 pub struct TrayLabels {
     pub search: &'static str,
+    pub pinned: &'static str,
     pub settings: &'static str,
     pub quit: &'static str,
 }
@@ -20,11 +21,13 @@ pub fn tray_labels(language: Option<&str>) -> TrayLabels {
     match language {
         Some("zh") => TrayLabels {
             search: "搜索",
+            pinned: "收藏",
             settings: "设置...",
             quit: "退出 MacHunt",
         },
         _ => TrayLabels {
             search: "Search",
+            pinned: "Pinned",
             settings: "Settings...",
             quit: "Quit MacHunt",
         },

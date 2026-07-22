@@ -18,6 +18,9 @@ fn build_tray_menu(app: &tauri::AppHandle, language: Option<&str>) -> tauri::Res
     let search_item = MenuItemBuilder::with_id("tray_search", labels.search)
         .build(app)?;
 
+    let pinned_item = MenuItemBuilder::with_id("tray_pinned", labels.pinned)
+        .build(app)?;
+
     let settings_item = MenuItemBuilder::with_id("tray_settings", labels.settings)
         .accelerator("Cmd+,")
         .build(app)?;
@@ -28,6 +31,8 @@ fn build_tray_menu(app: &tauri::AppHandle, language: Option<&str>) -> tauri::Res
 
     let tray_menu = MenuBuilder::new(app)
         .item(&search_item)
+        .item(&pinned_item)
+        .separator()
         .item(&settings_item)
         .separator()
         .item(&quit_item)
@@ -64,13 +69,18 @@ pub fn create_tray_icon(app: &tauri::AppHandle) -> tauri::Result<()> {
             match event.id().as_ref() {
                 "tray_search" => {
                     let state = app.state::<crate::settings::AppState>();
-                    let _ = window::show_main_window_internal(&app, &state);
                     let _ = app.emit(crate::window::EVENT_FOCUS_SEARCH, ());
+                    let _ = window::show_main_window_internal(&app, &state);
+                }
+                "tray_pinned" => {
+                    let state = app.state::<crate::settings::AppState>();
+                    let _ = app.emit(crate::window::EVENT_OPEN_PINNED, ());
+                    let _ = window::show_main_window_internal(&app, &state);
                 }
                 "tray_settings" => {
                     let state = app.state::<crate::settings::AppState>();
-                    let _ = window::show_main_window_internal(&app, &state);
                     let _ = app.emit(crate::window::EVENT_OPEN_SETTINGS, ());
+                    let _ = window::show_main_window_internal(&app, &state);
                 }
                 "tray_quit" => {
                     let state = app.state::<crate::settings::AppState>();
