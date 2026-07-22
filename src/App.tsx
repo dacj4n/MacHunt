@@ -48,6 +48,7 @@ function App() {
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [silentStart, setSilentStart] = useState(false);
   const [showDockIcon, setShowDockIcon] = useState(false);
+  const [showTrayIcon, setShowTrayIcon] = useState(true);
   const [isLaunchSettingsSaving, setIsLaunchSettingsSaving] = useState(false);
   const [launchSettingsStatus, setLaunchSettingsStatus] = useState("");
 
@@ -531,13 +532,27 @@ function App() {
   };
   const resetWindowToggleShortcut = async () => { setShortcutDraft(DEFAULT_WINDOW_TOGGLE_SHORTCUT); await applyWindowToggleShortcut(DEFAULT_WINDOW_TOGGLE_SHORTCUT); };
 
-  const applyLaunchSettings = async (nextLaunchAtLogin: boolean, nextSilentStart: boolean, nextShowDockIcon: boolean) => {
+  const applyLaunchSettings = async (nextLaunchAtLogin: boolean, nextSilentStart: boolean, nextShowDockIcon: boolean, nextShowTrayIcon: boolean) => {
     if (isLaunchSettingsSaving) return;
-    setIsLaunchSettingsSaving(true); setLaunchSettingsStatus(t.startupSaving); setError(null);
+    // Optimistic UI update — toggle switches immediately, persist in background
+    setLaunchAtLogin(nextLaunchAtLogin);
+    setSilentStart(nextSilentStart);
+    setShowDockIcon(nextShowDockIcon);
+    setShowTrayIcon(nextShowTrayIcon);
+    setIsLaunchSettingsSaving(true);
+    setLaunchSettingsStatus("");
+    setError(null);
     try {
-      const saved = await invoke<LaunchSettingsResponse>("set_launch_settings", { launchAtLogin: nextLaunchAtLogin, silentStart: nextSilentStart, showDockIcon: nextShowDockIcon });
-      setLaunchAtLogin(saved.launchAtLogin); setSilentStart(saved.silentStart); setShowDockIcon(saved.showDockIcon); setLaunchSettingsStatus(t.startupSaved);
-    } catch (err) { setLaunchSettingsStatus(t.startupSaveFailed); setError(String(err)); }
+      const saved = await invoke<LaunchSettingsResponse>("set_launch_settings", { launchAtLogin: nextLaunchAtLogin, silentStart: nextSilentStart, showDockIcon: nextShowDockIcon, showTrayIcon: nextShowTrayIcon });
+      setLaunchAtLogin(saved.launchAtLogin); setSilentStart(saved.silentStart); setShowDockIcon(saved.showDockIcon); setShowTrayIcon(saved.showTrayIcon);
+    } catch (err) {
+      // Rollback on failure
+      setLaunchAtLogin(!nextLaunchAtLogin);
+      setSilentStart(!nextSilentStart);
+      setShowDockIcon(!nextShowDockIcon);
+      setShowTrayIcon(!nextShowTrayIcon);
+      setError(String(err));
+    }
     finally { setIsLaunchSettingsSaving(false); }
   };
   const applyAutoVacuumSettings = async (next: boolean) => {
@@ -782,7 +797,7 @@ function App() {
     return () => { m = false; window.clearTimeout(tmr); };
   }, [autoCheckUpdate]);
   useEffect(() => {
-    let m = true; const load = async () => { try { const s = await invoke<LaunchSettingsResponse>("get_launch_settings"); if (m) { setLaunchAtLogin(s.launchAtLogin); setSilentStart(s.silentStart); setShowDockIcon(s.showDockIcon); } } catch (e) { if (m) setError(String(e)); } };
+    let m = true; const load = async () => { try { const s = await invoke<LaunchSettingsResponse>("get_launch_settings"); if (m) { setLaunchAtLogin(s.launchAtLogin); setSilentStart(s.silentStart); setShowDockIcon(s.showDockIcon); setShowTrayIcon(s.showTrayIcon ?? true); } } catch (e) { if (m) setError(String(e)); } };
     void load(); return () => { m = false; };
   }, []);
   useEffect(() => {
@@ -1181,7 +1196,7 @@ function App() {
           isShortcutSaving={isShortcutSaving}
           applyWindowToggleShortcut={applyWindowToggleShortcut}
           resetWindowToggleShortcut={resetWindowToggleShortcut}
-          launchAtLogin={launchAtLogin} silentStart={silentStart} showDockIcon={showDockIcon}
+          launchAtLogin={launchAtLogin} silentStart={silentStart} showDockIcon={showDockIcon} showTrayIcon={showTrayIcon}
           isLaunchSettingsSaving={isLaunchSettingsSaving} launchSettingsStatus={launchSettingsStatus}
           applyLaunchSettings={applyLaunchSettings}
           maxResults={maxResults} isMaxResultsSaving={isMaxResultsSaving} maxResultsStatus={maxResultsStatus}

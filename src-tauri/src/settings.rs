@@ -10,6 +10,10 @@ fn default_auto_vacuum_on_rebuild() -> bool {
     true
 }
 
+fn default_show_tray_icon() -> bool {
+    true
+}
+
 fn default_auto_check_update() -> bool {
     true
 }
@@ -37,6 +41,8 @@ pub struct GuiSettings {
     pub launch_at_login: bool,
     pub silent_start: bool,
     pub show_dock_icon: bool,
+    #[serde(default = "default_show_tray_icon")]
+    pub show_tray_icon: bool,
     #[serde(default = "default_auto_vacuum_on_rebuild")]
     pub auto_vacuum_on_rebuild: bool,
     #[serde(default = "default_auto_check_update")]
@@ -61,6 +67,7 @@ impl Default for GuiSettings {
             launch_at_login: false,
             silent_start: false,
             show_dock_icon: true,
+            show_tray_icon: true,
             auto_vacuum_on_rebuild: default_auto_vacuum_on_rebuild(),
             auto_check_update: default_auto_check_update(),
             exclude_exact_dirs: Vec::new(),
@@ -118,6 +125,7 @@ pub struct AppState {
     pub launch_at_login: Mutex<bool>,
     pub silent_start: Mutex<bool>,
     pub show_dock_icon: Mutex<bool>,
+    pub show_tray_icon: Mutex<bool>,
     pub auto_vacuum_on_rebuild: Mutex<bool>,
     pub auto_check_update: Mutex<bool>,
     pub exclude_exact_dirs: Mutex<Vec<String>>,
@@ -173,6 +181,7 @@ impl AppState {
             launch_at_login: Mutex::new(settings.launch_at_login),
             silent_start: Mutex::new(settings.silent_start),
             show_dock_icon: Mutex::new(settings.show_dock_icon),
+            show_tray_icon: Mutex::new(settings.show_tray_icon),
             auto_vacuum_on_rebuild: Mutex::new(settings.auto_vacuum_on_rebuild),
             auto_check_update: Mutex::new(settings.auto_check_update),
             exclude_exact_dirs: Mutex::new(exclude_exact_dirs),
@@ -203,6 +212,7 @@ pub fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         launch_at_login: *state.launch_at_login.lock().map_err(|_| "Failed to access launch-at-login setting".to_string())?,
         silent_start: *state.silent_start.lock().map_err(|_| "Failed to access silent-start setting".to_string())?,
         show_dock_icon: *state.show_dock_icon.lock().map_err(|_| "Failed to access show-dock-icon setting".to_string())?,
+        show_tray_icon: *state.show_tray_icon.lock().map_err(|_| "Failed to access show-tray-icon setting".to_string())?,
         auto_vacuum_on_rebuild: *state.auto_vacuum_on_rebuild.lock().map_err(|_| "Failed to access auto-vacuum setting".to_string())?,
         auto_check_update: *state.auto_check_update.lock().map_err(|_| "Failed to access auto-check-update setting".to_string())?,
         exclude_exact_dirs: lock_get!(exclude_exact_dirs, Vec<String>),

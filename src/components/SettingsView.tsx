@@ -18,9 +18,10 @@ export interface SettingsViewProps {
   launchAtLogin: boolean;
   silentStart: boolean;
   showDockIcon: boolean;
+  showTrayIcon: boolean;
   isLaunchSettingsSaving: boolean;
   launchSettingsStatus: string;
-  applyLaunchSettings: (launchAtLogin: boolean, silentStart: boolean, showDockIcon: boolean) => Promise<void>;
+  applyLaunchSettings: (launchAtLogin: boolean, silentStart: boolean, showDockIcon: boolean, showTrayIcon: boolean) => Promise<void>;
   maxResults: number;
   isMaxResultsSaving: boolean;
   maxResultsStatus: string;
@@ -93,7 +94,7 @@ export function SettingsView(props: SettingsViewProps) {
     windowToggleShortcut, shortcutDraft, setShortcutDraft,
     shortcutStatus, setShortcutStatus, isShortcutSaving,
     applyWindowToggleShortcut, resetWindowToggleShortcut,
-    launchAtLogin, silentStart, showDockIcon,
+    launchAtLogin, silentStart, showDockIcon, showTrayIcon,
     isLaunchSettingsSaving, launchSettingsStatus,
     applyLaunchSettings,
     maxResults, isMaxResultsSaving, maxResultsStatus, applyMaxResults,
@@ -258,7 +259,7 @@ export function SettingsView(props: SettingsViewProps) {
                   aria-label={t.startupLaunchAtLogin}
                   className={launchAtLogin ? "ns-switch on" : "ns-switch"}
                   disabled={isLaunchSettingsSaving}
-                  onClick={() => void applyLaunchSettings(!launchAtLogin, silentStart, showDockIcon)}
+                  onClick={() => void applyLaunchSettings(!launchAtLogin, silentStart, showDockIcon, showTrayIcon)}
                 >
                   <span className="ns-switch-knob" />
                 </button>
@@ -275,7 +276,7 @@ export function SettingsView(props: SettingsViewProps) {
                   aria-label={t.startupSilentStart}
                   className={silentStart ? "ns-switch on" : "ns-switch"}
                   disabled={isLaunchSettingsSaving}
-                  onClick={() => void applyLaunchSettings(launchAtLogin, !silentStart, showDockIcon)}
+                  onClick={() => void applyLaunchSettings(launchAtLogin, !silentStart, showDockIcon, showTrayIcon)}
                 >
                   <span className="ns-switch-knob" />
                 </button>
@@ -292,7 +293,24 @@ export function SettingsView(props: SettingsViewProps) {
                   aria-label={t.startupShowDockIcon}
                   className={showDockIcon ? "ns-switch on" : "ns-switch"}
                   disabled={isLaunchSettingsSaving}
-                  onClick={() => void applyLaunchSettings(launchAtLogin, silentStart, !showDockIcon)}
+                  onClick={() => void applyLaunchSettings(launchAtLogin, silentStart, !showDockIcon, showTrayIcon)}
+                >
+                  <span className="ns-switch-knob" />
+                </button>
+              </label>
+              <label className="toggle-card">
+                <div className="toggle-card-copy">
+                  <div className="toggle-card-title">{t.startupShowTrayIcon}</div>
+                  <div className="toggle-card-desc">{t.startupShowTrayIconDesc}</div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={showTrayIcon}
+                  aria-label={t.startupShowTrayIcon}
+                  className={showTrayIcon ? "ns-switch on" : "ns-switch"}
+                  disabled={isLaunchSettingsSaving}
+                  onClick={() => void applyLaunchSettings(launchAtLogin, silentStart, showDockIcon, !showTrayIcon)}
                 >
                   <span className="ns-switch-knob" />
                 </button>

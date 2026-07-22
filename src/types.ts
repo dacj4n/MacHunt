@@ -53,6 +53,7 @@ export interface LaunchSettingsResponse {
   launchAtLogin: boolean;
   silentStart: boolean;
   showDockIcon: boolean;
+  showTrayIcon: boolean;
 }
 
 export interface AutoVacuumSettingsResponse {

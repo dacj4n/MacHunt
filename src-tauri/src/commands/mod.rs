@@ -56,6 +56,7 @@ pub struct LaunchSettingsResponse {
     pub launch_at_login: bool,
     pub silent_start: bool,
     pub show_dock_icon: bool,
+    pub show_tray_icon: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -163,7 +164,8 @@ pub fn get_launch_settings(state: tauri::State<'_, AppState>) -> Result<LaunchSe
     let launch_at_login = *state.launch_at_login.lock().map_err(|_| "Failed to access launch-at-login setting".to_string())?;
     let silent_start = *state.silent_start.lock().map_err(|_| "Failed to access silent-start setting".to_string())?;
     let show_dock_icon = *state.show_dock_icon.lock().map_err(|_| "Failed to access show-dock-icon setting".to_string())?;
-    Ok(LaunchSettingsResponse { launch_at_login, silent_start, show_dock_icon })
+    let show_tray_icon = *state.show_tray_icon.lock().map_err(|_| "Failed to access show-tray-icon setting".to_string())?;
+    Ok(LaunchSettingsResponse { launch_at_login, silent_start, show_dock_icon, show_tray_icon })
 }
 
 #[tauri::command]
@@ -172,6 +174,7 @@ pub fn set_launch_settings(
     launchAtLogin: bool,
     silentStart: bool,
     showDockIcon: bool,
+    showTrayIcon: bool,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<LaunchSettingsResponse, String> {
@@ -189,6 +192,10 @@ pub fn set_launch_settings(
         let mut guard = state.show_dock_icon.lock().map_err(|_| "Failed to access show-dock-icon setting".to_string())?;
         *guard = showDockIcon;
     }
+    {
+        let mut guard = state.show_tray_icon.lock().map_err(|_| "Failed to access show-tray-icon setting".to_string())?;
+        *guard = showTrayIcon;
+    }
 
     #[cfg(target_os = "macos")]
     {
@@ -205,7 +212,15 @@ pub fn set_launch_settings(
     let settings = snapshot_gui_settings(&state)?;
     save_gui_settings(&settings)?;
 
-    Ok(LaunchSettingsResponse { launch_at_login: launchAtLogin, silent_start: silentStart, show_dock_icon: showDockIcon })
+    // Sync tray icon visibility immediately (no restart needed)
+    crate::tray::sync_tray_visibility(&app);
+
+    Ok(LaunchSettingsResponse {
+        launch_at_login: launchAtLogin,
+        silent_start: silentStart,
+        show_dock_icon: showDockIcon,
+        show_tray_icon: showTrayIcon,
+    })
 }
 
 // ── Exclude dir settings (needs engine sync) ──

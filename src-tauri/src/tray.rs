@@ -133,3 +133,38 @@ pub fn update_tray_menu_language(app: &tauri::AppHandle) {
         }
     }
 }
+
+/// Remove the tray icon from the macOS menu bar.
+pub fn destroy_tray_icon(app: &tauri::AppHandle) {
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let _ = tray.set_icon(None);
+        let _ = tray.set_menu::<tauri::menu::Menu<tauri::Wry>>(None);
+        let _ = tray.set_visible(false);
+    }
+}
+
+/// Show / hide tray icon based on the current show_tray_icon setting.
+pub fn sync_tray_visibility(app: &tauri::AppHandle) {
+    let show = {
+        let state = app.state::<crate::settings::AppState>();
+        let guard = state.show_tray_icon.lock().unwrap_or_else(|e| e.into_inner());
+        *guard
+    };
+
+    if show {
+        // If tray already exists, just make it visible; otherwise create it.
+        if let Some(tray) = app.tray_by_id("main-tray") {
+            let _ = tray.set_visible(true);
+            // Refresh the menu in case language / labels changed in the meantime.
+            update_tray_menu_language(app);
+        } else {
+            if let Err(e) = create_tray_icon(app) {
+                eprintln!("Failed to create tray icon: {}", e);
+            }
+        }
+    } else {
+        if let Some(tray) = app.tray_by_id("main-tray") {
+            let _ = tray.set_visible(false);
+        }
+    }
+}

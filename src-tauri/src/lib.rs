@@ -90,9 +90,16 @@ pub fn run() {
             // Make window draggable by background (no titlebar)
             let _ = window::make_window_movable_by_background(&app.handle().clone());
 
-            // Create menu bar tray icon
-            if let Err(e) = tray::create_tray_icon(&app.handle().clone()) {
-                eprintln!("Failed to create tray icon: {}", e);
+            // Create menu bar tray icon (respects show_tray_icon setting)
+            let show_tray = {
+                let state = app.state::<crate::settings::AppState>();
+                let guard = state.show_tray_icon.lock().unwrap_or_else(|e| e.into_inner());
+                *guard
+            };
+            if show_tray {
+                if let Err(e) = tray::create_tray_icon(&app.handle().clone()) {
+                    eprintln!("Failed to create tray icon: {}", e);
+                }
             }
 
             Ok(())
