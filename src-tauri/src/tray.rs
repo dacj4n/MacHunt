@@ -135,6 +135,7 @@ pub fn update_tray_menu_language(app: &tauri::AppHandle) {
 }
 
 /// Remove the tray icon from the macOS menu bar.
+#[allow(dead_code)]
 pub fn destroy_tray_icon(app: &tauri::AppHandle) {
     if let Some(tray) = app.tray_by_id("main-tray") {
         let _ = tray.set_icon(None);
