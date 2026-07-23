@@ -461,6 +461,91 @@ impl Db {
         );
     }
 
+    /// Delete all file and directory entries whose path matches any of the
+    /// given regex patterns. Used after the user updates exclude rules so that
+    /// newly-excluded files are removed from the index immediately without
+    /// requiring a full rebuild.
+    pub fn delete_excluded_by_patterns(&self, regex_dirs: &[regex::Regex]) {
+        if regex_dirs.is_empty() {
+            return;
+        }
+        let conn = self.conn.lock();
+
+        // Collect affected directory IDs
+        let mut affected_dir_ids: Vec<i64> = Vec::new();
+
+        // Query all paths from dirs table (small enough to iterate in memory)
+        if let Ok(mut stmt) =
+            conn.prepare("SELECT id, path FROM dirs")
+        {
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            });
+            if let Ok(iter) = rows {
+                for row in iter.flatten() {
+                    let (dir_id, dir_path) = row;
+                    let mut match_path = dir_path.clone();
+                    match_path.push('/');
+                    if regex_dirs.iter().any(|re| re.is_match(&match_path)) {
+                        affected_dir_ids.push(dir_id);
+                    }
+                }
+            }
+        }
+
+        if !affected_dir_ids.is_empty() {
+            // Remove files in excluded dirs from FTS
+            for chunk in affected_dir_ids.chunks(500) {
+                let placeholders: Vec<String> =
+                    chunk.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+                let sql = format!(
+                    "INSERT INTO files_fts(files_fts, rowid, name_lower) \
+                     SELECT 'delete', f.id, '' FROM files f \
+                     WHERE f.dir_id IN ({})",
+                    placeholders.join(",")
+                );
+                let mut stmt = conn.prepare(&sql).ok();
+                if let Some(ref mut s) = stmt {
+                    let params: Vec<&dyn rusqlite::types::ToSql> =
+                        chunk.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+                    let _ = s.execute(params.as_slice());
+                }
+            }
+
+            // Delete files in excluded dirs
+            for chunk in affected_dir_ids.chunks(500) {
+                let placeholders: Vec<String> =
+                    chunk.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+                let sql = format!(
+                    "DELETE FROM files WHERE dir_id IN ({})",
+                    placeholders.join(",")
+                );
+                let mut stmt = conn.prepare(&sql).ok();
+                if let Some(ref mut s) = stmt {
+                    let params: Vec<&dyn rusqlite::types::ToSql> =
+                        chunk.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+                    let _ = s.execute(params.as_slice());
+                }
+            }
+
+            // Delete excluded dirs
+            for chunk in affected_dir_ids.chunks(500) {
+                let placeholders: Vec<String> =
+                    chunk.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
+                let sql = format!(
+                    "DELETE FROM dirs WHERE id IN ({})",
+                    placeholders.join(",")
+                );
+                let mut stmt = conn.prepare(&sql).ok();
+                if let Some(ref mut s) = stmt {
+                    let params: Vec<&dyn rusqlite::types::ToSql> =
+                        chunk.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+                    let _ = s.execute(params.as_slice());
+                }
+            }
+        }
+    }
+
     pub fn delete_under_root(&self, root: &Path) {
         let conn = self.conn.lock();
         if root == Path::new("/") {

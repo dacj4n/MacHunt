@@ -1,8 +1,8 @@
 use crate::builder;
 use crate::db::Db;
 use crate::filters::{
-    compile_exclude_rules, compile_file_exclude_rules, sanitize_owned_rules, sanitize_roots,
-    validate_pattern_rules,
+    compile_exclude_rules, compile_file_exclude_rules, compile_pattern,
+    sanitize_owned_rules, sanitize_roots, validate_pattern_rules,
 };
 use crate::model::{SearchMode, SearchOptions, SortKey, VolumeEvent};
 use crate::search;
@@ -217,6 +217,12 @@ impl Engine {
         let sanitized_pattern = sanitize_owned_rules(pattern_dirs);
         validate_pattern_rules(&sanitized_pattern)?;
 
+        // Compile the patterns for immediate cleanup of existing index entries.
+        let compiled_patterns: Vec<regex::Regex> = sanitized_pattern
+            .iter()
+            .filter_map(|p| compile_pattern(p).ok())
+            .collect();
+
         {
             let mut guard = self
                 .exclude_exact_dirs
@@ -234,6 +240,10 @@ impl Engine {
 
         self.db.save_exclude_exact_dirs(&sanitized_exact);
         self.db.save_exclude_pattern_dirs(&sanitized_pattern);
+
+        // Immediately remove newly-excluded paths from the index so that
+        // subsequent searches respect the updated rules without a rebuild.
+        self.db.delete_excluded_by_patterns(&compiled_patterns);
 
         Ok((sanitized_exact, sanitized_pattern))
     }

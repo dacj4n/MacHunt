@@ -252,8 +252,16 @@ unsafe extern "C" fn fsevent_callback(
             continue;
         }
 
+        // Exclusion rules take absolute priority — even if the watch root
+        // was explicitly configured, any path matching an exclude pattern
+        // must be silently dropped before any indexing or removal.
+        let is_dir = flags & FLAG_ITEM_IS_FILE == 0;
+        if is_excluded(path.as_path(), is_dir, &ctx.exclude_rules) {
+            continue;
+        }
+
         // Directory events
-        if flags & FLAG_ITEM_IS_FILE == 0 {
+        if is_dir {
             if flags & FLAG_ITEM_REMOVED != 0 {
                 remove_tree(ctx, path.as_path());
                 continue;
