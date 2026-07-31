@@ -349,10 +349,6 @@ impl Db {
     }
 
     /// Atomically promote the temp database to the main one.
-    ///  1. checkpoint the temp DB
-    ///  2. close temp connection
-    ///  3. rename index.db.new → index.db
-    ///  4. reopen the main connection
     pub fn finish_rebuild(&self) -> Result<(), String> {
         let temp_path = self.path.with_extension("db.new");
 
@@ -362,9 +358,7 @@ impl Db {
             guard
                 .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
                 .map_err(|e| e.to_string())?;
-            // Replace with a dummy in-memory connection so the temp fd is closed.
             let _temp = std::mem::replace(&mut *guard, Connection::open_in_memory().unwrap());
-            // _temp dropped → sqlite3_close on temp DB.
         }
 
         // Atomic swap on APFS (same volume).
@@ -974,7 +968,10 @@ impl Db {
     where
         P1: rusqlite::types::ToSql,
     {
-        let mut stmt = conn.prepare(sql).unwrap();
+        let mut stmt = match conn.prepare(sql) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
         if let Some(ref pp) = path_param {
             stmt.query_map(params![name_param, pp, limit], Self::map_row as fn(&rusqlite::Row) -> _)
         } else {
