@@ -631,17 +631,23 @@ impl Engine {
 
         // Extract a literal fragment for DB pre-filtering.
         let fragment = extract_literal(&options.query);
-        let pattern = if fragment.len() >= 2 {
-            if options.case_sensitive {
-                format!("%{}%", fragment)
+        // Determine if the literal is a prefix (query starts with it, not after * or ?).
+        let is_prefix = !fragment.is_empty() && options.query.starts_with(&fragment);
+        let pattern = if !fragment.is_empty() {
+            let frag = if options.case_sensitive { fragment.clone() } else { fragment.to_lowercase() };
+            if is_prefix {
+                format!("{}%", frag)
             } else {
-                format!("%{}%", fragment.to_lowercase())
+                format!("%{}%", frag)
             }
         } else {
             "%".to_string()
         };
 
         // Use LIKE with the literal fragment to get candidates, then filter by regex.
+        // Fetch more candidates than limit so regex has enough to match (especially
+        // for short fragments where LIKE is broad but sort order may push matches out).
+        let fetch_limit = if is_prefix { limit } else { limit.max(5000) };
         let results = self
             .db
             .search_like(
@@ -651,7 +657,7 @@ impl Engine {
                 options.extensions.as_deref(),
                 options.sort_key,
                 options.sort_ascending,
-                limit,
+                fetch_limit,
                 options.include_files,
                 options.include_dirs,
                 options.size_min_bytes,
