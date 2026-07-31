@@ -270,8 +270,8 @@ function App() {
         return appForExt(extensionOf(item.name)) === appFilter;
       });
     }
-    return list;
-  }, [items, timeFilter, sizeFilter, appFilter, filterVersion]);
+    return list.slice(0, maxResults);
+  }, [items, timeFilter, sizeFilter, appFilter, filterVersion, maxResults]);
 
   const visibleStart = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VISIBLE_BUFFER);
   const visibleEnd = Math.min(filteredItems.length, visibleStart + Math.ceil(window.innerHeight / ROW_HEIGHT) + VISIBLE_BUFFER * 2);
@@ -930,7 +930,7 @@ function App() {
       if (needle.length === 0) { setItems([]); setTotalFound(0); setTookMs(0); setScrollTop(0); return; }
       setIsSearching(true); setError(null);
       try {
-        const response = await invoke<SearchResponse>("search", buildSearchRequest(needle, activeTab, pathPrefix, caseSensitive, regexEnabled, fuzzyEnabled, sortKey, sortAscending, maxResults));
+        const response = await invoke<SearchResponse>("search", buildSearchRequest(needle, activeTab, pathPrefix, caseSensitive, regexEnabled, fuzzyEnabled, sortKey, sortAscending, 0));
         if (cancelled) return;
         setItems(response.items); setTotalFound(response.total); setTookMs(response.tookMs); setScrollTop(0);
         if (tableBodyRef.current) tableBodyRef.current.scrollTop = 0;
@@ -939,7 +939,7 @@ function App() {
     };
     const timer = window.setTimeout(() => { void runSearch(); }, 180);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [query, pathPrefix, activeTab, regexEnabled, caseSensitive, fuzzyEnabled, sortKey, sortAscending, isIndexLoading, maxResults]);
+  }, [query, pathPrefix, activeTab, regexEnabled, caseSensitive, fuzzyEnabled, sortKey, sortAscending, isIndexLoading]);
 
   // Reset app filter when no longer valid
   useEffect(() => { if (appFilter && !appFilterOptions.includes(appFilter)) setAppFilter(""); }, [appFilterOptions, appFilter]);

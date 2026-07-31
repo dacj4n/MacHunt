@@ -359,6 +359,9 @@ export function buildSearchRequest(
   const includeDirs = tab === "all" || tab === "folders";
   const extensions = TAB_EXTENSIONS[tab];
   const mode = fuzzyEnabled ? "Fuzzy" : regexEnabled ? "Pattern" : "Substring";
+  // Pass null as limit so the engine returns all matching results without truncation.
+  // Frontend applies size/time/app filters on the full dataset, then
+  // virtual-scroll renders only visible rows (controlled by maxResults display setting).
   return {
     request: {
       query,
@@ -368,7 +371,7 @@ export function buildSearchRequest(
       pathPrefix: pathPrefix.trim() || null,
       includeFiles,
       includeDirs,
-      limit,
+      limit: null,
       extensions,
       sortKey,
       sortAscending,

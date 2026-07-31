@@ -519,7 +519,8 @@ impl Engine {
     }
 
     pub fn search(&self, options: SearchOptions) -> Vec<PathBuf> {
-        let limit = options.limit.unwrap_or(500);
+        // None means no limit — return all matching results.
+        let limit = options.limit.unwrap_or(usize::MAX);
 
         match options.mode {
             SearchMode::Substring => self.search_substring(&options, limit),
@@ -603,7 +604,7 @@ impl Engine {
         let needs_meta_sort = matches!(options.sort_key, SortKey::Size | SortKey::Modified);
         // Type filtering (file/dir) now happens at the SQL level via is_dir column,
         // so fetch_limit only needs to compensate for dead-path cleanup and meta-sort.
-        let fetch_limit = if needs_meta_sort { limit * 3 } else { limit * 2 };
+        let fetch_limit = if needs_meta_sort { limit.saturating_mul(3) } else { limit.saturating_mul(2) };
         let results = self
             .db
             .search_fts(
@@ -645,7 +646,7 @@ impl Engine {
 
         let needs_meta_sort = matches!(options.sort_key, SortKey::Size | SortKey::Modified);
         // Type filtering happens at SQL level via is_dir column.
-        let fetch_limit = if needs_meta_sort { limit * 3 } else { limit * 2 };
+        let fetch_limit = if needs_meta_sort { limit.saturating_mul(3) } else { limit.saturating_mul(2) };
 
         // Use LIKE with the literal fragment to get candidates, then filter by regex.
         let results = self

@@ -525,7 +525,7 @@ pub async fn search(request: SearchRequest, state: tauri::State<'_, AppState>) -
     let query_limit = request.limit;
     let regex_enabled = request.regex_enabled.unwrap_or(false);
     let started = Instant::now();
-    let mut items = tauri::async_runtime::spawn_blocking(move || {
+    let items = tauri::async_runtime::spawn_blocking(move || {
         if regex_enabled && request.mode == SearchMode::Pattern {
             let substring_options = to_search_options(&request, SearchMode::Substring, query_limit);
             let regex_options = to_search_options(&request, SearchMode::Pattern, query_limit);
@@ -554,8 +554,6 @@ pub async fn search(request: SearchRequest, state: tauri::State<'_, AppState>) -
         }
     }).await.map_err(|e| e.to_string())?;
     let total = items.len();
-    let max_results = *state.max_results.lock().map_err(|_| "Failed to access max_results setting".to_string())?;
-    items.truncate(max_results);
     Ok(SearchResponse { items, total, took_ms: started.elapsed().as_millis() as u64 })
 }
 
