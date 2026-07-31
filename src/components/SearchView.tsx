@@ -70,8 +70,10 @@ export interface SearchViewProps {
   setCustomSizeMinTemp: (v: string) => void;
   customSizeMax: string;
   setCustomSizeMaxTemp: (v: string) => void;
-  customSizeUnit: string;
-  setCustomSizeUnit: (v: string) => void;
+  customSizeMinUnit: string;
+  setCustomSizeMinUnit: (v: string) => void;
+  customSizeMaxUnit: string;
+  setCustomSizeMaxUnit: (v: string) => void;
   customSizeMinRef: React.MutableRefObject<number>;
   customSizeMaxRef: React.MutableRefObject<number>;
   customSizeLabel: string | null;
@@ -138,8 +140,8 @@ export function SearchView(props: SearchViewProps) {
     calFrom, setCalFrom, calTo, setCalTo,
     customTimeFromRef, customTimeToRef, customTimeLabel, setFilterVersion,
     sizeFilter, setSizeFilter, customSizeMin, setCustomSizeMinTemp,
-    customSizeMax, setCustomSizeMaxTemp, customSizeUnit, setCustomSizeUnit,
-    customSizeMinRef, customSizeMaxRef, customSizeLabel,
+    customSizeMax, setCustomSizeMaxTemp, customSizeMinUnit, setCustomSizeMinUnit,
+    customSizeMaxUnit, setCustomSizeMaxUnit, customSizeMinRef, customSizeMaxRef, customSizeLabel,
     appFilter, setAppFilter, appFilterOptions,
     filteredItems, gridTemplateColumns, sortKey, sortAscending, toggleHeaderSort,
     columnWidths, activeResizer, startResize,
@@ -421,29 +423,43 @@ export function SearchView(props: SearchViewProps) {
                   <label>{t.sizeMin}</label>
                   <input className="filter-input" type="text" inputMode="decimal" placeholder="0"
                     value={customSizeMin} onChange={(e) => setCustomSizeMinTemp(e.target.value)} />
+                  <CustomSelect
+                    value={customSizeMinUnit}
+                    options={[
+                      { value: "", label: t.sizeUnit },
+                      { value: "KB", label: "KB" },
+                      { value: "MB", label: "MB" },
+                      { value: "GB", label: "GB" },
+                    ]}
+                    onChange={(v) => setCustomSizeMinUnit(v)}
+                  />
                 </div>
                 <div className="filter-popover-row">
                   <label>{t.sizeMax}</label>
                   <input className="filter-input" type="text" inputMode="decimal" placeholder="100"
                     value={customSizeMax} onChange={(e) => setCustomSizeMaxTemp(e.target.value)} />
-                </div>
-                <div className="filter-popover-row">
-                  <label>{t.sizeUnit}</label>
                   <CustomSelect
-                    value={customSizeUnit}
+                    value={customSizeMaxUnit}
                     options={[
+                      { value: "", label: t.sizeUnit },
                       { value: "KB", label: "KB" },
                       { value: "MB", label: "MB" },
                       { value: "GB", label: "GB" },
                     ]}
-                    onChange={(v) => setCustomSizeUnit(v)}
+                    onChange={(v) => setCustomSizeMaxUnit(v)}
                   />
                 </div>
                 <div className="filter-popover-actions">
                   <button className="act-btn" onClick={() => {
-                    const mul = customSizeUnit === "GB" ? 1073741824 : customSizeUnit === "MB" ? 1048576 : 1024;
-                    customSizeMinRef.current = (parseFloat(customSizeMin) || 0) * mul;
-                    customSizeMaxRef.current = (parseFloat(customSizeMax) || 0) * mul;
+                    const parseVal = (v: string, unit: string) => {
+                      const n = parseFloat(v) || 0;
+                      if (unit === "GB") return n * 1073741824;
+                      if (unit === "MB") return n * 1048576;
+                      if (unit === "KB") return n * 1024;
+                      return n;
+                    };
+                    customSizeMinRef.current = parseVal(customSizeMin, customSizeMinUnit);
+                    customSizeMaxRef.current = parseVal(customSizeMax, customSizeMaxUnit);
                     setSizeFilter("custom");
                     setShowSizePopover(false);
                     setFilterVersion(v => v + 1);

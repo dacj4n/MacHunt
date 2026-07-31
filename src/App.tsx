@@ -109,7 +109,8 @@ function App() {
   const [sizeFilter, setSizeFilter] = useState("all");
   const [customSizeMin, setCustomSizeMinTemp] = useState("");
   const [customSizeMax, setCustomSizeMaxTemp] = useState("");
-  const [customSizeUnit, setCustomSizeUnit] = useState("MB");
+  const [customSizeMinUnit, setCustomSizeMinUnit] = useState("");
+  const [customSizeMaxUnit, setCustomSizeMaxUnit] = useState("");
   const [appFilter, setAppFilter] = useState("");
   const [showTimePopover, setShowTimePopover] = useState(false);
   const [showSizePopover, setShowSizePopover] = useState(false);
@@ -1129,7 +1130,8 @@ function App() {
           sizeFilter={sizeFilter} setSizeFilter={setSizeFilter}
           customSizeMin={customSizeMin} setCustomSizeMinTemp={setCustomSizeMinTemp}
           customSizeMax={customSizeMax} setCustomSizeMaxTemp={setCustomSizeMaxTemp}
-          customSizeUnit={customSizeUnit} setCustomSizeUnit={setCustomSizeUnit}
+          customSizeMinUnit={customSizeMinUnit} setCustomSizeMinUnit={setCustomSizeMinUnit}
+          customSizeMaxUnit={customSizeMaxUnit} setCustomSizeMaxUnit={setCustomSizeMaxUnit}
           customSizeMinRef={customSizeMinRef} customSizeMaxRef={customSizeMaxRef}
           customSizeLabel={customSizeLabel}
           appFilter={appFilter} setAppFilter={setAppFilter}
