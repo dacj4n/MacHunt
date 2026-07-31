@@ -20,7 +20,7 @@ pub struct BuildFilterSettings {
 }
 
 /// Batch entry: (name_lower, normalized_path, is_dir, size_bytes, modified_ms)
-type BatchEntry = (String, PathBuf, bool, Option<u64>, Option<u64>);
+pub type BatchEntry = (String, PathBuf, bool, Option<u64>, Option<u64>);
 
 fn scan_root(
     root: PathBuf,

@@ -597,7 +597,7 @@ impl Db {
         );
     }
 
-    pub fn insert_batch(&self, entries: &[(String, PathBuf, bool, Option<u64>, Option<u64>)]) {
+    pub fn insert_batch(&self, entries: &[crate::builder::BatchEntry]) {
         if entries.is_empty() {
             return;
         }
