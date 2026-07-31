@@ -19,9 +19,12 @@ pub struct BuildFilterSettings {
     pub file_exclude_rules: Arc<FileExcludeRules>,
 }
 
+/// Batch entry: (name_lower, normalized_path, is_dir, size_bytes, modified_ms)
+type BatchEntry = (String, PathBuf, bool, Option<u64>, Option<u64>);
+
 fn scan_root(
     root: PathBuf,
-    tx: Sender<Vec<(String, PathBuf, bool)>>,
+    tx: Sender<Vec<BatchEntry>>,
     include_dirs: bool,
     exclude_rules: Arc<ExcludeRules>,
     file_exclude_rules: Arc<FileExcludeRules>,
@@ -52,7 +55,14 @@ fn scan_root(
         }
         if let Some(name) = entry.file_name().to_str() {
             let normalized = normalize_path_for_index(entry.path());
-            batch.push((name.to_lowercase(), normalized, file_type.is_dir()));
+            // Gather metadata from the walkdir entry (avoids separate stat call).
+            let meta = entry.metadata().ok();
+            let size_bytes = meta.as_ref().and_then(|m| if m.is_file() { Some(m.len()) } else { None });
+            let modified_ms = meta.as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|d| u64::try_from(d.as_millis()).ok());
+            batch.push((name.to_lowercase(), normalized, file_type.is_dir(), size_bytes, modified_ms));
             if batch.len() >= BATCH_SIZE {
                 let _ = tx.send(std::mem::replace(
                     &mut batch,
@@ -107,7 +117,7 @@ pub fn build_index(
     let file_exclude_rules = filters.file_exclude_rules.clone();
     let include_dirs = filters.include_dirs;
 
-    let (tx, rx) = crossbeam::channel::bounded::<Vec<(String, PathBuf, bool)>>(256);
+    let (tx, rx) = crossbeam::channel::bounded::<Vec<BatchEntry>>(256);
 
     let handles: Vec<_> = roots
         .into_iter()
@@ -120,7 +130,7 @@ pub fn build_index(
         .collect();
     drop(tx);
 
-    let mut db_batch: Vec<(String, PathBuf, bool)> = Vec::with_capacity(BATCH_SIZE);
+    let mut db_batch: Vec<BatchEntry> = Vec::with_capacity(BATCH_SIZE);
     let mut count = 0usize;
 
     for chunk in rx {

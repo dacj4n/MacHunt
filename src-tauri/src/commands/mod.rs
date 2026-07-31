@@ -1,7 +1,7 @@
 use crate::settings::{AppState, save_gui_settings, snapshot_gui_settings};
 use crate::startup::apply_launch_settings;
 use crate::window;
-use machunt::{SearchMode, SearchOptions, SortKey};
+use machunt::{FileEntry, SearchMode, SearchOptions, SortKey};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
@@ -359,6 +359,10 @@ pub struct SearchRequest {
     extensions: Option<Vec<String>>,
     sort_key: Option<String>,
     sort_ascending: Option<bool>,
+    size_min_bytes: Option<u64>,
+    size_max_bytes: Option<u64>,
+    time_min_ms: Option<u64>,
+    time_max_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -453,6 +457,10 @@ fn to_search_options(req: &SearchRequest, mode: SearchMode, limit: Option<usize>
         extensions: req.extensions.clone(),
         sort_key,
         sort_ascending: req.sort_ascending.unwrap_or(true),
+        size_min_bytes: req.size_min_bytes,
+        size_max_bytes: req.size_max_bytes,
+        time_min_ms: req.time_min_ms,
+        time_max_ms: req.time_max_ms,
     }
 }
 
@@ -483,16 +491,22 @@ fn sort_results(items: &mut [SearchResultItem], key: SortKey, ascending: bool) {
     }
 }
 
-fn map_result(path: PathBuf) -> SearchResultItem {
-    use std::time::UNIX_EPOCH;
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
-    let parent = path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-    let metadata = std::fs::metadata(&path).ok();
-    let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-    let is_file = metadata.as_ref().map(|m| m.is_file()).unwrap_or(false);
-    let size_bytes = if is_file { metadata.as_ref().map(|m| m.len()) } else { None };
-    let modified_unix_ms = metadata.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(UNIX_EPOCH).ok()).and_then(|d| u64::try_from(d.as_millis()).ok());
-    SearchResultItem { name, path: path.to_string_lossy().to_string(), parent, is_dir, is_file, size_bytes, modified_unix_ms }
+/// Build a SearchResultItem from a FileEntry — no stat() call needed.
+fn map_result(entry: FileEntry) -> SearchResultItem {
+    let path = if entry.dir_path == "/" {
+        format!("/{}", entry.file_name)
+    } else {
+        format!("{}/{}", entry.dir_path, entry.file_name)
+    };
+    SearchResultItem {
+        name: entry.file_name,
+        path,
+        parent: entry.dir_path,
+        is_dir: entry.is_dir,
+        is_file: !entry.is_dir,
+        size_bytes: entry.size_bytes,
+        modified_unix_ms: entry.modified_ms,
+    }
 }
 
 #[tauri::command]
@@ -530,14 +544,16 @@ pub async fn search(request: SearchRequest, state: tauri::State<'_, AppState>) -
             let substring_options = to_search_options(&request, SearchMode::Substring, query_limit);
             let regex_options = to_search_options(&request, SearchMode::Pattern, query_limit);
             let mut merged = Vec::<SearchResultItem>::new();
-            let mut seen = HashSet::<PathBuf>::new();
-            for path in engine.search(substring_options) {
-                if seen.insert(path.clone()) { merged.push(map_result(path)); }
+            let mut seen = HashSet::<String>::new();
+            for entry in engine.search(substring_options) {
+                let full_path = if entry.dir_path == "/" { format!("/{}", entry.file_name) } else { format!("{}/{}", entry.dir_path, entry.file_name) };
+                if seen.insert(full_path) { merged.push(map_result(entry)); }
                 if let Some(limit) = query_limit { if merged.len() >= limit { break; } }
             }
             if !matches!(query_limit, Some(0)) && query_limit.map(|limit| merged.len() < limit).unwrap_or(true) {
-                for path in engine.search(regex_options) {
-                    if seen.insert(path.clone()) { merged.push(map_result(path)); }
+                for entry in engine.search(regex_options) {
+                    let full_path = if entry.dir_path == "/" { format!("/{}", entry.file_name) } else { format!("{}/{}", entry.dir_path, entry.file_name) };
+                    if seen.insert(full_path) { merged.push(map_result(entry)); }
                     if let Some(limit) = query_limit { if merged.len() >= limit { break; } }
                 }
             }
@@ -755,12 +771,13 @@ pub async fn list_app_groups(state: tauri::State<'_, AppState>, language: Option
             query: String::new(), mode: SearchMode::Substring, case_sensitive: false,
             path_prefix: None, include_files: true, include_dirs: false,
             limit: Some(50000), extensions: None, sort_key: SortKey::Name, sort_ascending: true,
+            size_min_bytes: None, size_max_bytes: None, time_min_ms: None, time_max_ms: None,
         })
     }).await.map_err(|e| e.to_string())?;
     let is_en = language.as_deref() == Some("en");
     let mut groups: HashMap<String, (usize, Vec<String>)> = HashMap::new();
-    for path in &paths {
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    for entry in &paths {
+        let name = &entry.file_name;
         let ext = machunt::extension_of(name);
         if ext.is_empty() { continue; }
         let app = if is_en { app_for_extension_en(&ext) } else { app_for_extension(&ext) };

@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use machunt::{Engine, SearchMode, SearchOptions, SortKey};
+use machunt::{Engine, FileEntry, SearchMode, SearchOptions, SortKey};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -112,6 +112,10 @@ fn main() {
                 extensions: None,
                 sort_key: SortKey::default(),
                 sort_ascending: true,
+                size_min_bytes: None,
+                size_max_bytes: None,
+                time_min_ms: None,
+                time_max_ms: None,
             };
 
             let start = Instant::now();
@@ -126,8 +130,9 @@ fn main() {
                     results.len(),
                     elapsed
                 );
-                for path in &results {
-                    println!("{}", path.display());
+                for entry in &results {
+                    let full = if entry.dir_path == "/" { format!("/{}", entry.file_name) } else { format!("{}/{}", entry.dir_path, entry.file_name) };
+                    println!("{}", full);
                 }
             }
         }
@@ -208,11 +213,16 @@ fn main() {
                     extensions: None,
                     sort_key: SortKey::default(),
                     sort_ascending: true,
+                    size_min_bytes: None,
+                    size_max_bytes: None,
+                    time_min_ms: None,
+                    time_max_ms: None,
                 };
                 let results = engine.search(options);
                 println!("Found {} results", results.len());
-                for path in results {
-                    println!("{}", path.display());
+                for entry in results {
+                    let full = if entry.dir_path == "/" { format!("/{}", entry.file_name) } else { format!("{}/{}", entry.dir_path, entry.file_name) };
+                    println!("{}", full);
                 }
             }
         }
@@ -228,17 +238,17 @@ fn main() {
     }
 }
 
-fn print_json(results: &[PathBuf], elapsed: std::time::Duration) {
+fn print_json(results: &[FileEntry], elapsed: std::time::Duration) {
     let items: Vec<serde_json::Value> = results
         .iter()
-        .map(|p| {
-            let metadata = std::fs::metadata(p).ok();
+        .map(|e| {
+            let full_path = if e.dir_path == "/" { format!("/{}", e.file_name) } else { format!("{}/{}", e.dir_path, e.file_name) };
             serde_json::json!({
-                "name": p.file_name().and_then(|n| n.to_str()).unwrap_or(""),
-                "path": p.to_string_lossy(),
-                "parent": p.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default(),
-                "size": metadata.as_ref().map(|m| m.len()).unwrap_or(0),
-                "is_dir": metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+                "name": e.file_name,
+                "path": full_path,
+                "parent": e.dir_path,
+                "size": e.size_bytes.unwrap_or(0),
+                "is_dir": e.is_dir,
             })
         })
         .collect();

@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::model::SortKey;
+use crate::model::{FileEntry, SortKey};
 
 #[derive(Clone)]
 pub struct Db {
@@ -69,6 +69,7 @@ impl Db {
         }
         Self::ensure_name_lower_column(conn);
         Self::ensure_is_dir_column(conn);
+        Self::ensure_metadata_columns(conn);
 
         // v1 leftover index; no longer used.
         let _ = conn.execute("DROP INDEX IF EXISTS idx_name", []);
@@ -108,9 +109,12 @@ impl Db {
                 name_lower TEXT NOT NULL,
                 dir_id INTEGER NOT NULL REFERENCES dirs(id) ON DELETE CASCADE,
                 is_dir INTEGER NOT NULL DEFAULT 0,
+                size   INTEGER DEFAULT NULL,
+                mtime_ms INTEGER DEFAULT NULL,
                 UNIQUE(dir_id, name)
             );
         ",
+
         )
         .unwrap();
     }
@@ -173,6 +177,15 @@ impl Db {
             if is_dir != 0 {
                 let _ = conn.execute("UPDATE files SET is_dir = 1 WHERE id = ?1", params![id]);
             }
+        }
+    }
+
+    fn ensure_metadata_columns(conn: &Connection) {
+        if !Self::files_has_column(conn, "size") {
+            let _ = conn.execute("ALTER TABLE files ADD COLUMN size INTEGER DEFAULT NULL", []);
+        }
+        if !Self::files_has_column(conn, "mtime_ms") {
+            let _ = conn.execute("ALTER TABLE files ADD COLUMN mtime_ms INTEGER DEFAULT NULL", []);
         }
     }
 
@@ -584,7 +597,7 @@ impl Db {
         );
     }
 
-    pub fn insert_batch(&self, entries: &[(String, PathBuf, bool)]) {
+    pub fn insert_batch(&self, entries: &[(String, PathBuf, bool, Option<u64>, Option<u64>)]) {
         if entries.is_empty() {
             return;
         }
@@ -602,13 +615,13 @@ impl Db {
                 .unwrap();
             let mut insert_file_stmt = tx
                 .prepare_cached(
-                    "INSERT OR IGNORE INTO files (name, name_lower, dir_id, is_dir) VALUES (?1, ?2, ?3, ?4)",
+                    "INSERT OR IGNORE INTO files (name, name_lower, dir_id, is_dir, size, mtime_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 )
                 .unwrap();
 
             let mut dir_cache: HashMap<String, i64> = HashMap::new();
 
-            for (fallback_name, path, is_dir) in entries {
+            for (fallback_name, path, is_dir, size_bytes, modified_ms) in entries {
                 let stored_name = Self::derive_name(path, fallback_name);
                 let stored_name_lower = if fallback_name.is_empty() {
                     stored_name.to_lowercase()
@@ -633,7 +646,14 @@ impl Db {
                     id
                 };
 
-                let _ = insert_file_stmt.execute(params![stored_name, stored_name_lower, dir_id, *is_dir as i32]);
+                let _ = insert_file_stmt.execute(params![
+                    stored_name,
+                    stored_name_lower,
+                    dir_id,
+                    *is_dir as i32,
+                    size_bytes.map(|s| s as i64).unwrap_or(-1i64),
+                    modified_ms.map(|m| m as i64).unwrap_or(-1i64),
+                ]);
             }
         }
 
@@ -929,8 +949,17 @@ impl Db {
         total
     }
 
-    fn map_row(row: &rusqlite::Row) -> rusqlite::Result<(String, String)> {
-        Ok((row.get(0)?, row.get(1)?))
+    fn map_row(row: &rusqlite::Row) -> rusqlite::Result<FileEntry> {
+        let size: Option<i64> = row.get(2).ok();
+        let mtime: Option<i64> = row.get(3).ok();
+        let is_dir_int: i32 = row.get(4).unwrap_or(0);
+        Ok(FileEntry {
+            dir_path: row.get(0)?,
+            file_name: row.get(1)?,
+            is_dir: is_dir_int != 0,
+            size_bytes: size.and_then(|s| if s >= 0 { Some(s as u64) } else { None }),
+            modified_ms: mtime.and_then(|m| if m >= 0 { Some(m as u64) } else { None }),
+        })
     }
 
     /// Execute a name/path query and collect results into a Vec,
@@ -941,7 +970,7 @@ impl Db {
         name_param: P1,
         path_param: &Option<String>,
         limit: i64,
-    ) -> Vec<(String, String)>
+    ) -> Vec<FileEntry>
     where
         P1: rusqlite::types::ToSql,
     {
@@ -954,6 +983,26 @@ impl Db {
         .unwrap()
         .filter_map(|r| r.ok())
         .collect()
+    }
+
+    /// Returns a SQL fragment to filter by size range.
+    fn size_sql(min_bytes: Option<u64>, max_bytes: Option<u64>) -> String {
+        match (min_bytes, max_bytes) {
+            (Some(min), Some(max)) => format!(" AND COALESCE(f.size, 0) >= {} AND COALESCE(f.size, 0) <= {}", min as i64, max as i64),
+            (Some(min), None) => format!(" AND COALESCE(f.size, 0) >= {}", min as i64),
+            (None, Some(max)) => format!(" AND COALESCE(f.size, 0) <= {}", max as i64),
+            (None, None) => String::new(),
+        }
+    }
+
+    /// Returns a SQL fragment to filter by time range (mtime_ms).
+    fn time_sql(min_ms: Option<u64>, max_ms: Option<u64>) -> String {
+        match (min_ms, max_ms) {
+            (Some(min), Some(max)) => format!(" AND COALESCE(f.mtime_ms, 0) >= {} AND COALESCE(f.mtime_ms, 0) <= {}", min as i64, max as i64),
+            (Some(min), None) => format!(" AND COALESCE(f.mtime_ms, 0) >= {}", min as i64),
+            (None, Some(max)) => format!(" AND COALESCE(f.mtime_ms, 0) <= {}", max as i64),
+            (None, None) => String::new(),
+        }
     }
 
     /// Returns (sql_clause, param_value) for path-prefix filtering, or empty if none.
@@ -1034,12 +1083,12 @@ impl Db {
                 "ORDER BY CASE WHEN INSTR(f.name_lower, '.') > 0 THEN SUBSTR(f.name_lower, INSTR(f.name_lower, '.') + 1) ELSE '' END {}, f.name_lower {}",
                 dir, dir
             ),
-            // Size and Modified cannot be sorted in SQL — engine re-sorts post-fetch
-            SortKey::Size | SortKey::Modified => String::from("ORDER BY f.name_lower ASC, d.path ASC"),
+            SortKey::Size => format!("ORDER BY COALESCE(f.size, 0) {}, f.name_lower ASC", dir),
+            SortKey::Modified => format!("ORDER BY COALESCE(f.mtime_ms, 0) {}, f.name_lower ASC", dir),
         }
     }
 
-    /// Search via FTS5 trigram. Returns (dir_path, file_name) pairs.
+    /// Search via FTS5 trigram. Returns FileEntry with metadata from DB.
     /// Falls back to LIKE/GLOB for short / non-alphanumeric queries.
     #[allow(clippy::too_many_arguments)]
     pub fn search_fts(
@@ -1053,7 +1102,11 @@ impl Db {
         limit: usize,
         include_files: bool,
         include_dirs: bool,
-    ) -> Vec<(String, String)> {
+        size_min_bytes: Option<u64>,
+        size_max_bytes: Option<u64>,
+        time_min_ms: Option<u64>,
+        time_max_ms: Option<u64>,
+    ) -> Vec<FileEntry> {
         let conn = self.conn.lock();
         let q = query.trim();
         if q.is_empty() || limit == 0 {
@@ -1064,6 +1117,8 @@ impl Db {
         let ext_clause = Self::extension_sql(extensions);
         let sort = Self::sort_clause(sort_key, sort_ascending);
         let type_clause = Self::is_dir_sql(include_files, include_dirs);
+        let size_clause = Self::size_sql(size_min_bytes, size_max_bytes);
+        let time_clause = Self::time_sql(time_min_ms, time_max_ms);
         let lim = limit as i64;
 
         // Fall back to LIKE/GLOB when FTS5 trigram is unreliable:
@@ -1073,19 +1128,19 @@ impl Db {
         if q.chars().count() <= 3 || !q.is_ascii() || !q.chars().all(|c| c.is_alphanumeric()) {
             if case_sensitive {
                 let sql = format!(
-                    "SELECT d.path, f.name FROM files f
+                    "SELECT d.path, f.name, f.size, f.mtime_ms, f.is_dir FROM files f
                      JOIN dirs d ON d.id = f.dir_id
-                     WHERE f.name GLOB ?{}{}{} {} LIMIT ?",
-                    path_clause, ext_clause, type_clause, sort
+                     WHERE f.name GLOB ?{}{}{}{}{} {} LIMIT ?",
+                    path_clause, ext_clause, type_clause, size_clause, time_clause, sort
                 );
                 let pattern = format!("*{}*", Self::escape_glob(q));
                 return Self::exec_name_query(&conn, &sql, pattern, &path_param, lim);
             } else {
                 let sql = format!(
-                    "SELECT d.path, f.name FROM files f
+                    "SELECT d.path, f.name, f.size, f.mtime_ms, f.is_dir FROM files f
                      JOIN dirs d ON d.id = f.dir_id
-                     WHERE f.name_lower LIKE ? ESCAPE '\\'{}{}{} {} LIMIT ?",
-                    path_clause, ext_clause, type_clause, sort
+                     WHERE f.name_lower LIKE ? ESCAPE '\\'{}{}{}{}{} {} LIMIT ?",
+                    path_clause, ext_clause, type_clause, size_clause, time_clause, sort
                 );
                 let pattern = format!("%{}%", Self::escape_like(&q.to_lowercase()));
                 return Self::exec_name_query(&conn, &sql, pattern, &path_param, lim);
@@ -1095,11 +1150,11 @@ impl Db {
         // FTS5 trigram search.
         if case_sensitive {
             let sql = format!(
-                "SELECT d.path, f.name FROM files_fts
+                "SELECT d.path, f.name, f.size, f.mtime_ms, f.is_dir FROM files_fts
                  JOIN files f ON f.id = files_fts.rowid
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE files_fts MATCH ? AND f.name GLOB ?{}{}{} {} LIMIT ?",
-                path_clause, ext_clause, type_clause, sort
+                 WHERE files_fts MATCH ? AND f.name GLOB ?{}{}{}{}{} {} LIMIT ?",
+                path_clause, ext_clause, type_clause, size_clause, time_clause, sort
             );
             let lowered = q.to_lowercase();
             let pattern = format!("*{}*", q);
@@ -1117,11 +1172,11 @@ impl Db {
             .collect()
         } else {
             let sql = format!(
-                "SELECT d.path, f.name FROM files_fts
+                "SELECT d.path, f.name, f.size, f.mtime_ms, f.is_dir FROM files_fts
                  JOIN files f ON f.id = files_fts.rowid
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE files_fts MATCH ?{}{}{} {} LIMIT ?",
-                path_clause, ext_clause, type_clause, sort
+                 WHERE files_fts MATCH ?{}{}{}{}{} {} LIMIT ?",
+                path_clause, ext_clause, type_clause, size_clause, time_clause, sort
             );
             let mut stmt = match conn.prepare(&sql) {
                 Ok(s) => s,
@@ -1138,7 +1193,7 @@ impl Db {
         }
     }
 
-    /// LIKE/GLOB-based candidate search — returns (dir_path, file_name).
+    /// LIKE/GLOB-based candidate search — returns FileEntry with metadata.
     /// Used as fallback for non-ASCII queries and regex/pattern filtering.
     #[allow(clippy::too_many_arguments)]
     pub fn search_like(
@@ -1152,19 +1207,25 @@ impl Db {
         limit: usize,
         include_files: bool,
         include_dirs: bool,
-    ) -> Vec<(String, String)> {
+        size_min_bytes: Option<u64>,
+        size_max_bytes: Option<u64>,
+        time_min_ms: Option<u64>,
+        time_max_ms: Option<u64>,
+    ) -> Vec<FileEntry> {
         let conn = self.conn.lock();
         let (path_clause, path_param) = Self::path_prefix_clause(path_prefix);
         let ext_clause = Self::extension_sql(extensions);
         let sort = Self::sort_clause(sort_key, sort_ascending);
         let type_clause = Self::is_dir_sql(include_files, include_dirs);
+        let size_clause = Self::size_sql(size_min_bytes, size_max_bytes);
+        let time_clause = Self::time_sql(time_min_ms, time_max_ms);
         let lim = limit as i64;
         if case_sensitive {
             let sql = format!(
-                "SELECT d.path, f.name FROM files f
+                "SELECT d.path, f.name, f.size, f.mtime_ms, f.is_dir FROM files f
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE f.name GLOB ?{}{}{} {} LIMIT ?",
-                path_clause, ext_clause, type_clause, sort
+                 WHERE f.name GLOB ?{}{}{}{}{} {} LIMIT ?",
+                path_clause, ext_clause, type_clause, size_clause, time_clause, sort
             );
             Self::exec_name_query(
                 &conn, &sql,
@@ -1172,10 +1233,10 @@ impl Db {
             )
         } else {
             let sql = format!(
-                "SELECT d.path, f.name FROM files f
+                "SELECT d.path, f.name, f.size, f.mtime_ms, f.is_dir FROM files f
                  JOIN dirs d ON d.id = f.dir_id
-                 WHERE f.name_lower LIKE ?{}{}{} {} LIMIT ?",
-                path_clause, ext_clause, type_clause, sort
+                 WHERE f.name_lower LIKE ?{}{}{}{}{} {} LIMIT ?",
+                path_clause, ext_clause, type_clause, size_clause, time_clause, sort
             );
             // The pattern passed in already contains LIKE wildcards (%)
             // and the literal fragment from extract_literal has no wildcard chars.
@@ -1250,7 +1311,7 @@ impl Db {
         limit: usize,
         include_files: bool,
         include_dirs: bool,
-    ) -> Vec<(String, String)> {
+    ) -> Vec<FileEntry> {
         let conn = self.conn.lock();
         if tokens.is_empty() || limit == 0 {
             return Vec::new();
@@ -1273,7 +1334,7 @@ impl Db {
         let like_clause = like_conditions.join(" AND ");
 
         let sql = format!(
-            "SELECT d.path, f.name FROM files f
+            "SELECT d.path, f.name, f.size, f.mtime_ms, f.is_dir FROM files f
              JOIN dirs d ON d.id = f.dir_id
              WHERE {}{}{}{} LIMIT ?",
             like_clause, path_clause, ext_clause, type_clause

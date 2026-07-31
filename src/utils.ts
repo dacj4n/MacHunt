@@ -353,15 +353,16 @@ export function buildSearchRequest(
   fuzzyEnabled: boolean,
   sortKey: SortKey,
   sortAscending: boolean,
-  limit: number
+  limit: number,
+  sizeMinBytes?: number | null,
+  sizeMaxBytes?: number | null,
+  timeMinMs?: number | null,
+  timeMaxMs?: number | null,
 ) {
   const includeFiles = tab !== "folders";
   const includeDirs = tab === "all" || tab === "folders";
   const extensions = TAB_EXTENSIONS[tab];
   const mode = fuzzyEnabled ? "Fuzzy" : regexEnabled ? "Pattern" : "Substring";
-  // Pass null as limit so the engine returns all matching results without truncation.
-  // Frontend applies size/time/app filters on the full dataset, then
-  // virtual-scroll renders only visible rows (controlled by maxResults display setting).
   return {
     request: {
       query,
@@ -375,8 +376,51 @@ export function buildSearchRequest(
       extensions,
       sortKey,
       sortAscending,
+      sizeMinBytes: sizeMinBytes ?? null,
+      sizeMaxBytes: sizeMaxBytes ?? null,
+      timeMinMs: timeMinMs ?? null,
+      timeMaxMs: timeMaxMs ?? null,
     }
   };
+}
+
+/** Convert frontend sizeFilter + custom values into (minBytes, maxBytes) for backend. */
+export function sizeFilterToBytes(
+  filter: string,
+  customMin: number,
+  customMax: number,
+): [number | null, number | null] {
+  switch (filter) {
+    case "kb": return [null, 1048575];
+    case "mb": return [1048576, 104857599];
+    case "gb": return [104857600, null];
+    case "custom": return [
+      customMin > 0 ? customMin : null,
+      customMax > 0 ? customMax : null,
+    ];
+    default: return [null, null];
+  }
+}
+
+/** Convert frontend timeFilter + custom values into (minMs, maxMs) for backend. */
+export function timeFilterToMs(
+  filter: string,
+  customFrom: number,
+  customTo: number,
+): [number | null, number | null] {
+  const now = Date.now();
+  const DAY_MS = 86400000;
+  switch (filter) {
+    case "1day": return [now - DAY_MS, null];
+    case "1week": return [now - 7 * DAY_MS, null];
+    case "1month": return [now - 30 * DAY_MS, null];
+    case "1year": return [now - 365 * DAY_MS, null];
+    case "custom": return [
+      customFrom > 0 ? customFrom : null,
+      customTo > 0 ? customTo : null,
+    ];
+    default: return [null, null];
+  }
 }
 
 export function detectDefaultLanguage(): Language {

@@ -10,4 +10,4 @@ pub mod watcher;
 
 pub use apps::{app_for_extension, app_for_extension_en, extension_of, group_by_app, group_by_app_en};
 pub use engine::Engine;
-pub use model::{SearchMode, SearchOptions, SortKey, VolumeEvent};
+pub use model::{FileEntry, SearchMode, SearchOptions, SortKey, VolumeEvent};

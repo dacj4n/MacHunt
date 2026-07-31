@@ -4,7 +4,7 @@ use crate::filters::{
     compile_exclude_rules, compile_file_exclude_rules, compile_pattern,
     sanitize_owned_rules, sanitize_roots, validate_pattern_rules,
 };
-use crate::model::{SearchMode, SearchOptions, SortKey, VolumeEvent};
+use crate::model::{FileEntry, SearchMode, SearchOptions, SortKey, VolumeEvent};
 use crate::search;
 use crate::utils::{get_root_directories, Logger};
 use crate::watcher;
@@ -518,9 +518,11 @@ impl Engine {
         watcher::is_watch_running()
     }
 
-    pub fn search(&self, options: SearchOptions) -> Vec<PathBuf> {
-        // None means no limit — return all matching results.
-        let limit = options.limit.unwrap_or(usize::MAX);
+    /// Search returns FileEntry with metadata from DB (no stat calls).
+    /// None limit returns a generous 50k results — enough for frontend
+    /// size/time/app filtering while keeping memory usage reasonable.
+    pub fn search(&self, options: SearchOptions) -> Vec<FileEntry> {
+        let limit = options.limit.unwrap_or(50_000);
 
         match options.mode {
             SearchMode::Substring => self.search_substring(&options, limit),
@@ -529,7 +531,7 @@ impl Engine {
         }
     }
 
-    fn search_fuzzy(&self, options: &SearchOptions, limit: usize) -> Vec<PathBuf> {
+    fn search_fuzzy(&self, options: &SearchOptions, _limit: usize) -> Vec<FileEntry> {
         let query = if options.case_sensitive {
             options.query.clone()
         } else {
@@ -544,68 +546,60 @@ impl Engine {
         if tokens.is_empty() {
             return Vec::new();
         }
-        // SQL does ALL token matching — each token becomes LIKE '%token%'.
         let token_strings: Vec<String> = if options.case_sensitive {
             tokens.iter().map(|t| t.to_string()).collect()
         } else {
             tokens.iter().map(|t| t.to_lowercase()).collect()
         };
-        let candidates = self
+        let mut candidates = self
             .db
             .search_fuzzy_candidates(&token_strings, options.path_prefix.as_deref().and_then(|p| p.to_str()), options.extensions.as_deref(), 100_000, options.include_files, options.include_dirs);
 
-        let mut out: Vec<PathBuf> = Vec::new();
-        for (dir_path, file_name) in candidates {
+        // Filter by path prefix (already mostly done in SQL, but double-check).
+        candidates.retain(|e| {
+            let full = if e.dir_path == "/" { format!("/{}", e.file_name) } else { format!("{}/{}", e.dir_path, e.file_name) };
+            prefix_allowed_str(&full, &options.path_prefix)
+        });
 
-            let full_path = if dir_path == "/" {
-                PathBuf::from(format!("/{}", file_name))
-            } else {
-                PathBuf::from(format!("{}/{}", dir_path, file_name))
-            };
-            if !prefix_allowed(&full_path, &options.path_prefix) {
-                continue;
-            }
-            if !include_allowed(&full_path, options.include_files, options.include_dirs) {
-                continue;
-            }
-            out.push(full_path);
-        }
-        // Sort by user-selected key (same as other search modes).
+        // Sort by user-selected key.
         let sort_k = options.sort_key;
         let sort_asc = options.sort_ascending;
         match sort_k {
-            SortKey::Name => out.sort_by(|a, b| {
-                let na = a.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                let nb = b.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if sort_asc { na.cmp(nb) } else { nb.cmp(na) }
+            SortKey::Name => candidates.sort_by(|a, b| {
+                let cmp = a.file_name.cmp(&b.file_name);
+                if sort_asc { cmp } else { cmp.reverse() }
             }),
-            SortKey::Path => out.sort_by(|a, b| {
-                if sort_asc { a.cmp(b) } else { b.cmp(a) }
+            SortKey::Path => candidates.sort_by(|a, b| {
+                let cmp = a.dir_path.cmp(&b.dir_path).then_with(|| a.file_name.cmp(&b.file_name));
+                if sort_asc { cmp } else { cmp.reverse() }
             }),
-            SortKey::Type => out.sort_by(|a, b| {
-                let ea = a.extension().and_then(|e| e.to_str()).unwrap_or("");
-                let eb = b.extension().and_then(|e| e.to_str()).unwrap_or("");
-                if sort_asc { ea.cmp(eb) } else { eb.cmp(ea) }
+            SortKey::Type => candidates.sort_by(|a, b| {
+                let ea = a.file_name.rfind('.').map(|i| &a.file_name[i+1..]).unwrap_or("");
+                let eb = b.file_name.rfind('.').map(|i| &b.file_name[i+1..]).unwrap_or("");
+                let cmp = ea.cmp(eb).then_with(|| a.file_name.cmp(&b.file_name));
+                if sort_asc { cmp } else { cmp.reverse() }
             }),
-            SortKey::Size | SortKey::Modified => {
-                out = self.sort_by_metadata(out, sort_k, sort_asc);
-            }
+            SortKey::Size => candidates.sort_by(|a, b| {
+                let sa = a.size_bytes.unwrap_or(0);
+                let sb = b.size_bytes.unwrap_or(0);
+                if sort_asc { sa.cmp(&sb) } else { sb.cmp(&sa) }
+            }),
+            SortKey::Modified => candidates.sort_by(|a, b| {
+                let ma = a.modified_ms.unwrap_or(0);
+                let mb = b.modified_ms.unwrap_or(0);
+                if sort_asc { ma.cmp(&mb) } else { mb.cmp(&ma) }
+            }),
         }
-        out.truncate(limit);
-        out
+        candidates
     }
 
-    fn search_substring(&self, options: &SearchOptions, limit: usize) -> Vec<PathBuf> {
+    fn search_substring(&self, options: &SearchOptions, limit: usize) -> Vec<FileEntry> {
         let query = if options.case_sensitive {
             options.query.clone()
         } else {
             options.query.to_lowercase()
         };
-        let needs_meta_sort = matches!(options.sort_key, SortKey::Size | SortKey::Modified);
-        // Type filtering (file/dir) now happens at the SQL level via is_dir column,
-        // so fetch_limit only needs to compensate for dead-path cleanup and meta-sort.
-        let fetch_limit = if needs_meta_sort { limit.saturating_mul(3) } else { limit.saturating_mul(2) };
-        let results = self
+        let mut results = self
             .db
             .search_fts(
                 &query,
@@ -614,19 +608,22 @@ impl Engine {
                 options.extensions.as_deref(),
                 options.sort_key,
                 options.sort_ascending,
-                fetch_limit,
+                limit,
                 options.include_files,
                 options.include_dirs,
+                options.size_min_bytes,
+                options.size_max_bytes,
+                options.time_min_ms,
+                options.time_max_ms,
             );
-        let mut out = self.build_results(results, options);
-        if needs_meta_sort {
-            out = self.sort_by_metadata(out, options.sort_key, options.sort_ascending);
-        }
-        out.truncate(limit);
-        out
+        results.retain(|e| {
+            let full = if e.dir_path == "/" { format!("/{}", e.file_name) } else { format!("{}/{}", e.dir_path, e.file_name) };
+            prefix_allowed_str(&full, &options.path_prefix)
+        });
+        results
     }
 
-    fn search_pattern(&self, options: &SearchOptions, limit: usize) -> Vec<PathBuf> {
+    fn search_pattern(&self, options: &SearchOptions, limit: usize) -> Vec<FileEntry> {
         let regex = match search::convert_wildcard_to_regex(&options.query, options.case_sensitive) {
             Ok(re) => re,
             Err(_) => return Vec::new(),
@@ -644,10 +641,6 @@ impl Engine {
             "%".to_string()
         };
 
-        let needs_meta_sort = matches!(options.sort_key, SortKey::Size | SortKey::Modified);
-        // Type filtering happens at SQL level via is_dir column.
-        let fetch_limit = if needs_meta_sort { limit.saturating_mul(3) } else { limit.saturating_mul(2) };
-
         // Use LIKE with the literal fragment to get candidates, then filter by regex.
         let results = self
             .db
@@ -658,103 +651,35 @@ impl Engine {
                 options.extensions.as_deref(),
                 options.sort_key,
                 options.sort_ascending,
-                fetch_limit,
+                limit,
                 options.include_files,
                 options.include_dirs,
+                options.size_min_bytes,
+                options.size_max_bytes,
+                options.time_min_ms,
+                options.time_max_ms,
             );
         let mut out = Vec::new();
-        for (dir_path, file_name) in results {
+        for entry in results {
             let target = if options.case_sensitive {
-                file_name.clone()
+                entry.file_name.clone()
             } else {
-                file_name.to_lowercase()
+                entry.file_name.to_lowercase()
             };
             if !regex.is_match(&target) {
                 continue;
             }
-            let full_path = if dir_path == "/" {
-                PathBuf::from(format!("/{}", file_name))
+            let full_path = if entry.dir_path == "/" {
+                format!("/{}", entry.file_name)
             } else {
-                PathBuf::from(format!("{}/{}", dir_path, file_name))
+                format!("{}/{}", entry.dir_path, entry.file_name)
             };
-            if !prefix_allowed(&full_path, &options.path_prefix) {
+            if !prefix_allowed_str(&full_path, &options.path_prefix) {
                 continue;
             }
-            if !include_allowed(&full_path, options.include_files, options.include_dirs) {
-                continue;
-            }
-            out.push(full_path);
-        }
-        if needs_meta_sort {
-            out = self.sort_by_metadata(out, options.sort_key, options.sort_ascending);
-        }
-        out.truncate(limit);
-        out
-    }
-
-    fn build_results(
-        &self,
-        results: Vec<(String, String)>,
-        options: &SearchOptions,
-    ) -> Vec<PathBuf> {
-        let mut out = Vec::with_capacity(results.len());
-        for (dir_path, file_name) in results {
-            let full_path = if dir_path == "/" {
-                PathBuf::from(format!("/{}", file_name))
-            } else {
-                PathBuf::from(format!("{}/{}", dir_path, file_name))
-            };
-            // Skip `exists()` check — stat() on every candidate is the
-            // #1 search-time CPU cost. Dead paths are cleaned by the
-            // watcher (rename/remove events) and periodic GC instead.
-            if !prefix_allowed(&full_path, &options.path_prefix) {
-                continue;
-            }
-            if !include_allowed(&full_path, options.include_files, options.include_dirs) {
-                continue;
-            }
-            out.push(full_path);
+            out.push(entry);
         }
         out
-    }
-
-    /// Re-sort results by filesystem metadata (size or modified time).
-    /// Called after SQL fetch when sort_key is Size or Modified.
-    fn sort_by_metadata(
-        &self,
-        paths: Vec<PathBuf>,
-        sort_key: SortKey,
-        ascending: bool,
-    ) -> Vec<PathBuf> {
-        let mut with_meta: Vec<(PathBuf, u64)> = paths
-            .into_iter()
-            .map(|p| {
-                let val = std::fs::metadata(&p)
-                    .ok()
-                    .and_then(|meta| match sort_key {
-                        SortKey::Size => {
-                            if meta.is_file() {
-                                Some(meta.len())
-                            } else {
-                                Some(0)
-                            }
-                        }
-                        SortKey::Modified => meta
-                            .modified()
-                            .ok()
-                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .and_then(|d| u64::try_from(d.as_millis()).ok()),
-                        _ => Some(0),
-                    })
-                    .unwrap_or(0); // keep path even if metadata unavailable (e.g. unmounted network drive)
-                (p, val)
-            })
-            .collect();
-        with_meta.sort_by(|a, b| {
-            let cmp = a.1.cmp(&b.1);
-            if ascending { cmp } else { cmp.reverse() }
-        });
-        with_meta.into_iter().map(|(p, _)| p).collect()
     }
 
     pub fn load_last_event_id(&self) -> Option<u64> {
@@ -846,9 +771,9 @@ fn normalize_watch_roots(roots: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-fn prefix_allowed(path: &Path, prefix: &Option<PathBuf>) -> bool {
+fn prefix_allowed_str(full_path: &str, prefix: &Option<PathBuf>) -> bool {
     match prefix {
-        Some(p) => path.starts_with(p),
+        Some(p) => full_path.starts_with(p.to_string_lossy().as_ref()),
         None => true,
     }
 }
@@ -872,19 +797,6 @@ fn extract_literal(pattern: &str) -> String {
         best = current;
     }
     best
-}
-
-fn include_allowed(path: &Path, include_files: bool, include_dirs: bool) -> bool {
-    if include_files && include_dirs {
-        return true;
-    }
-    if include_files {
-        return path.is_file();
-    }
-    if include_dirs {
-        return path.is_dir();
-    }
-    false
 }
 
 #[cfg(test)]
@@ -921,4 +833,3 @@ mod tests {
         assert!(!all_match3);
     }
 }
-

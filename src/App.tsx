@@ -18,7 +18,8 @@ import {
   detectDefaultLanguage,
   loadStoredRegexEnabled, loadStoredCaseSensitive, loadStoredFuzzyEnabled,
   loadPinnedItems, savePinnedItems, loadStoredColumnWidths,
-  buildSearchRequest, displayShortcut, shortcutFromKeyboardEvent,
+  buildSearchRequest, sizeFilterToBytes, timeFilterToMs,
+  displayShortcut, shortcutFromKeyboardEvent,
   fmt, isEditableTarget, blurActiveEditable, extensionOf, appForExt,
   COLUMN_WIDTHS_STORAGE_KEY, LANGUAGE_STORAGE_KEY, REGEX_ENABLED_STORAGE_KEY,
   CASE_SENSITIVE_STORAGE_KEY, FUZZY_ENABLED_STORAGE_KEY,
@@ -930,7 +931,9 @@ function App() {
       if (needle.length === 0) { setItems([]); setTotalFound(0); setTookMs(0); setScrollTop(0); return; }
       setIsSearching(true); setError(null);
       try {
-        const response = await invoke<SearchResponse>("search", buildSearchRequest(needle, activeTab, pathPrefix, caseSensitive, regexEnabled, fuzzyEnabled, sortKey, sortAscending, 0));
+        const [szMin, szMax] = sizeFilterToBytes(sizeFilter, customSizeMinRef.current, customSizeMaxRef.current);
+        const [tmMin, tmMax] = timeFilterToMs(timeFilter, customTimeFromRef.current, customTimeToRef.current);
+        const response = await invoke<SearchResponse>("search", buildSearchRequest(needle, activeTab, pathPrefix, caseSensitive, regexEnabled, fuzzyEnabled, sortKey, sortAscending, 0, szMin, szMax, tmMin, tmMax));
         if (cancelled) return;
         setItems(response.items); setTotalFound(response.total); setTookMs(response.tookMs); setScrollTop(0);
         if (tableBodyRef.current) tableBodyRef.current.scrollTop = 0;
@@ -939,7 +942,7 @@ function App() {
     };
     const timer = window.setTimeout(() => { void runSearch(); }, 180);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [query, pathPrefix, activeTab, regexEnabled, caseSensitive, fuzzyEnabled, sortKey, sortAscending, isIndexLoading]);
+  }, [query, pathPrefix, activeTab, regexEnabled, caseSensitive, fuzzyEnabled, sortKey, sortAscending, isIndexLoading, sizeFilter, timeFilter, appFilter, filterVersion]);
 
   // Reset app filter when no longer valid
   useEffect(() => { if (appFilter && !appFilterOptions.includes(appFilter)) setAppFilter(""); }, [appFilterOptions, appFilter]);
