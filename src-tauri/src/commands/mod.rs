@@ -695,6 +695,11 @@ pub fn toggle_main_window(app: tauri::AppHandle, state: tauri::State<'_, AppStat
 }
 
 #[tauri::command]
+pub fn hide_main_window(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    window::hide_main_window_internal(&app, &state)
+}
+
+#[tauri::command]
 pub fn get_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }

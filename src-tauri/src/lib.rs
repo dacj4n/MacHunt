@@ -146,6 +146,7 @@ pub fn run() {
             commands::get_file_manager_settings,
             commands::set_file_manager_settings,
             commands::toggle_main_window,
+            commands::hide_main_window,
             commands::get_version,
             commands::list_app_groups,
             commands::group_results_by_app,

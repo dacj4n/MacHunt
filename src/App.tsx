@@ -156,6 +156,8 @@ function App() {
   const [openWithVisible, setOpenWithVisible] = useState(false);
   const openWithCloseTimerRef = useRef<number | null>(null);
   const isPreviewingRef = useRef(false);
+  const isComposingRef = useRef(false);
+  const lastInputKeyTimeRef = useRef(0);
 
   // ── selection ──
   const [selectedItemPaths, setSelectedItemPaths] = useState<string[]>([]);
@@ -957,6 +959,27 @@ function App() {
   // Keyboard navigation
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      // Track last non-Escape, non-modifier keypress in editable fields for IME detection
+      if (event.key !== "Escape" && !event.metaKey && !event.ctrlKey && !event.altKey && isEditableTarget(event.target)) {
+        lastInputKeyTimeRef.current = Date.now();
+      }
+
+      // Escape: close/hide window (like Cmd+W), unless IME candidate window is likely open
+      if (event.key === "Escape") {
+        // If IME composition is actively in progress (text with underline), let Escape
+        // end the composition instead of closing the window.
+        if (event.isComposing || isComposingRef.current) return;
+        // If the user was typing in an editable field within the last 800ms, an IME
+        // candidate window might still be open. Let the browser handle Escape first
+        // to dismiss it. The next Escape will close the window.
+        if (isEditableTarget(event.target) && Date.now() - lastInputKeyTimeRef.current < 800) {
+          lastInputKeyTimeRef.current = 0; // reset so next Escape closes
+          return;
+        }
+        event.preventDefault();
+        void invoke("hide_main_window");
+        return;
+      }
       // Tab: search input → results, elsewhere → search input
       if (event.key === "Tab" && (activeView === "search" || activeView === "pinned") && !contextMenu) {
         event.preventDefault();
@@ -1019,9 +1042,18 @@ function App() {
       event.preventDefault(); blurActiveEditable(); void previewResults(selectedPathsInOrder);
     };
     window.addEventListener("keydown", onKeyDown);
+    const onCompositionStart = () => { isComposingRef.current = true; };
+    const onCompositionEnd = () => { isComposingRef.current = false; };
+    window.addEventListener("compositionstart", onCompositionStart);
+    window.addEventListener("compositionend", onCompositionEnd);
     const onBlur = () => { if (isPreviewingRef.current) return; if (selectedPathsInOrder.length > 0) { setSelectedItemPaths([]); setSelectionAnchorPath(null); } };
     window.addEventListener("blur", onBlur);
-    return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("blur", onBlur); };
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("compositionstart", onCompositionStart);
+      window.removeEventListener("compositionend", onCompositionEnd);
+      window.removeEventListener("blur", onBlur);
+    };
   }, [activeView, contextMenu, selectedPathsInOrder]);
 
   // ── render ──
