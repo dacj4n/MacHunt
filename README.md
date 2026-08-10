@@ -1,366 +1,163 @@
-<p align="center"><img src="src-tauri/icons/icon.png" width="384" alt="MacHunt Icon" /></p>
+<p align="center"><img src="src-tauri/icons/icon.png" width="220" alt="MacHunt icon" /></p>
 
 <h1 align="center">MacHunt</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/-Rust-000000?logo=rust&logoColor=white" alt="Rust" />
-  <img src="https://img.shields.io/badge/-TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/-CSS-1572B6?logo=css3&logoColor=white" alt="CSS" />
-  <img src="https://img.shields.io/badge/-Objective--C-3A95E3?logo=apple&logoColor=white" alt="Objective-C" />
-  <img src="https://img.shields.io/badge/-HTML-E34F26?logo=html5&logoColor=white" alt="HTML" />
-  <img src="https://img.shields.io/badge/-React-61DAFB?logo=react&logoColor=black" alt="React" />
-  <img src="https://img.shields.io/badge/-Tauri-24C8D8?logo=tauri&logoColor=white" alt="Tauri" />
+  A private, fully local file search app for macOS.<br>
+  The new beta is written entirely in Swift with native Apple frameworks.
 </p>
 
-A fully local macOS file/folder search tool with both CLI and native GUI (Tauri + React). No HTTP backend, no cloud services.
+<p align="center">
+  <img src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white" alt="Swift 6" />
+  <img src="https://img.shields.io/badge/UI-SwiftUI%20%2B%20AppKit-147EFB?logo=apple&logoColor=white" alt="SwiftUI and AppKit" />
+  <img src="https://img.shields.io/badge/Index-SQLite%20FTS5-003B57?logo=sqlite&logoColor=white" alt="SQLite FTS5" />
+  <img src="https://img.shields.io/badge/macOS-14%2B-black?logo=apple" alt="macOS 14 or later" />
+</p>
 
-[中文文档](README_zh.md)
+<p align="center"><a href="README_zh.md">中文文档</a></p>
 
-## Introduction
+> [!IMPORTANT]
+> The native Swift version is currently a beta. Its source is in [`swift_beta`](swift_beta/). The original Tauri/React/Rust implementation is preserved in the repository root and has not been removed.
 
-MacHunt scans your entire filesystem into a local SQLite FTS5 index. CLI searches complete in <5ms. It uses macOS FSEvents for incremental live updates. Think Spotlight, but fully open source, with a powerful CLI, and your data never leaves your machine.
+## What is MacHunt?
+
+MacHunt builds a local SQLite FTS5 index of file and folder metadata, then provides fast filename search through a native macOS app and CLI. Search data stays on the Mac: there is no account, HTTP backend, analytics service, or cloud search API.
+
+The Swift beta uses native SwiftUI and AppKit controls together with Quick Look, Finder integration, FSEvents, ServiceManagement, and SQLite. It is a separate implementation and does not link the legacy Rust core.
 
 ## Screenshots
 
-<table>
-<thead>
-<tr>
-<th width="50%" align="center">Search</th>
-<th width="50%" align="center">Pinned</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/search.png"><img src="./screenshots/search.png" alt="Search" width="100%" style="max-width: 100%;"></a></td>
-<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/pinned.png"><img src="./screenshots/pinned.png" alt="Pinned" width="100%" style="max-width: 100%;"></a></td>
-</tr>
-<tr>
-<td align="center"><strong>Full-disk search, category tabs</strong></td>
-<td align="center"><strong>Pinned favorites, persistent across restarts</strong></td>
-</tr>
-</tbody>
-</table>
+| Search | Pinned |
+|:--:|:--:|
+| [![Search](screenshots/swift/search.png)](screenshots/swift/search.png) | [![Pinned](screenshots/swift/pinned.png)](screenshots/swift/pinned.png) |
+| Native result table, filters, metadata, and file actions | Persistent favorites with the same Finder-style controls |
 
-<table>
-<thead>
-<tr>
-<th width="50%" align="center">Quick Look Preview</th>
-<th width="50%" align="center">Settings</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/quicklook.png"><img src="./screenshots/quicklook.png" alt="Quick Look" width="100%" style="max-width: 100%;"></a></td>
-<td align="center"><a target="_blank" rel="noopener noreferrer" href="./screenshots/settings.png"><img src="./screenshots/settings.png" alt="Settings" width="100%" style="max-width: 100%;"></a></td>
-</tr>
-<tr>
-<td align="center"><strong>Space-triggered native Quick Look</strong></td>
-<td align="center"><strong>Settings</strong></td>
-</tr>
-</tbody>
-</table>
+| Quick Look | Settings |
+|:--:|:--:|
+| [![Quick Look](screenshots/swift/quick-look.png)](screenshots/swift/quick-look.png) | [![Settings](screenshots/swift/settings.png)](screenshots/swift/settings.png) |
+| Press Space to use the system Quick Look panel | Index, categories, exclusions, appearance, and integration settings |
 
-## Install
+## Install the beta
 
-Download the latest `.dmg` from [GitHub Releases](https://github.com/dacj4n/MacHunt/releases), mount it, and drag `MacHunt.app` to `/Applications`.
+1. Download the latest Swift beta `.dmg` from [GitHub Releases](https://github.com/Jingyuan-Zheng/MacHunt_SwiftUI/releases).
+2. Open the disk image.
+3. Drag `MacHunt.app` to Applications.
 
-> **First launch**: macOS Gatekeeper may block unsigned apps. If you see "cannot be verified", right-click `MacHunt.app` in Finder and select **Open**, then click **Open** in the dialog. Or run `xattr -cr /Applications/MacHunt.app` in Terminal.
-
-Or build from source:
+The beta is ad-hoc signed and is not notarized. If Gatekeeper blocks the first launch, right-click the app in Finder and choose **Open**. If macOS still reports a damaged app, remove the quarantine attribute from the copy you trust:
 
 ```bash
-git clone https://github.com/dacj4n/MacHunt.git
-cd MacHunt
+xattr -cr /Applications/MacHunt.app
 ```
 
-### CLI only
+The published beta currently targets Apple silicon and requires macOS 14 or later.
+
+## First use
+
+MacHunt can build the first index from the app. For a full-disk CLI build with visible progress, quit MacHunt and run:
 
 ```bash
-cargo build --release
-./target/release/machunt --help
+"/Applications/MacHunt.app/Contents/Helpers/machunt" build --path /
 ```
 
-### GUI (dev)
+The build reports four phases:
+
+```text
+Scanning files
+Building search index
+Optimizing database
+Finishing index
+```
+
+Open MacHunt after the command prints the final indexed-item count. Later file changes are maintained with FSEvents.
+
+## Native Swift beta features
+
+- Native SwiftUI windows and AppKit result table using the standard macOS appearance
+- Substring, wildcard/regular-expression, fuzzy, and case-sensitive search
+- Path, file category, application, date, and size filters
+- Editable built-in file categories and unlimited custom categories
+- SF Symbol and emoji icons for custom categories
+- Finder-style selectable columns, sorting, multi-selection, and keyboard navigation
+- Name, path, type, size, modified date, added date, Finder tags, and iCloud status
+- Open, Open With, Reveal in Finder, Copy, Move to Trash, Pin, and context-menu actions
+- System Quick Look with Space, including multi-file preview
+- Pinned items that persist across launches
+- FSEvents incremental index maintenance and external-volume monitoring
+- Configurable index roots, excluded paths/patterns, hidden files, and result limits
+- Native menu commands, global shortcut, launch at login, and Dock visibility controls
+- English and Simplified Chinese localization
+- Shared Swift CLI and GUI index
+
+## Privacy and iCloud files
+
+MacHunt indexes names, paths, dates, sizes, Finder tags, and cloud status. It does not index file contents and does not intentionally download online-only iCloud files during scanning. Opening or using Quick Look on an online-only result may ask macOS to download that file.
+
+Runtime data is stored locally:
+
+```text
+~/Library/Caches/MacHuntSwift/index.db
+```
+
+Rebuilds are atomic: MacHunt creates `index.db.new`, keeps the previous completed database available for search, and replaces it only after the new index is complete.
+
+## CLI
+
+The CLI is embedded in the app at `MacHunt.app/Contents/Helpers/machunt`.
+
+```bash
+machunt build --path /
+machunt status
+machunt search invoice
+machunt search --fuzzy --limit 50 "project report"
+machunt search --pattern "*.swift"
+machunt search --path ~/Documents --json budget
+machunt optimize
+```
+
+Search options:
+
+| Option | Description |
+|---|---|
+| `-p`, `--pattern` | Wildcard or regular-expression mode |
+| `-F`, `--fuzzy` | Ordered fuzzy subsequence matching |
+| `-c`, `--case-sensitive` | Preserve case |
+| `-P`, `--path <path>` | Limit results to a path prefix |
+| `-f`, `--files` | Files only |
+| `-d`, `--dirs` | Folders only |
+| `-n`, `--limit <count>` | Maximum result count |
+| `--json` | JSON output |
+
+## Build the Swift beta
+
+```bash
+git clone https://github.com/Jingyuan-Zheng/MacHunt_SwiftUI.git
+cd MacHunt_SwiftUI/swift_beta
+swift test
+scripts/build-app.sh release
+open .build/MacHunt.app
+```
+
+Requirements: Xcode with Swift 6.2 or later and macOS 14 or later. See [`swift_beta/README.md`](swift_beta/README.md) for architecture and development details.
+
+## Repository layout
+
+```text
+MacHunt_SwiftUI/
+├── swift_beta/        # Native SwiftUI/AppKit app, core, CLI, tests, packaging
+├── screenshots/swift/ # Current native beta screenshots
+├── src-tauri/         # Legacy Tauri application container
+├── src/               # Legacy Rust core and React frontend sources
+├── Cargo.toml         # Legacy Rust package
+└── package.json       # Legacy React/Tauri tooling
+```
+
+## Legacy Tauri version
+
+The original Tauri version remains buildable and is retained unchanged for comparison:
 
 ```bash
 npm install
 npm run tauri dev
 ```
 
-### GUI (package)
-
-```bash
-npm run build
-npm run tauri build
-```
-
-## Requirements
-
-| macOS 15 (Apple Silicon) | ✅ Tested |
-| macOS 13–14 | ✅ Expected to work |
-| macOS 10.15–12 | ⚠️ Theoretically supported (not tested) |
-| Intel Mac (x86_64) | ⚠️ Universal binary included (not tested) |
-
-> **Note**: The app is built as a universal binary (arm64 + x86_64). On macOS <13, login items use AppleScript fallback instead of the modern ServiceManagement API.
-
-- Rust 1.70+
-- Node.js 18+ (GUI only)
-- npm 9+ (GUI only)
-
-## Quick Start
-
-```bash
-# First, build the index (scans your entire disk — takes ~10s for 3M files)
-machunt build
-
-# Substring search (case-insensitive)
-machunt search "budget"
-
-# Wildcard pattern
-machunt search -p "*.rs"
-
-# Fuzzy search (space-separated, multi-token substring AND matching)
-machunt search -F "sys remote"
-
-# Case-sensitive
-machunt search -c "Makefile"
-
-# JSON output for scripting
-machunt search --json "invoice" | jq .
-
-# Start live watcher + interactive search
-machunt watch
-```
-
-## CLI Reference
-
-```
-machunt <COMMAND>
-```
-
-### `search`
-
-```bash
-machunt search [OPTIONS] <QUERY>
-```
-
-| Option | Description |
-|--------|-------------|
-| `-p, --pattern` | Wildcard/regex mode (e.g. `*.rs`, `test?.txt`) |
-| `-F, --fuzzy` | Multi-token fuzzy search (space-separated, AND matching) |
-| `-c, --case-sensitive` | Case-sensitive matching |
-| `-n, --limit <N>` | Max results (default 100) |
-| `-P, --path <PATH>` | Path prefix filter |
-| `-f, --files` | Files only |
-| `-d, --dirs` | Directories only |
-| `--json` | JSON output |
-
-Wildcard rules:
-- `*` — matches anything except `/` (single directory level)
-- `**` — matches anything including `/` (all levels)
-- `?` — matches single character except `/`
-- `{a,b}` — matches `a` or `b`
-
-### `build`
-
-```bash
-machunt build [OPTIONS]
-```
-
-| Option | Description |
-|--------|-------------|
-| `-p, --path <PATH>` | Build only this scope |
-| `--rebuild` | Clear old index first |
-| `--include-dirs <true\|false>` | Include directories (default `true`) |
-
-### `watch`
-
-```bash
-machunt watch
-```
-
-Starts FSEvents watcher with incremental updates. Resumes from last EventID when available. Drops into an interactive search loop.
-
-### `optimize`
-
-```bash
-machunt optimize [--vacuum]
-```
-
-Runs WAL checkpoint (always). Optional `--vacuum` reclaims DB file space.
-
-## How It Works
-
-```
-┌──────────┐     ┌───────────────┐     ┌──────────┐
-│  WalkDir │ ──→ │  SQLite FTS5  │ ←── │ FSEvents │
-│  (build) │     │  (trigram)    │     │  (watch) │
-└──────────┘     └───────┬───────┘     └──────────┘
-                         │
-                    ┌────▼────┐
-                    │  Search │
-                    │ <5ms    │
-                    └─────────┘
-```
-
-- **Build**: `WalkDir` traverses the filesystem, inserting `(name_lower, path)` into SQLite FTS5 with the trigram tokenizer. Handled in parallel via crossbeam channels.
-- **Search**: FTS5 trigram MATCH completes in <5ms (CLI). Case-sensitive queries use a GLOB post-filter (SQLite LIKE is ASCII-case-insensitive by default). Short queries (<3 chars) fall back to LIKE. Fuzzy mode uses space-separated multi-token substring AND matching over LIKE candidates.
-- **Watch**: Raw FSEvents FFI (CoreServices) streams file creation, modification, deletion, and rename events. Inserts/updates/deletes from the DB incrementally. Resumes from the last persisted EventID across restarts.
-
-## GUI
-
-The native macOS GUI is built with Tauri 2 and React. It communicates with the same Rust core engine used by the CLI — no HTTP server, no IPC overhead beyond Tauri's native bridge.
-
-### Main Window
-
-- Full-disk search with real-time results
-- Navigation tabs: Search / Pinned / Settings (`Cmd+1/2/3`)
-- Regex toggle + case-sensitive toggle
-- Path filter with suggestion dropdown and Finder picker
-- Filters: App (180+ extension mappings), Time (calendar date range), Size (custom value + unit)
-- Fuzzy search toggle (space-separated, multi-token AND matching)
-- Category tabs: All / Files / Folders / Documents / Images / Media / Code / Archives
-- Sortable columns: name, path, type, size, modified
-- Draggable column splitters with persisted widths
-- Single/multi selection (`Shift` range, `Cmd` additive)
-- Keyboard navigation (`↑` `↓`)
-- Space-triggered Quick Look (multi-selection supported)
-- Double-click to open
-- Inline pin button on each result row (hover to reveal)
-
-### Right-Click Menu
-
-Open, Open With... (Finder / QSpace Pro / Terminal / WezTerm), copy name/path, copy as file objects, copy all results, move to Trash, Pin to Favorites.
-
-### Pinned / Favorites
-
-Star any search result to pin it. Pinned items persist in localStorage and survive restarts — no DB mix. The dedicated Pinned tab shows all bookmarked items with full sort, resize, Quick Look, and Cmd+A support. Unpin via the same star button or context menu. Star ⭑ appears at the end of every row (visible on hover). Gold filled = pinned, outline = not.
-
-### Settings Page
-
-- **Theme**: system / light / dark
-- **Language**: 中文 / English
-- **Shortcut**: global hotkey to show/hide window (default `Cmd+Shift+D`)
-- **Startup**: launch at login, silent start, show/hide Dock icon
-- **Index Maintenance**: auto `VACUUM` after rebuild on/off
-- **Excluded Directories**: exact paths and regex/wildcard patterns
-- **Watch Roots**: configure specific subtrees for FSEvents monitoring
-
-## Features
-
-| Category | Capability |
-|----------|------------|
-| Search modes | Substring, wildcard/regex, fuzzy (multi-token) |
-| Case sensitivity | Toggleable in both CLI and GUI |
-| Path filter | Prefix, suggestion dropdown, Finder picker |
-| App filter | 180+ extension → default app mappings |
-| Time/Size filters | Custom calendar range / value + unit |
-| Live updates | FSEvents watcher, persists EventID across restarts |
-| File types | 8 category tabs via extension classification |
-| Pinned items | Star button, persistent favorites page, localStorage |
-| Preview | Native Quick Look (space bar, multi-file) |
-| Export | Copy as file objects, JSON output (CLI) |
-| Design | Neomorphic 3D design system, light/dark/system theme |
-| i18n | 中文 / English |
-| Startup | Launch at login, silent mode, Dock toggle |
-| Performance | EventID staleness detection, lazy dead-path cleanup |
-| Privacy | 100% local, no network calls |
-
-## Comparison
-
-| | MacHunt | Spotlight | Raycast | uTools |
-|---|---|---|---|---|
-| **Full disk scan** | Yes (~10s / 3M files) | Yes (`mdfind`) | Plugin-based | Plugin-based |
-| **Search latency** | <5ms (CLI, FTS5 trigram) | 50–200ms+ | Varies | Varies |
-| **Index format** | SQLite FTS5 (open) | Proprietary | Proprietary | N/A |
-| **CLI** | Yes | Yes (`mdfind`) | No | No |
-| **Fuzzy search** | Yes (multi-token) | Partial | No | No |
-| **Incremental update** | FSEvents | FSEvents | Varies | N/A |
-| **Open source** | Yes | No | No | Partially |
-
-## Development
-
-### Tech Stack
-
-- **Core**: Rust
-- **CLI**: Clap
-- **GUI frontend**: React 18 + TypeScript + Vite
-- **GUI container**: Tauri 2
-- **Global shortcut**: `tauri-plugin-global-shortcut`
-- **Storage**: SQLite FTS5 (`rusqlite`, WAL mode, trigram tokenizer)
-- **Scanner**: WalkDir + Crossbeam channels
-- **Watcher**: macOS FSEvents (CoreServices FFI)
-- **Design**: Neomorphic design system with CSS custom properties, inline theme detection for no-flash startup
-
-### Build Commands
-
-| Command | What it does |
-|---------|--------------|
-| `npm run build` | Build frontend only (TS + Vite → `dist/`) |
-| `npm run tauri build` | Full build: frontend + Rust → `.app` / `.dmg` |
-| `npm run tauri dev` | Dev mode with hot reload |
-| `cargo build --release` | CLI binary only |
-
-### `npm run build` vs `npm run tauri build`
-
-- `npm run build` only builds frontend assets. It does **not** compile Rust, does **not** produce a `.app` or `.dmg`.
-- `npm run tauri build` runs `beforeBuildCommand` (which is `npm run build`), then compiles the Rust backend, and produces installable artifacts.
-
-## Project Structure
-
-```
-mac_find/
-├── src/                    # Core engine (shared by CLI and GUI)
-│   ├── main.rs             # CLI entry point (clap)
-│   ├── lib.rs              # Library root, re-exports Engine
-│   ├── engine.rs           # Engine: build/search/watch orchestration
-│   ├── db.rs               # SQLite FTS5: schema, insert, search, fuzzy
-│   ├── builder.rs          # WalkDir filesystem scanner
-│   ├── watcher.rs          # FSEvents FFI watcher
-│   ├── search.rs           # Wildcard-to-regex conversion
-│   ├── filters.rs          # Exclude rules (exact + regex/wildcard)
-│   └── utils.rs            # Path normalization, skip logic, logger
-├── src-tauri/              # Tauri GUI backend
-│   ├── src/lib.rs          # Tauri commands, window lifecycle, settings
-│   ├── tauri.conf.json     # Tauri configuration
-│   ├── Info.plist          # macOS bundle metadata
-│   ├── build.rs            # Build script (compiles ObjC bridge)
-│   └── macos/
-│       └── quicklook_bridge.m  # ObjC bridge: Quick Look, clipboard, Dock
-├── src/                    # React frontend (neomorphic design system)
-│   ├── App.tsx             # Main app component (~3300 lines, all views)
-│   ├── App.css             # Styles (CSS variables, neomorphic theme)
-│   └── main.tsx            # Entry point
-├── index.html              # HTML shell, inline theme detection script
-├── screenshots/            # Screenshots for README
-├── scripts/
-│   ├── set_version.sh      # Bump version across all config files
-│   └── package_release.sh  # Package .app/.dmg for distribution
-├── Cargo.toml              # Rust crate manifest
-└── package.json            # Frontend dependencies
-```
-
-## Runtime Data
-
-| Path | Content |
-|------|---------|
-| `~/Library/Caches/MacHunt/index.db` | FTS5 search index |
-| `~/Library/Application Support/MacHunt/settings.json` | GUI settings |
-| `~/Library/Caches/MacHunt/logs/` | Debug logs |
-
-## Why the Index Can Be Large
-
-- Millions of files are common on macOS
-- Directory entries are indexed by default
-- Long paths dominate storage
-- `index.db-wal` can grow temporarily during writes
-
-Maintenance:
-
-```bash
-machunt optimize --vacuum
-```
-
-## License
-
-MIT
+Its Rust CLI can be built with `cargo build --release`. New native development is taking place in `swift_beta`.

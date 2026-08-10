@@ -36,6 +36,9 @@ jobs:
       - name: TypeScript check & Vite build
         run: npm run build
 
+      - name: Native Swift tests
+        run: swift test --package-path swift_beta
+
   release:
     name: Build & Publish DMG (${{ matrix.arch }})
     if: startsWith(github.ref, 'refs/tags/v')
