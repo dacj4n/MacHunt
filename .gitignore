@@ -12,6 +12,7 @@
 .DS_Store
 /release/
 /scripts/
+/swift_beta/.build/
 .codegraph/
 .reasonix/
 .codebuddy/
