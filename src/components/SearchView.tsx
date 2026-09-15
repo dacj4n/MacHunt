@@ -277,9 +277,9 @@ export function SearchView(props: SearchViewProps) {
               if (fuzzyEnabled) setFuzzyEnabled(false);
               setRegexEnabled((prev) => !prev);
             }}
-            title={t.regexEnabled}
+            title={t.wildcardHint}
           >
-            {t.regexEnabled}
+            {t.wildcardMode}
           </button>
           <button
             className={fuzzyEnabled ? "toggle-btn active" : "toggle-btn"}
