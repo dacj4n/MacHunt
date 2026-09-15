@@ -146,7 +146,7 @@ machunt search [OPTIONS] <QUERY>
 
 | 选项 | 说明 |
 |------|------|
-| `-p, --pattern` | 通配符/正则模式（如 `*.rs`、`test?.txt`） |
+| `-p, --pattern` | 通配符模式（如 `*.rs`、`test?.txt`） |
 | `-F, --fuzzy` | 多 token 子串模糊搜索（空格分词，全部 AND 匹配） |
 | `-c, --case-sensitive` | 区分大小写 |
 | `-n, --limit <N>` | 最大结果数（默认 100） |
@@ -204,8 +204,9 @@ machunt optimize [--vacuum]
 ```
 
 - **构建**：`WalkDir` 遍历文件系统，将 `(name_lower, path)` 写入 SQLite FTS5（trigram 分词器）。通过 crossbeam 通道并行处理。
-- **搜索**：FTS5 trigram MATCH，CLI 耗时 <5ms。区分大小写时，FTS5 候选结果再经 GLOB 后过滤（SQLite 的 LIKE 对 ASCII 不区分大小写）。短查询（<3 字符）回退到 LIKE。模糊搜索基于空格分词 + 多 token 子串 AND 匹配。
+- **搜索**：FTS5 trigram `MATCH` 处理子串查询，CLI 下为个位数毫秒。短于 3 个字符的查询，以及中文等非 ASCII 查询，会回退到 `LIKE` 扫描——日常使用依然很快，但在数百万文件的索引上是最慢的一条路径。区分大小写时额外用 GLOB 后过滤（SQLite 的 `LIKE` 对 ASCII 不区分大小写）。模糊搜索基于空格分词 + 多 token 子串 AND 匹配。
 - **监听**：通过 CoreServices FFI 直调 FSEvents，监听文件的创建、修改、删除、重命名事件，增量更新索引，重启后从持久化的 EventID 续跑。
+- **卷**：每 10 秒轮询一次 `/Volumes` 以发现已挂载磁盘，因为 FSEvents 不会上报 SMB/WebDAV 共享上的变更。新卷在后台建立索引，卸载时立即清除其索引条目。
 
 ## GUI
 
@@ -215,18 +216,44 @@ machunt optimize [--vacuum]
 
 - 实时全盘搜索
 - 标签导航：搜索 / 收藏 / 设置（`Cmd+1/2/3`）
-- 正则开关 + 区分大小写开关
+- 通配符开关 + 区分大小写开关
 - 路径过滤（手动输入 + 下拉建议 + Finder 选取）
-- 筛选器：应用（180+ 扩展名映射）、时间（日历组件自定义范围）、大小（自定义数值 + 单位）
+- 筛选器：应用（186 条扩展名映射）、时间（日历组件自定义范围）、大小（自定义数值 + 单位）
 - 模糊搜索按钮（空格分词，多 token 子串 AND 匹配）
 - 分类标签：全部 / 文件 / 文件夹 / 文档 / 图片 / 音视频 / 代码 / 压缩包
 - 表头排序：名称、路径、类型、大小、修改时间
 - 列宽拖拽，宽度记忆持久化
 - 单选/多选（`Shift` 连选、`Cmd` 多选）
-- 键盘导航（`↑` `↓`）
 - 空格触发 Quick Look（支持多选）
 - 双击打开
 - 每行末尾内嵌收藏按钮（hover 时显示）
+
+### 快捷键
+
+窗口打开时会自动聚焦搜索框并全选文字，可以直接开始输入。`Tab` 在搜索框与结果列表之间切换焦点，方向键与 `Enter` 作用于当前获得焦点的一侧。
+
+| 快捷键 | 行为 |
+|--------|------|
+| `Tab` | 在搜索框与结果列表之间切换焦点 |
+| `↑` `↓` | 移动选中项（需结果列表获得焦点） |
+| `Enter` / `Cmd+O` | 打开选中项 |
+| `Space` | 原生 Quick Look 预览（支持多选） |
+| `Cmd+A` | 全选结果 |
+| `Cmd+C` | 拷贝选中项（作为文件对象） |
+| `Cmd+F` | 聚焦并全选搜索框 |
+| `Cmd+1` / `Cmd+2` / `Cmd+3` | 切换 搜索 / 收藏 / 设置 |
+| `Esc` | 隐藏窗口 |
+| `Cmd+Shift+D` | 全局显示/隐藏窗口（可在设置中修改） |
+
+在路径过滤框内，`↑` `↓` `Enter` `Esc` 用于浏览下拉建议。
+
+### 菜单栏图标
+
+MacHunt 常驻菜单栏。点击图标切换窗口显隐（并自动聚焦搜索框）；图标菜单包含 搜索、收藏、设置（`Cmd+,`）、退出（`Cmd+Q`）。图标使用模板图（template image），会自动适配浅色/深色菜单栏；菜单文案跟随应用语言。可在「设置 → 启动」中关闭该图标。
+
+### 外置卷
+
+已挂载磁盘不走 FSEvents：由于 FSEvents 不监听 SMB/WebDAV 共享，程序每 10 秒轮询一次 `/Volumes`。新挂载的卷会在后台建立索引，文件随索引进度出现在结果中；卸载时立即清除该卷的索引条目。卷被检测到、索引完成、卷消失时，界面都会收到提示。
 
 ### 右键菜单
 
@@ -238,33 +265,44 @@ machunt optimize [--vacuum]
 
 ### 设置页面
 
-- **主题**：浅色 / 深色 / 跟随系统
+- **主题**：跟随系统 / 浅色 / 深色
 - **语言**：中文 / English
 - **快捷键**：全局唤起/隐藏窗口（默认 `Cmd+Shift+D`）
-- **启动**：开机自启、静默启动、显示/隐藏 Dock 图标
-- **索引维护**：重建后自动 `VACUUM` 开关
-- **排除目录**：完整目录规则 + 正则/通配符规则
+- **启动**：开机自启、静默启动、显示/隐藏 Dock 图标、显示/隐藏菜单栏图标
+- **结果**：结果列表保留的最大条数
+- **索引维护**：重建后自动 `VACUUM`，以及重建与监听开关
+- **排除目录**：完整目录规则 + 正则/通配符规则（优先按正则解析，失败再按通配符）
+- **排除文件**：跳过隐藏文件开关 + 文件名规则
 - **监听根目录**：指定 FSEvents 监听范围
+- **默认动作**：双击打开方式（Finder / QSpace Pro / 自定义应用）与默认终端（Terminal / WezTerm / 自定义应用）
+- **更新**：自动检查更新开关、手动立即检查
+
+### 检查更新
+
+MacHunt 会与 GitHub Releases 上的最新版本号进行比对。该功能默认开启，可在设置中关闭，也提供「立即检查」按钮。请求中只携带当前版本号作为 User-Agent——不会发送任何关于你的文件、索引或搜索内容的信息。
 
 ## 功能概览
 
 | 分类 | 能力 |
 |------|------|
-| 搜索模式 | 子串、通配符/正则、模糊（多 token 子串） |
+| 搜索模式 | 子串、通配符、模糊（多 token 子串） |
 | 大小写 | CLI 和 GUI 均可切换 |
 | 路径过滤 | 前缀、下拉建议、Finder 选取 |
-| 应用筛选 | 180+ 扩展名 → 默认应用映射 |
+| 应用筛选 | 186 条扩展名 → 默认应用映射 |
 | 时间/大小筛选 | 自定义日历范围 / 数值 + 单位 |
 | 实时更新 | FSEvents 监听，EventID 持久化 |
+| 外置卷 | 挂载即自动索引，卸载即清理 |
 | 文件分类 | 8 个分类标签（扩展名自动归类） |
 | 收藏 | 星标按钮，专属收藏页，localStorage 持久化 |
 | 预览 | 原生 Quick Look（空格，支持多文件） |
 | 导出 | 拷贝为文件对象、CLI JSON 输出 |
-| 设计 | Neomorphic 立体设计系统，浅色/深色/跟随系统 |
+| 菜单栏 | 托盘图标：搜索 / 收藏 / 设置 / 退出 |
+| 更新 | 可选的 GitHub Releases 版本检查，自动或手动 |
+| 设计 | Liquid Glass 设计系统，跟随系统/浅色/深色 |
 | 国际化 | 中文 / English |
-| 启动 | 开机自启、静默模式、Dock 开关 |
+| 启动 | 开机自启、静默模式、Dock 与菜单栏图标开关 |
 | 性能 | EventID 淘汰检测、惰性死路径清理 |
-| 隐私 | 100% 本地，无网络连接 |
+| 隐私 | 索引与搜索全部本地，数据不出本机 |
 
 ## 对比
 
@@ -290,7 +328,7 @@ machunt optimize [--vacuum]
 - **存储**：SQLite FTS5（`rusqlite`，WAL，trigram tokenizer）
 - **扫描**：WalkDir + Crossbeam channels
 - **监听**：macOS FSEvents（CoreServices FFI）
-- **设计**：Neomorphic 设计系统，CSS 自定义属性，内联主题检测消除首帧闪烁
+- **设计**：macOS 26 Liquid Glass —— 原生 `NSVisualEffectView` 作为背景，上层为 CSS 自定义属性体系；内联主题检测消除首帧闪烁
 
 ### 构建命令
 
@@ -310,35 +348,59 @@ machunt optimize [--vacuum]
 
 ```
 mac_find/
-├── src/                    # 核心引擎（CLI 与 GUI 共用）
-│   ├── main.rs             # CLI 入口（clap）
-│   ├── lib.rs              # 库入口，导出 Engine
-│   ├── engine.rs           # 引擎：构建/搜索/监听调度
-│   ├── db.rs               # SQLite FTS5：建表、插入、搜索、模糊
-│   ├── builder.rs          # WalkDir 文件系统扫描器
-│   ├── watcher.rs          # FSEvents FFI 监听器
-│   ├── search.rs           # 通配符转正则
-│   ├── filters.rs          # 排除规则（精确 + 正则/通配符）
-│   └── utils.rs            # 路径规范化、跳过逻辑、日志
-├── src-tauri/              # Tauri GUI 后端
-│   ├── src/lib.rs          # Tauri 命令、窗口生命周期、设置
-│   ├── tauri.conf.json     # Tauri 配置
-│   ├── Info.plist          # macOS Bundle 元数据
-│   ├── build.rs            # 构建脚本（编译 ObjC 桥接代码）
-│   └── macos/
-│       └── quicklook_bridge.m  # ObjC 桥接：Quick Look、剪贴板、Dock
-├── src/                    # React 前端（neomorphic 设计系统）
-│   ├── App.tsx             # 主应用组件（~3300 行，所有视图）
-│   ├── App.css             # 样式（CSS 变量、neomorphic 主题）
-│   ├── main.tsx            # 入口
-│   └── index.html          # HTML 外壳，内联主题检测脚本
-├── screenshots/            # README 截图
-├── scripts/
-│   ├── set_version.sh      # 统一更新各配置文件的版本号
-│   └── package_release.sh  # 打包 .app/.dmg
-├── Cargo.toml              # Rust crate 配置
-└── package.json            # 前端依赖
+├── src/                      # Rust 核心引擎与 React 前端共用同一目录
+│   ├── main.rs               # CLI 入口（clap）
+│   ├── lib.rs                # 库入口，导出 Engine
+│   ├── engine.rs             # 引擎：构建 / 搜索 / 监听调度
+│   ├── db.rs                 # SQLite FTS5：建表、插入、搜索、模糊
+│   ├── builder.rs            # WalkDir 文件系统扫描器
+│   ├── watcher.rs            # FSEvents FFI 监听器
+│   ├── search.rs             # 通配符转正则
+│   ├── filters.rs            # 排除规则（精确 + 通配符）
+│   ├── apps.rs               # 扩展名 → 默认应用映射（186 条）
+│   ├── model.rs              # 共用类型（FileEntry、SearchOptions）
+│   ├── utils.rs              # 路径规范化、跳过逻辑、日志
+│   ├── App.tsx               # React 应用外壳：状态、视图、键盘处理
+│   ├── App.css               # Liquid Glass 设计系统（CSS 自定义属性）
+│   ├── main.tsx              # React 入口
+│   ├── i18n.ts               # 中文 / English 文案
+│   ├── types.ts              # 前端类型
+│   ├── utils.ts              # 前端工具（筛选、格式化、本地存储）
+│   └── components/
+│       ├── SearchView.tsx    # 结果表格、筛选器、状态栏
+│       ├── SettingsView.tsx  # 设置页
+│       ├── ContextMenu.tsx   # 右键菜单
+│       └── CustomSelect.tsx  # 自定义下拉框
+├── src-tauri/                # Tauri GUI 后端
+│   ├── src/
+│   │   ├── lib.rs            # 应用初始化、窗口生命周期、命令注册
+│   │   ├── commands/mod.rs   # 全部 #[tauri::command] 处理器
+│   │   ├── window.rs         # 窗口显隐、Liquid Glass 背景、窗口外观
+│   │   ├── settings.rs       # settings.json 持久化（GuiSettings、AppState）
+│   │   ├── file_ops.rs       # 打开 / 定位 / 预览 / 剪贴板 / 废纸篓
+│   │   ├── tray.rs           # 菜单栏图标及其菜单
+│   │   ├── menu.rs           # macOS 应用菜单
+│   │   ├── startup.rs        # 开机自启（SMAppService + AppleScript 降级）
+│   │   └── ffi.rs            # 激活策略桥接
+│   ├── macos/
+│   │   └── quicklook_bridge.m  # ObjC 桥接：Quick Look、剪贴板、Dock
+│   ├── capabilities/         # Tauri 权限配置
+│   ├── icons/                # 应用图标
+│   ├── build.rs              # 构建脚本（编译 ObjC 桥接代码）
+│   ├── Info.plist            # macOS Bundle 元数据
+│   └── tauri.conf.json       # Tauri 配置
+├── public/fonts/             # 自托管字体（Hanken Grotesk、Geist）
+├── screenshots/              # 本文档截图
+├── .github/workflows/        # 发布 CI
+├── index.html                # HTML 外壳，内联主题检测脚本
+├── Cargo.toml                # Rust crate 配置
+├── package.json              # 前端依赖
+├── tsconfig.json             # TypeScript 配置
+├── vite.config.ts            # Vite 配置
+└── VERSION                   # 当前版本号
 ```
+
+> Rust 引擎与 React 前端刻意放在同一个 `src/` 目录下：CLI 与 GUI 链接的是同一个 crate，搜索、索引与监听永远只有一份实现。
 
 ## 运行时数据
 
