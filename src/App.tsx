@@ -7,7 +7,7 @@ import "./App.css";
 import { I18N } from "./i18n";
 import type {
   TabId, SortKey, ColumnKey, ViewMode, VolumeEventType,
-  Language, ExcludeRuleType, SearchResultItem, ContextMenuState,
+  Language, ThemeMode, ExcludeRuleType, SearchResultItem, ContextMenuState,
   SearchResponse, InitResponse, BuildResponse, BuildEvent, WatchResponse,
   LaunchSettingsResponse, AutoVacuumSettingsResponse, ExcludeDirSettingsResponse,
   ExcludeFileSettingsResponse, WatchRootsSettingsResponse, FileManagerSettingsResponse,
@@ -16,13 +16,14 @@ import {
   DEFAULT_WINDOW_TOGGLE_SHORTCUT, DEFAULT_COLUMN_WIDTHS, COLUMN_KEYS,
   EVENT_OPEN_SETTINGS, EVENT_FOCUS_SEARCH, EVENT_OPEN_PINNED,
   detectDefaultLanguage,
+  resolveTheme, loadStoredTheme,
   loadStoredRegexEnabled, loadStoredCaseSensitive, loadStoredFuzzyEnabled,
   loadPinnedItems, savePinnedItems, loadStoredColumnWidths,
   buildSearchRequest, sizeFilterToBytes, timeFilterToMs,
   displayShortcut, shortcutFromKeyboardEvent,
   fmt, isEditableTarget, blurActiveEditable, extensionOf, appForExt,
   COLUMN_WIDTHS_STORAGE_KEY, LANGUAGE_STORAGE_KEY, REGEX_ENABLED_STORAGE_KEY,
-  CASE_SENSITIVE_STORAGE_KEY, FUZZY_ENABLED_STORAGE_KEY,
+  CASE_SENSITIVE_STORAGE_KEY, FUZZY_ENABLED_STORAGE_KEY, THEME_STORAGE_KEY,
   PINNED_STORAGE_KEY,
   iconToken, iconGlyph, typeLabel, formatBytes, formatDate,
 } from "./utils";
@@ -37,6 +38,7 @@ function App() {
   // ── core state ──
   const [activeView, setActiveView] = useState<ViewMode>("search");
   const [language, setLanguage] = useState<Language>(detectDefaultLanguage());
+  const [themeMode, setThemeMode] = useState<ThemeMode>(resolveTheme);
   const t = I18N[language];
 
   // ── shortcut state ──
@@ -754,6 +756,45 @@ function App() {
   useEffect(() => { localStorage.setItem(LANGUAGE_STORAGE_KEY, language); }, [language]);
   useEffect(() => { void invoke("set_menu_language", { language }); }, [language]);
 
+  // ── theme ──
+  const changeTheme = useCallback((mode: ThemeMode) => {
+    setThemeMode(mode);
+    try { localStorage.setItem(THEME_STORAGE_KEY, mode); } catch { /* private mode: keep the in-memory value */ }
+    // The Rust side flips the native window appearance, which is what actually
+    // recolours the Liquid Glass backdrop, and mirrors the choice to settings.json.
+    void invoke("set_theme", { theme: mode }).catch(() => { /* keep the current appearance */ });
+  }, []);
+
+  // `index.html` already applied data-theme for the first paint; this keeps it
+  // in sync from React's side and drives every in-app toggle.
+  useEffect(() => { document.documentElement.setAttribute("data-theme", themeMode); }, [themeMode]);
+
+  // One-shot reconcile with the Rust-side copy of the preference, so a cleared
+  // localStorage (or a hand-edited settings.json) can never leave the two
+  // stores disagreeing for good.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const stored = await invoke<string | null>("get_theme");
+        if (cancelled) return;
+        const local = loadStoredTheme();
+        if (stored === "light" || stored === "dark") {
+          if (stored !== local) {
+            try { localStorage.setItem(THEME_STORAGE_KEY, stored); } catch { /* ignore */ }
+            setThemeMode(stored);
+          }
+        } else if (local === "light" || local === "dark") {
+          // localStorage holds a choice the native side has not seen yet.
+          await invoke("set_theme", { theme: local });
+        }
+      } catch {
+        // Keep whatever localStorage / the system preference resolved to.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(() => { if (isIndexLoading) closePathDropdown(); }, [isIndexLoading]);
 
   // Listen for menu events
@@ -1227,6 +1268,7 @@ function App() {
         <SettingsView
           t={t}
           language={language} setLanguage={setLanguage}
+          themeMode={themeMode} setThemeMode={changeTheme}
           windowToggleShortcut={windowToggleShortcut}
           shortcutDraft={shortcutDraft} setShortcutDraft={setShortcutDraft}
           shortcutStatus={shortcutStatus} setShortcutStatus={setShortcutStatus}

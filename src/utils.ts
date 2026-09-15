@@ -1,4 +1,4 @@
-import type { ColumnKey, Language, SearchResultItem, SortKey, TabId } from "./types";
+import type { ColumnKey, Language, SearchResultItem, SortKey, TabId, ThemeMode } from "./types";
 
 // ── Constants ──
 export const DEFAULT_WINDOW_TOGGLE_SHORTCUT = "CmdOrCtrl+Shift+KeyD";
@@ -20,6 +20,7 @@ export const MIN_COLUMN_WIDTHS: Record<ColumnKey, number> = {
 export const COLUMN_KEYS: ColumnKey[] = ["name", "path", "type", "size", "modified"];
 
 export const LANGUAGE_STORAGE_KEY = "machunt.language";
+export const THEME_STORAGE_KEY = "machunt.theme.mode";
 export const COLUMN_WIDTHS_STORAGE_KEY = "machunt.table.column.widths";
 export const LEGACY_SEARCH_MODE_STORAGE_KEY = "machunt.search.mode";
 export const REGEX_ENABLED_STORAGE_KEY = "machunt.search.regex_enabled";
@@ -428,6 +429,38 @@ export function detectDefaultLanguage(): Language {
     return "zh";
   }
   return "en";
+}
+
+// ── Theme ──
+// The explicit user choice is mirrored into the Rust-side `settings.json`
+// (`AppState.theme`) because the native window has to be styled from there at
+// launch — before the webview runs — otherwise light mode flashes dark first.
+// localStorage stays as a fast path so `index.html` can set `data-theme` on the
+// very first paint.
+
+/** The user's explicit choice, or `null` when the app should follow the system. */
+export function loadStoredTheme(): ThemeMode | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return stored === "light" || stored === "dark" ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+export function detectSystemTheme(): ThemeMode {
+  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  return "dark";
+}
+
+/** The theme to actually render: explicit choice first, system preference otherwise. */
+export function resolveTheme(): ThemeMode {
+  return loadStoredTheme() ?? detectSystemTheme();
 }
 
 export function isMacPlatform(): boolean {

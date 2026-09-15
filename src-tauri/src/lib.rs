@@ -82,13 +82,23 @@ pub fn run() {
                 std::thread::spawn(move || { for event in rx { let _ = app_handle.emit("volume://event", &event); } });
             }
 
+            // Build the Liquid Glass backdrop and lock in the saved appearance
+            // *before* the window is shown, so the first frame the user sees
+            // already matches the theme (no dark flash on a light setup).
+            let initial_theme = {
+                let state = app.state::<AppState>();
+                let guard = state.theme.lock().unwrap_or_else(|e| e.into_inner());
+                guard.clone()
+            };
+            let _ = window::make_window_movable_by_background(
+                &app.handle().clone(),
+                initial_theme.as_deref(),
+            );
+
             if !silent_start {
                 let state = app.state::<AppState>();
                 let _ = show_main_window_internal(&app.handle().clone(), &state);
             }
-
-            // Make window draggable by background (no titlebar)
-            let _ = window::make_window_movable_by_background(&app.handle().clone());
 
             // Create menu bar tray icon (respects show_tray_icon setting)
             let show_tray = {
@@ -150,7 +160,8 @@ pub fn run() {
             commands::get_version,
             commands::list_app_groups,
             commands::group_results_by_app,
-            window::set_window_appearance,
+            commands::get_theme,
+            commands::set_theme,
             window::start_dragging,
         ])
         .build(tauri::generate_context!())

@@ -122,7 +122,13 @@ pub fn register_window_toggle_shortcut<R: tauri::Runtime>(
 /// Hide traffic light buttons and add NSVisualEffectView as the system's
 /// Liquid Glass backdrop. The webview sits on top, fully transparent,
 /// so CSS background colors render normally (no WKWebView compositing bug).
-pub fn make_window_movable_by_background(app: &tauri::AppHandle) -> Result<(), String> {
+///
+/// `theme` is the saved appearance preference and is applied *before* the
+/// backdrop is created, so the window has the right look on its first frame.
+pub fn make_window_movable_by_background(
+    app: &tauri::AppHandle,
+    theme: Option<&str>,
+) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         use objc2::msg_send;
@@ -133,16 +139,13 @@ pub fn make_window_movable_by_background(app: &tauri::AppHandle) -> Result<(), S
         let window = app
             .get_webview_window("main")
             .ok_or_else(|| "Main window not found".to_string())?;
+
+        apply_window_theme(&window, theme)?;
+
         let ns_window_ptr = window.ns_window().map_err(|e| e.to_string())?;
 
         unsafe {
             let ns_window: Retained<NSObject> = Retained::retain(ns_window_ptr as *mut _).unwrap();
-
-            // Force DarkAqua appearance from the start (avoid flash on light mode systems)
-            let dark_appearance: *mut NSObject = msg_send![objc2::class!(NSAppearance), appearanceNamed: objc2_app_kit::NSAppearanceNameDarkAqua];
-            if !dark_appearance.is_null() {
-                let _: () = msg_send![&ns_window, setAppearance: &*dark_appearance];
-            }
 
             // Hide traffic light buttons
             let _: () = msg_send![&ns_window, setTitlebarAppearsTransparent: true];
@@ -195,7 +198,10 @@ pub fn make_window_movable_by_background(app: &tauri::AppHandle) -> Result<(), S
                     let vv_ptr: *mut NSObject = msg_send![vv_alloc, initWithFrame: bounds];
                     if !vv_ptr.is_null() {
                         let vv: Retained<NSObject> = Retained::retain(vv_ptr).unwrap();
-                        // NSVisualEffectMaterialHUDWindow = 21 (Spotlight-like)
+                        // NSVisualEffectMaterialUnderWindowBackground = 21.
+                        // This material is *adaptive*: it renders its light or
+                        // dark variant from the window appearance, which is why
+                        // light mode only needs `apply_window_theme` below.
                         let _: () = msg_send![&*vv, setMaterial: 21i64];
                         // NSVisualEffectStateFollowsWindowActiveState = 1
                         let _: () = msg_send![&*vv, setState: 1i64];
@@ -214,14 +220,25 @@ pub fn make_window_movable_by_background(app: &tauri::AppHandle) -> Result<(), S
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = app;
+        let _ = (app, theme);
     }
     Ok(())
 }
 
-/// Set the window titlebar appearance to dark or light.
-#[tauri::command]
-pub fn set_window_appearance(app: tauri::AppHandle, dark: bool) -> Result<(), String> {
+/// Force the window — and therefore the native Liquid Glass backdrop — into the
+/// given appearance.
+///
+/// This is the piece that makes light mode possible at all: `html`/`body`/`#root`
+/// are `background: transparent` and the only real surface is a native
+/// `NSVisualEffectView`, which resolves its colours from the *window appearance*.
+/// So no amount of CSS can lighten the window while the appearance stays
+/// `DarkAqua`; the stylesheet can only paint translucent layers on top.
+///
+/// `None` clears the override, handing the window back to the system appearance.
+pub fn apply_window_theme<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    theme: Option<&str>,
+) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         use objc2::msg_send;
@@ -229,30 +246,26 @@ pub fn set_window_appearance(app: tauri::AppHandle, dark: bool) -> Result<(), St
         use objc2_app_kit::NSAppearance;
         use objc2_foundation::NSObject;
 
-        let window = app
-            .get_webview_window("main")
-            .ok_or_else(|| "Main window not found".to_string())?;
+        let normalized = crate::settings::normalize_theme(theme);
         let ns_window_ptr = window.ns_window().map_err(|e| e.to_string())?;
 
-        let name = unsafe {
-            if dark {
-                objc2_app_kit::NSAppearanceNameDarkAqua
-            } else {
-                objc2_app_kit::NSAppearanceNameAqua
-            }
-        };
+        unsafe {
+            let name = match normalized.as_deref() {
+                Some("light") => Some(objc2_app_kit::NSAppearanceNameAqua),
+                Some("dark") => Some(objc2_app_kit::NSAppearanceNameDarkAqua),
+                _ => None,
+            };
+            let appearance = name.and_then(NSAppearance::appearanceNamed);
 
-        let appearance = NSAppearance::appearanceNamed(name);
-        if let Some(appearance) = appearance {
-            unsafe {
-                let ns_window: Retained<NSObject> = Retained::retain(ns_window_ptr as *mut _).unwrap();
-                let _: () = msg_send![&ns_window, setAppearance: &*appearance];
-            }
+            let ns_window: Retained<NSObject> = Retained::retain(ns_window_ptr as *mut NSObject).unwrap();
+            // `None` encodes as a null pointer, which hands the window back to
+            // the appearance inherited from the app / system.
+            let _: () = msg_send![&ns_window, setAppearance: appearance.as_deref()];
         }
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (app, dark);
+        let _ = (window, theme);
     }
     Ok(())
 }

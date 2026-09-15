@@ -6,6 +6,7 @@ export type VolumeEventType = { type: "mountDetected"; path: string; name: strin
   | { type: "indexComplete"; path: string; fileCount: number; totalIndexed: number }
   | { type: "volumeRemoved"; path: string; name: string; totalIndexed: number };
 export type Language = "zh" | "en";
+export type ThemeMode = "light" | "dark";
 export type ExcludeRuleType = "exact" | "pattern";
 
 export interface SearchResultItem {

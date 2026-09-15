@@ -58,6 +58,11 @@ pub struct GuiSettings {
     pub custom_folder_app: String,
     pub custom_terminal_app: String,
     pub max_results: usize,
+    /// Persisted appearance preference: `Some("light")` / `Some("dark")`, or
+    /// `None` to follow the macOS system appearance. Kept here (not only in
+    /// localStorage) so the native window can be styled *before* it is shown,
+    /// which removes the launch flash entirely.
+    pub theme: Option<String>,
 }
 
 impl Default for GuiSettings {
@@ -80,6 +85,7 @@ impl Default for GuiSettings {
             custom_folder_app: String::new(),
             custom_terminal_app: String::new(),
             max_results: 500,
+            theme: None,
         }
     }
 }
@@ -139,7 +145,20 @@ pub struct AppState {
     pub custom_terminal_app: Mutex<String>,
     pub max_results: Mutex<usize>,
     pub language: Mutex<String>,
+    /// `Some("light")` / `Some("dark")` when the user picked an explicit theme,
+    /// `None` while the app follows the system appearance.
+    pub theme: Mutex<Option<String>>,
     pub is_quitting: AtomicBool,
+}
+
+/// Normalize a theme string coming from the frontend or the settings file.
+/// Anything that is not `"light"` / `"dark"` means "follow the system".
+pub fn normalize_theme(theme: Option<&str>) -> Option<String> {
+    match theme.map(str::trim) {
+        Some("light") => Some("light".to_string()),
+        Some("dark") => Some("dark".to_string()),
+        _ => None,
+    }
 }
 
 impl AppState {
@@ -195,6 +214,7 @@ impl AppState {
             custom_terminal_app: Mutex::new(settings.custom_terminal_app),
             max_results: Mutex::new(settings.max_results),
             language: Mutex::new(String::from("zh")),
+            theme: Mutex::new(normalize_theme(settings.theme.as_deref())),
             is_quitting: AtomicBool::new(false),
         }
     }
@@ -225,5 +245,6 @@ pub fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         custom_folder_app: lock_get!(custom_folder_app, String),
         custom_terminal_app: lock_get!(custom_terminal_app, String),
         max_results: *state.max_results.lock().map_err(|_| "Failed to access max_results setting".to_string())?,
+        theme: lock_get!(theme, Option<String>),
     })
 }

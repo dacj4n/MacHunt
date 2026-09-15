@@ -7,7 +7,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 // ── Macro for simple getter/setter pattern ──
 macro_rules! simple_getter_setter {
@@ -716,6 +716,44 @@ pub fn hide_main_window(app: tauri::AppHandle, state: tauri::State<'_, AppState>
 #[tauri::command]
 pub fn get_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
+}
+
+/// The persisted appearance preference: `Some("light")` / `Some("dark")`, or
+/// `None` while the app follows the macOS system appearance.
+#[tauri::command]
+pub fn get_theme(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
+    let guard = state
+        .theme
+        .lock()
+        .map_err(|_| "Failed to access theme setting".to_string())?;
+    Ok(guard.clone())
+}
+
+/// Persist the appearance preference and apply it to the native window.
+///
+/// The value is mirrored into `settings.json` because the native window is
+/// styled from there at launch, before the webview has a chance to run.
+#[tauri::command]
+pub fn set_theme(
+    theme: Option<String>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let normalized = crate::settings::normalize_theme(theme.as_deref());
+
+    {
+        let mut guard = state
+            .theme
+            .lock()
+            .map_err(|_| "Failed to access theme setting".to_string())?;
+        *guard = normalized.clone();
+    }
+    save_gui_settings(&snapshot_gui_settings(&state)?)?;
+
+    if let Some(window) = app.get_webview_window("main") {
+        window::apply_window_theme(&window, normalized.as_deref())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
