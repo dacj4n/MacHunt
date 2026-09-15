@@ -7,6 +7,8 @@ export type VolumeEventType = { type: "mountDetected"; path: string; name: strin
   | { type: "volumeRemoved"; path: string; name: string; totalIndexed: number };
 export type Language = "zh" | "en";
 export type ThemeMode = "light" | "dark";
+/** What the user picked; `"system"` hands the choice to macOS. */
+export type ThemePreference = ThemeMode | "system";
 export type ExcludeRuleType = "exact" | "pattern";
 
 export interface SearchResultItem {

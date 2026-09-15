@@ -152,7 +152,8 @@ pub struct AppState {
 }
 
 /// Normalize a theme string coming from the frontend or the settings file.
-/// Anything that is not `"light"` / `"dark"` means "follow the system".
+/// Anything that is not `"light"` / `"dark"` means "follow the system", which is
+/// where the frontend's `"system"` option and a missing settings entry both land.
 pub fn normalize_theme(theme: Option<&str>) -> Option<String> {
     match theme.map(str::trim) {
         Some("light") => Some("light".to_string()),

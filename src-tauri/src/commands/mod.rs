@@ -719,7 +719,8 @@ pub fn get_version(app: tauri::AppHandle) -> String {
 }
 
 /// The persisted appearance preference: `Some("light")` / `Some("dark")`, or
-/// `None` while the app follows the macOS system appearance.
+/// `None` while the app follows the macOS system appearance. The frontend spells
+/// that last case `"system"`; it comes back as `null`.
 #[tauri::command]
 pub fn get_theme(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
     let guard = state
@@ -731,6 +732,8 @@ pub fn get_theme(state: tauri::State<'_, AppState>) -> Result<Option<String>, St
 
 /// Persist the appearance preference and apply it to the native window.
 ///
+/// Accepts `"light"`, `"dark"` or `"system"` — anything else is treated as
+/// `"system"`, i.e. stop overriding the appearance and let AppKit follow the OS.
 /// The value is mirrored into `settings.json` because the native window is
 /// styled from there at launch, before the webview has a chance to run.
 #[tauri::command]

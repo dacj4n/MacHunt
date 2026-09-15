@@ -7,6 +7,8 @@
       (function() {
         try {
           var theme = localStorage.getItem("machunt.theme.mode");
+          // An explicit "light"/"dark" wins; "system" (and anything unknown)
+          // deliberately falls through to the OS preference below.
           if (theme === "light" || theme === "dark") {
             document.documentElement.setAttribute("data-theme", theme);
           } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {

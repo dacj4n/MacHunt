@@ -1,4 +1,4 @@
-import type { ColumnKey, Language, SearchResultItem, SortKey, TabId, ThemeMode } from "./types";
+import type { ColumnKey, Language, SearchResultItem, SortKey, TabId, ThemeMode, ThemePreference } from "./types";
 
 // ── Constants ──
 export const DEFAULT_WINDOW_TOGGLE_SHORTCUT = "CmdOrCtrl+Shift+KeyD";
@@ -438,29 +438,33 @@ export function detectDefaultLanguage(): Language {
 // localStorage stays as a fast path so `index.html` can set `data-theme` on the
 // very first paint.
 
-/** The user's explicit choice, or `null` when the app should follow the system. */
-export function loadStoredTheme(): ThemeMode | null {
+/** The user's saved preference; nothing stored (or an unknown value) means "system". */
+export function loadStoredTheme(): ThemePreference {
   if (typeof window === "undefined") {
-    return null;
+    return "system";
   }
   try {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-    return stored === "light" || stored === "dark" ? stored : null;
+    return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
   } catch {
+    return "system";
+  }
+}
+
+/** The OS appearance media query, or `null` on platforms without `matchMedia`. */
+export function systemThemeQuery(): MediaQueryList | null {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
     return null;
   }
+  return window.matchMedia("(prefers-color-scheme: dark)");
 }
 
 export function detectSystemTheme(): ThemeMode {
-  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  const query = systemThemeQuery();
+  if (!query) {
+    return "dark";
   }
-  return "dark";
-}
-
-/** The theme to actually render: explicit choice first, system preference otherwise. */
-export function resolveTheme(): ThemeMode {
-  return loadStoredTheme() ?? detectSystemTheme();
+  return query.matches ? "dark" : "light";
 }
 
 export function isMacPlatform(): boolean {

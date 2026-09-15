@@ -7,7 +7,7 @@ import "./App.css";
 import { I18N } from "./i18n";
 import type {
   TabId, SortKey, ColumnKey, ViewMode, VolumeEventType,
-  Language, ThemeMode, ExcludeRuleType, SearchResultItem, ContextMenuState,
+  Language, ThemeMode, ThemePreference, ExcludeRuleType, SearchResultItem, ContextMenuState,
   SearchResponse, InitResponse, BuildResponse, BuildEvent, WatchResponse,
   LaunchSettingsResponse, AutoVacuumSettingsResponse, ExcludeDirSettingsResponse,
   ExcludeFileSettingsResponse, WatchRootsSettingsResponse, FileManagerSettingsResponse,
@@ -16,7 +16,7 @@ import {
   DEFAULT_WINDOW_TOGGLE_SHORTCUT, DEFAULT_COLUMN_WIDTHS, COLUMN_KEYS,
   EVENT_OPEN_SETTINGS, EVENT_FOCUS_SEARCH, EVENT_OPEN_PINNED,
   detectDefaultLanguage,
-  resolveTheme, loadStoredTheme,
+  loadStoredTheme, detectSystemTheme, systemThemeQuery,
   loadStoredRegexEnabled, loadStoredCaseSensitive, loadStoredFuzzyEnabled,
   loadPinnedItems, savePinnedItems, loadStoredColumnWidths,
   buildSearchRequest, sizeFilterToBytes, timeFilterToMs,
@@ -38,7 +38,12 @@ function App() {
   // ── core state ──
   const [activeView, setActiveView] = useState<ViewMode>("search");
   const [language, setLanguage] = useState<Language>(detectDefaultLanguage());
-  const [themeMode, setThemeMode] = useState<ThemeMode>(resolveTheme);
+  // ── theme ──
+  const [themePreference, setThemePreference] = useState<ThemePreference>(loadStoredTheme);
+  const [systemTheme, setSystemTheme] = useState<ThemeMode>(detectSystemTheme);
+  // The theme actually rendered: an explicit choice, or whatever macOS reports
+  // right now while "system" is selected.
+  const themeMode: ThemeMode = themePreference === "system" ? systemTheme : themePreference;
   const t = I18N[language];
 
   // ── shortcut state ──
@@ -757,16 +762,29 @@ function App() {
   useEffect(() => { void invoke("set_menu_language", { language }); }, [language]);
 
   // ── theme ──
-  const changeTheme = useCallback((mode: ThemeMode) => {
-    setThemeMode(mode);
-    try { localStorage.setItem(THEME_STORAGE_KEY, mode); } catch { /* private mode: keep the in-memory value */ }
+  const changeTheme = useCallback((preference: ThemePreference) => {
+    setThemePreference(preference);
+    try { localStorage.setItem(THEME_STORAGE_KEY, preference); } catch { /* private mode: keep the in-memory value */ }
     // The Rust side flips the native window appearance, which is what actually
     // recolours the Liquid Glass backdrop, and mirrors the choice to settings.json.
-    void invoke("set_theme", { theme: mode }).catch(() => { /* keep the current appearance */ });
+    // "system" clears the override there, after which AppKit tracks the OS on its own.
+    void invoke("set_theme", { theme: preference }).catch(() => { /* keep the current appearance */ });
+  }, []);
+
+  // While "system" is selected, mirror macOS as it flips. An explicit preference
+  // ignores this entirely.
+  useEffect(() => {
+    const query = systemThemeQuery();
+    if (!query) return;
+    const sync = (event: MediaQueryListEvent) => setSystemTheme(event.matches ? "dark" : "light");
+    query.addEventListener("change", sync);
+    setSystemTheme(query.matches ? "dark" : "light");
+    return () => query.removeEventListener("change", sync);
   }, []);
 
   // `index.html` already applied data-theme for the first paint; this keeps it
-  // in sync from React's side and drives every in-app toggle.
+  // in sync from React's side and covers every in-app toggle as well as a live
+  // system appearance change while "system" is selected.
   useEffect(() => { document.documentElement.setAttribute("data-theme", themeMode); }, [themeMode]);
 
   // One-shot reconcile with the Rust-side copy of the preference, so a cleared
@@ -778,15 +796,18 @@ function App() {
       try {
         const stored = await invoke<string | null>("get_theme");
         if (cancelled) return;
+        // settings.json stores `null` for "system".
+        const remote = stored === "light" || stored === "dark" ? stored : null;
         const local = loadStoredTheme();
-        if (stored === "light" || stored === "dark") {
-          if (stored !== local) {
-            try { localStorage.setItem(THEME_STORAGE_KEY, stored); } catch { /* ignore */ }
-            setThemeMode(stored);
+        if (remote) {
+          // settings.json is what the window is already rendering, so it wins.
+          if (remote !== local) {
+            try { localStorage.setItem(THEME_STORAGE_KEY, remote); } catch { /* ignore */ }
+            setThemePreference(remote);
           }
-        } else if (local === "light" || local === "dark") {
+        } else if (local !== "system") {
           // localStorage holds a choice the native side has not seen yet.
-          await invoke("set_theme", { theme: local });
+          void invoke("set_theme", { theme: local }).catch(() => { /* keep the local choice */ });
         }
       } catch {
         // Keep whatever localStorage / the system preference resolved to.
@@ -1268,7 +1289,7 @@ function App() {
         <SettingsView
           t={t}
           language={language} setLanguage={setLanguage}
-          themeMode={themeMode} setThemeMode={changeTheme}
+          themePreference={themePreference} setThemePreference={changeTheme}
           windowToggleShortcut={windowToggleShortcut}
           shortcutDraft={shortcutDraft} setShortcutDraft={setShortcutDraft}
           shortcutStatus={shortcutStatus} setShortcutStatus={setShortcutStatus}

@@ -1716,7 +1716,7 @@ body {
 /* ===== TILT CARDS ===== */
 .theme-cards {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
 }
 
@@ -1809,6 +1809,26 @@ body {
 .theme-preview-light .tp-bar:last-child {
   max-width: 48px;
   background: #eceef3;
+  margin-right: 6px;
+}
+
+/* "System" splits the swatch diagonally — light half, dark half. The bars are a
+   neutral grey so they stay legible over both halves. */
+.theme-preview-system {
+  background: linear-gradient(135deg, #f4f5f7 0%, #f4f5f7 48%, #10131b 52%, #10131b 100%);
+}
+.theme-preview-system .tp-bar {
+  flex: 1;
+  margin: 6px 4px;
+  border-radius: 3px;
+  background: rgba(128, 138, 158, 0.45);
+}
+.theme-preview-system .tp-bar:first-child {
+  max-width: 32px;
+  margin-left: 6px;
+}
+.theme-preview-system .tp-bar:last-child {
+  max-width: 48px;
   margin-right: 6px;
 }
 

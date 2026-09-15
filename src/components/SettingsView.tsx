@@ -1,14 +1,14 @@
 import { useState } from "react";
 import { CustomSelect } from "./CustomSelect";
-import type { Language, ThemeMode, ExcludeRuleType, FileManagerSettingsResponse } from "../types";
+import type { Language, ThemePreference, ExcludeRuleType, FileManagerSettingsResponse } from "../types";
 import { displayShortcut, shortcutFromKeyboardEvent } from "../utils";
 
 export interface SettingsViewProps {
   t: Record<string, string>;
   language: Language;
   setLanguage: (v: Language) => void;
-  themeMode: ThemeMode;
-  setThemeMode: (v: ThemeMode) => void;
+  themePreference: ThemePreference;
+  setThemePreference: (v: ThemePreference) => void;
   windowToggleShortcut: string;
   shortcutDraft: string;
   setShortcutDraft: (v: string) => void;
@@ -93,7 +93,7 @@ export function SettingsView(props: SettingsViewProps) {
   const {
     t,
     language, setLanguage,
-    themeMode, setThemeMode,
+    themePreference, setThemePreference,
     windowToggleShortcut, shortcutDraft, setShortcutDraft,
     shortcutStatus, setShortcutStatus, isShortcutSaving,
     applyWindowToggleShortcut, resetWindowToggleShortcut,
@@ -129,10 +129,14 @@ export function SettingsView(props: SettingsViewProps) {
     { code: "en", title: t.languageEnTitle, description: "Interface in English." }
   ];
 
-  const settingsThemeOptions: Array<{ code: ThemeMode; title: string; description: string }> = [
+  const settingsThemeOptions: Array<{ code: ThemePreference; title: string; description: string }> = [
+    { code: "system", title: t.themeSystemTitle, description: t.themeSystemDesc },
     { code: "light", title: t.themeLightTitle, description: t.themeLightDesc },
     { code: "dark", title: t.themeDarkTitle, description: t.themeDarkDesc }
   ];
+
+  const currentThemeLabel = settingsThemeOptions.find((option) => option.code === themePreference)?.title
+    ?? t.themeSystemTitle;
 
   // Shared pointer-tilt feedback for the selectable cards.
   const tiltHandlers = {
@@ -168,7 +172,7 @@ export function SettingsView(props: SettingsViewProps) {
             <div>
               <div className="set-card-title">{t.themeModeTitle}</div>
               <div className="set-card-subtitle">
-                {t.themeCurrent}: {themeMode === "dark" ? t.themeDarkTitle : t.themeLightTitle}
+                {t.themeCurrent}: {currentThemeLabel}
               </div>
             </div>
           </div>
@@ -176,12 +180,12 @@ export function SettingsView(props: SettingsViewProps) {
             {settingsThemeOptions.map((option) => (
               <div
                 key={option.code}
-                className={themeMode === option.code ? "tilt-card active" : "tilt-card"}
+                className={themePreference === option.code ? "tilt-card active" : "tilt-card"}
                 role="button"
                 tabIndex={0}
-                aria-pressed={themeMode === option.code}
-                onClick={() => setThemeMode(option.code)}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setThemeMode(option.code); } }}
+                aria-pressed={themePreference === option.code}
+                onClick={() => setThemePreference(option.code)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setThemePreference(option.code); } }}
                 {...tiltHandlers}
               >
                 <div className={`theme-preview theme-preview-${option.code}`}>
