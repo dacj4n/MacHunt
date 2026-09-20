@@ -1184,6 +1184,9 @@ body {
 }
 
 /* Rows */
+/* Dragging a row is handled by a native AppKit drag session started from Rust
+   (see `file_ops::start_file_drag`), so the webview must never begin its own
+   HTML5 drag — that would publish no file URL and swallow the gesture. */
 .result-row {
   display: grid;
   align-items: center;
@@ -1191,6 +1194,7 @@ body {
   height: 46px;
   -webkit-user-select: none;
   user-select: none;
+  -webkit-user-drag: none;
   border-bottom: 1px solid var(--glass-hairline-faint);
   background: transparent;
   transition: background-color var(--ease), box-shadow var(--ease);

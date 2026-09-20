@@ -133,6 +133,7 @@ pub fn run() {
             file_ops::open_in_default_terminal,
             file_ops::copy_to_clipboard,
             file_ops::copy_search_results,
+            file_ops::start_file_drag,
             file_ops::move_to_trash,
             commands::set_menu_language,
             commands::persist_watch_cursor,

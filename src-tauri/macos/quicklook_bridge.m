@@ -248,3 +248,134 @@ bool copy_files_to_clipboard(const char *const *paths, size_t len) {
     return copied;
   }
 }
+
+#pragma mark - Dragging search results out of the window
+
+// Only `NSDragOperationCopy` is offered, so dropping a result on the Desktop,
+// in Finder, or onto an application can never move or delete the original —
+// the destination is forced into copy semantics no matter what it would prefer.
+@interface MachuntDragSource : NSObject <NSDraggingSource>
+@end
+
+@implementation MachuntDragSource
+
+- (NSDragOperation)draggingSession:(NSDraggingSession *)session
+    sourceOperationMaskForDraggingContext:(NSDraggingContext)context {
+  (void)session;
+  (void)context;
+  return NSDragOperationCopy;
+}
+
+@end
+
+static MachuntDragSource *g_drag_source = nil;
+
+// The webview cannot do this on its own: HTML5 drag-and-drop only publishes
+// data between web contents, so the drag pasteboard would carry nothing a
+// native app understands. Starting an AppKit dragging session instead puts a
+// real `public.file-url` on the pasteboard, which is exactly what Finder,
+// editors and media players look for.
+//
+// `x`/`y` are CSS pixels from the webview's top-left. Returns once the drag has
+// finished, because AppKit runs the session in a nested event loop.
+bool start_file_drag(void *ns_window_ptr,
+                     const char *const *paths,
+                     size_t len,
+                     double x,
+                     double y) {
+  @autoreleasepool {
+    if (ns_window_ptr == NULL || paths == NULL || len == 0) {
+      return false;
+    }
+
+    NSArray<NSURL *> *urls = build_urls(paths, len);
+    if (urls.count == 0) {
+      return false;
+    }
+
+    __block bool started = false;
+    void (^dragAction)(void) = ^{
+      NSWindow *window = (__bridge NSWindow *)ns_window_ptr;
+      NSView *view = window.contentView;
+      if (view == nil) {
+        return;
+      }
+
+      // AppKit views are bottom-left based, the webview reports top-left. The
+      // webview fills the content view, so its height is all the flip needs.
+      NSPoint pointInView = NSMakePoint(x, view.bounds.size.height - y);
+      NSPoint pointInWindow = [view convertPoint:pointInView toView:nil];
+
+      // Prefer the mouse event AppKit is currently dispatching: it carries the
+      // real click count and modifier flags. The IPC round-trip means it is
+      // usually gone by now, so fall back to a synthesized drag event.
+      NSEvent *event = [NSApp currentEvent];
+      BOOL usable = event != nil && event.window == window &&
+                    (event.type == NSEventTypeLeftMouseDown ||
+                     event.type == NSEventTypeLeftMouseDragged);
+      if (!usable) {
+        event = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDragged
+                                   location:pointInWindow
+                              modifierFlags:0
+                                  timestamp:[NSProcessInfo processInfo].systemUptime
+                               windowNumber:window.windowNumber
+                                    context:nil
+                                eventNumber:0
+                                 clickCount:1
+                                   pressure:1.0];
+      }
+      if (event == nil) {
+        return;
+      }
+
+      const CGFloat iconSize = 64.0;
+      NSMutableArray<NSDraggingItem *> *items =
+          [NSMutableArray arrayWithCapacity:urls.count];
+      NSUInteger index = 0;
+      for (NSURL *url in urls) {
+        NSPasteboardItem *pasteboardItem = [[NSPasteboardItem alloc] init];
+        [pasteboardItem setString:url.absoluteString
+                          forType:NSPasteboardTypeFileURL];
+        // Legacy file type, still consulted by a few older applications.
+        [pasteboardItem setPropertyList:@[ url.path ]
+                                forType:@"NSFilenamesPboardType"];
+
+        NSDraggingItem *item =
+            [[NSDraggingItem alloc] initWithPasteboardWriter:pasteboardItem];
+
+        NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:url.path];
+        if (icon == nil) {
+          icon = [NSImage imageNamed:NSImageNameMultipleDocuments];
+        }
+        icon.size = NSMakeSize(iconSize, iconSize);
+
+        // Fan the stack out so dragging several files reads as a pile.
+        CGFloat offset = (CGFloat)index * 8.0;
+        NSRect frame = NSMakeRect(pointInView.x - iconSize / 2.0 + offset,
+                                 pointInView.y - iconSize / 2.0 - offset,
+                                 iconSize,
+                                 iconSize);
+        [item setDraggingFrame:frame contents:icon];
+        [items addObject:item];
+        index++;
+      }
+
+      if (g_drag_source == nil) {
+        g_drag_source = [[MachuntDragSource alloc] init];
+      }
+
+      [view beginDraggingSessionWithItems:items
+                                    event:event
+                                   source:g_drag_source];
+      started = true;
+    };
+
+    if ([NSThread isMainThread]) {
+      dragAction();
+    } else {
+      dispatch_sync(dispatch_get_main_queue(), dragAction);
+    }
+
+    return started;
+  }
+}

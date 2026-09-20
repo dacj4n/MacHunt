@@ -160,6 +160,10 @@ function App() {
   const [customFolderApp, setCustomFolderApp] = useState("");
   const [customTerminalApp, setCustomTerminalApp] = useState("");
 
+  // ── drag a result out of the window ──
+  const rowDragRef = useRef<{ x: number; y: number; paths: string[]; started: boolean } | null>(null);
+  const suppressNextClickRef = useRef(false);
+
   // ── context menu ──
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [openWithVisible, setOpenWithVisible] = useState(false);
@@ -437,6 +441,9 @@ function App() {
 
   // ── row click / selection ──
   const handleRowClick = (event: React.MouseEvent<HTMLElement>, item: SearchResultItem, index: number) => {
+    // A press that turned into a drag already updated the selection; letting the
+    // trailing click run would undo it (a Cmd-click would toggle the row off).
+    if (suppressNextClickRef.current) { suppressNextClickRef.current = false; return; }
     blurActiveEditable();
     const path = item.path;
     const isMetaMulti = event.metaKey;
@@ -479,6 +486,29 @@ function App() {
     const y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
     if (!selectedItemPathSet.has(item.path)) { setSelectedItemPaths([item.path]); setSelectionAnchorPath(item.path); }
     setContextMenu({ x, y, item, multiSelection: menuIsMulti }); setOpenWithVisible(false);
+  };
+  // ── drag a result out of the window ──
+  // HTML5 drag-and-drop cannot hand file references to Finder or to other apps,
+  // so once the pointer travels past a small threshold we start a native AppKit
+  // drag session from Rust instead (see `file_ops::start_file_drag`). The drag
+  // is a copy — the original file is never moved or deleted.
+  const beginRowDrag = (event: React.MouseEvent<HTMLElement>, item: SearchResultItem) => {
+    rowDragRef.current = null;
+    if (event.button !== 0) return;
+    blurActiveEditable();
+    // Inline row buttons (terminal, pin) keep their own behaviour.
+    if ((event.target as HTMLElement).closest("button")) return;
+
+    // Pressing an unselected row selects it first, so the drag carries exactly
+    // what is highlighted — the same rule Finder uses.
+    const inSelection = selectedItemPathSet.has(item.path);
+    const paths = inSelection ? selectedPathsInOrder : [item.path];
+    if (!inSelection) {
+      setSelectedItemPaths([item.path]);
+      setSelectionAnchorPath(item.path);
+    }
+    if (paths.length === 0) return;
+    rowDragRef.current = { x: event.clientX, y: event.clientY, paths, started: false };
   };
 
   // ── sort ──
@@ -985,6 +1015,33 @@ function App() {
     return () => window.removeEventListener("beforeunload", persist);
   }, []);
 
+  // Promote a press-and-move on a result row into a native drag session.
+  useEffect(() => {
+    const DRAG_THRESHOLD_PX = 4;
+    const onMove = (event: MouseEvent) => {
+      const drag = rowDragRef.current;
+      if (!drag || drag.started) return;
+      if ((event.buttons & 1) === 0) { rowDragRef.current = null; return; }
+      if (Math.abs(event.clientX - drag.x) < DRAG_THRESHOLD_PX && Math.abs(event.clientY - drag.y) < DRAG_THRESHOLD_PX) return;
+      drag.started = true;
+      suppressNextClickRef.current = true;
+      void invoke("start_file_drag", { paths: drag.paths, x: event.clientX, y: event.clientY })
+        .catch((err) => { suppressNextClickRef.current = false; setError(String(err)); });
+    };
+    const onUp = () => { rowDragRef.current = null; };
+    // Any fresh press clears a stale suppression: a drag that ends outside the
+    // app never delivers a mouseup or click to the webview.
+    const onAnyMouseDown = () => { suppressNextClickRef.current = false; };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    document.addEventListener("mousedown", onAnyMouseDown, true);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.removeEventListener("mousedown", onAnyMouseDown, true);
+    };
+  }, []);
+
   // Search
   useEffect(() => {
     if (isIndexLoading) { setIsSearching(false); return; }
@@ -1212,7 +1269,7 @@ function App() {
           visibleItems={visibleItems}
           topSpacerHeight={topSpacerHeight} bottomSpacerHeight={bottomSpacerHeight}
           handleScrollbarScroll={handleScrollbarScroll}
-          openResult={openResult} handleRowClick={handleRowClick}
+          openResult={openResult} handleRowClick={handleRowClick} beginRowDrag={beginRowDrag}
           openResultContextMenu={openResultContextMenu}
           isPinned={isPinned} togglePin={togglePin}
           searchInputRef={searchInputRef} rowRefs={rowRefs}
@@ -1262,6 +1319,7 @@ function App() {
                       ref={(el) => { if (el) rowRefs.current.set(item.path, el); else rowRefs.current.delete(item.path); }}
                       className={selectedItemPathSet.has(item.path) ? "result-row selected" : "result-row"}
                       style={{ gridTemplateColumns }}
+                      onMouseDown={(event) => beginRowDrag(event, item)}
                       onClick={(event) => handleRowClick(event, item, index)}
                       onDoubleClick={() => void openResult(item.path)}
                       onContextMenu={(event) => openResultContextMenu(event, item)}

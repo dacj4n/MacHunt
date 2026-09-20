@@ -5,7 +5,7 @@ import type { SearchResultItem, TabId, SortKey, ColumnKey } from "../types";
 import {
   TAB_IDS, TAB_ICONS, COLUMN_KEYS,
   iconToken, iconGlyph, typeLabel, formatBytes, formatDate,
-  setCellPreviewTooltip, blurActiveEditable, appForExt, extensionOf,
+  setCellPreviewTooltip, appForExt, extensionOf,
   fmt,
 } from "../utils";
 
@@ -116,6 +116,7 @@ export interface SearchViewProps {
   // actions
   openResult: (path: string) => Promise<void>;
   handleRowClick: (event: React.MouseEvent<HTMLElement>, item: SearchResultItem, index: number) => void;
+  beginRowDrag: (event: React.MouseEvent<HTMLElement>, item: SearchResultItem) => void;
   openResultContextMenu: (event: React.MouseEvent<HTMLElement>, item: SearchResultItem) => void;
   isPinned: (path: string) => boolean;
   togglePin: (item: SearchResultItem) => void;
@@ -148,7 +149,7 @@ export function SearchView(props: SearchViewProps) {
     tableShellRef, tableBodyRef, scrollTop, setScrollTop,
     visibleStart, visibleEnd, visibleItems, topSpacerHeight, bottomSpacerHeight,
     handleScrollbarScroll,
-    openResult, handleRowClick, openResultContextMenu,
+    openResult, handleRowClick, beginRowDrag, openResultContextMenu,
     isPinned, togglePin, searchInputRef, rowRefs,
     selectedItemPathSet, onClickOutside,
     isSearching, tookMs, indexed, buildStatus,
@@ -558,11 +559,7 @@ export function SearchView(props: SearchViewProps) {
                       }}
                       className={selectedItemPathSet.has(item.path) ? "result-row selected" : "result-row"}
                       style={{ gridTemplateColumns }}
-                      onMouseDown={(event) => {
-                        if (event.button === 0) {
-                          blurActiveEditable();
-                        }
-                      }}
+                      onMouseDown={(event) => beginRowDrag(event, item)}
                       onClick={(event) => handleRowClick(event, item, index)}
                       onDoubleClick={() => void openResult(item.path)}
                       onContextMenu={(event) => openResultContextMenu(event, item)}

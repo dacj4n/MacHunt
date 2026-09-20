@@ -13,6 +13,13 @@ unsafe extern "C" {
         source_h: f64,
     ) -> bool;
     pub fn copy_files_to_clipboard(paths: *const *const c_char, len: usize) -> bool;
+    pub fn start_file_drag(
+        ns_window: *mut std::ffi::c_void,
+        paths: *const *const c_char,
+        len: usize,
+        x: f64,
+        y: f64,
+    ) -> bool;
     pub fn set_dock_flag(v: bool);
     pub fn install_policy_guard();
     pub fn force_accessory_policy() -> bool;

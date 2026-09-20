@@ -576,6 +576,72 @@ pub fn copy_search_results(paths: Vec<String>) -> Result<(), String> {
     }
 }
 
+/// Drag search results out of the window as real file references.
+///
+/// This cannot be done from the webview: HTML5 drag-and-drop only publishes
+/// data between web contents, so Finder, editors and media players would see
+/// nothing on the drag pasteboard. We start an AppKit dragging session instead,
+/// which publishes `public.file-url` and reports the operation as a copy — so
+/// dropping onto the Desktop copies, and dropping onto an application opens the
+/// file in it.
+///
+/// Blocks until the drag ends (AppKit runs the session in a nested event loop),
+/// so the frontend must not await this.
+#[tauri::command]
+pub fn start_file_drag(
+    paths: Vec<String>,
+    x: f64,
+    y: f64,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let selected_paths: Vec<String> = paths
+        .into_iter()
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .collect();
+
+    if selected_paths.is_empty() {
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let window = app
+            .get_webview_window("main")
+            .ok_or_else(|| "Main window not found".to_string())?;
+        let ns_window = window.ns_window().map_err(|e| e.to_string())?;
+
+        let mut c_paths = Vec::new();
+        for path in selected_paths {
+            let target = PathBuf::from(path);
+            if !target.exists() {
+                continue;
+            }
+            let c_path = CString::new(target.to_string_lossy().into_owned())
+                .map_err(|_| "Target path contains NUL byte".to_string())?;
+            c_paths.push(c_path);
+        }
+        if c_paths.is_empty() {
+            return Ok(());
+        }
+
+        let raw_paths: Vec<*const c_char> = c_paths.iter().map(|p| p.as_ptr()).collect();
+        let started = unsafe {
+            crate::ffi::start_file_drag(ns_window, raw_paths.as_ptr(), raw_paths.len(), x, y)
+        };
+        if started {
+            return Ok(());
+        }
+        return Err("Failed to start the native drag session".to_string());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (x, y, app);
+        Err("Dragging files out of the window is only supported on macOS".to_string())
+    }
+}
+
 #[tauri::command]
 pub fn move_to_trash(path: String) -> Result<(), String> {
     let target = PathBuf::from(&path);
