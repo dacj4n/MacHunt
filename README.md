@@ -203,9 +203,9 @@ Runs WAL checkpoint (always). Optional `--vacuum` reclaims DB file space.
                     └─────────┘
 ```
 
-- **Build**: `WalkDir` traverses the filesystem, inserting `(name_lower, path)` into SQLite FTS5 with the trigram tokenizer. Handled in parallel via crossbeam channels.
+- **Build**: `WalkDir` traverses the filesystem, inserting `(name_lower, path)` into `files` and mirroring it into FTS5 with the trigram tokenizer. File size and modification time are stored alongside, so size/time filters and sorting run in SQL instead of `stat`-ing every candidate. Handled in parallel via crossbeam channels.
 - **Search**: FTS5 trigram `MATCH` answers substring queries in single-digit milliseconds (CLI). Queries shorter than 3 characters, and non-ASCII queries such as Chinese, fall back to a `LIKE` scan — still fast for everyday use, but the slowest path on multi-million-file indexes. Case-sensitive queries add a GLOB post-filter (SQLite `LIKE` is ASCII-case-insensitive by default). Fuzzy mode uses space-separated multi-token substring AND matching over `LIKE` candidates.
-- **Watch**: Raw FSEvents FFI (CoreServices) streams file creation, modification, deletion, and rename events. Inserts/updates/deletes from the DB incrementally. Resumes from the last persisted EventID across restarts.
+- **Watch**: Raw FSEvents FFI (CoreServices) streams file creation, modification, deletion, and rename events. Inserts/updates/deletes from the DB incrementally. Resumes from the last persisted EventID across restarts. Under heavy event pressure FSEvents declares that it dropped events (`MustScanSubDirs` / `UserDropped` / `KernelDropped`) and names the directory to rescan; that directory is rescanned as Apple's contract requires, so the missed files land in the index instead of waiting for the next full rebuild.
 - **Volumes**: `/Volumes` is polled every 10 seconds for mounted disks, because FSEvents does not report changes on SMB/WebDAV shares. A new volume is indexed in the background; unmounting clears its entries right away.
 
 ## GUI
@@ -226,7 +226,10 @@ The native macOS GUI is built with Tauri 2 and React. It communicates with the s
 - Single/multi selection (`Shift` range, `Cmd` additive)
 - Space-triggered Quick Look (multi-selection supported)
 - Double-click to open
+- Drag results straight out of the window onto Finder, the Desktop or another app
 - Inline pin button on each result row (hover to reveal)
+
+> Dragging uses a real AppKit dragging session rather than HTML5 drag-and-drop — HTML5 can only hand data between web contents, so a native app would receive an empty payload. What lands on the pasteboard is the actual file object (pasteable as a file, not as path text), and the session only offers **copy**, so dragging a result anywhere never moves or deletes the original.
 
 ### Keyboard
 
@@ -257,7 +260,7 @@ Mounted disks are handled outside FSEvents: `/Volumes` is polled every 10 second
 
 ### Right-Click Menu
 
-Open, Open With... (Finder / QSpace Pro / Terminal / WezTerm), copy name/path, copy as file objects, copy all results, move to Trash, Pin to Favorites.
+Open, Open With... (Finder / QSpace Pro / Terminal / WezTerm), Copy Name, Copy Path, Copy Result (as file objects), Copy All Results, Copy All Names, Copy All Paths, Move to Trash, Pin / Unpin.
 
 ### Pinned / Favorites
 
@@ -265,17 +268,24 @@ Star any search result to pin it. Pinned items persist in localStorage and survi
 
 ### Settings Page
 
+Main page:
+
 - **Theme**: follow system / light / dark
 - **Language**: 中文 / English
 - **Shortcut**: global hotkey to show/hide the window (default `Cmd+Shift+D`)
 - **Startup**: launch at login, silent start, show/hide Dock icon, show/hide menu bar icon
-- **Results**: maximum number of results kept in the list
-- **Index maintenance**: automatic `VACUUM` after a rebuild, plus rebuild and watch controls
+- **Results**: maximum number of results returned per search (50–10000)
+- **File manager & terminal**: what a double-click opens (Finder / QSpace Pro / custom app) and which terminal to use (Terminal / WezTerm / custom app)
+- **Updates**: check automatically, or check now
+
+The **Advanced** popup keeps the deeper configuration out of the main page:
+
+- **Index control**: manual build / rebuild, and start·stop watching
+- **Index maintenance**: conditional automatic `VACUUM` after a rebuild
+- **Diagnostics log**: off by default and creates no log files; once enabled it applies immediately and can be narrowed to a path prefix
+- **Watch roots**: which subtrees FSEvents monitors
 - **Excluded directories**: exact paths, plus regex/wildcard patterns (tried as regex first, wildcard as fallback)
 - **Excluded files**: skip dotfiles, plus filename patterns
-- **Watch roots**: which subtrees FSEvents monitors
-- **Default actions**: what a double-click opens (Finder / QSpace Pro / custom app) and which terminal to use (Terminal / WezTerm / custom app)
-- **Updates**: check automatically, or check now
 
 ### Update Check
 
@@ -290,11 +300,13 @@ MacHunt can compare its version against the latest release tag on GitHub Release
 | Path filter | Prefix, suggestion dropdown, Finder picker |
 | App filter | 186 extension → default app mappings |
 | Time/Size filters | Custom calendar range / value + unit |
-| Live updates | FSEvents watcher, persists EventID across restarts |
+| Live updates | FSEvents watcher, persists EventID across restarts; dropped events trigger a rescan |
+| Metadata | Size and modification time stored with the index, filtered and sorted in SQL |
 | External volumes | Auto index on mount, auto cleanup on unmount |
 | File types | 8 category tabs via extension classification |
 | Pinned items | Star button, persistent favorites page, localStorage |
 | Preview | Native Quick Look (space bar, multi-file) |
+| Drag out | Drag results to Finder / Desktop / other apps; copy semantics only |
 | Export | Copy as file objects, JSON output (CLI) |
 | Menu bar | Tray icon with Search / Pinned / Settings / Quit |
 | Updates | Optional GitHub Releases check, automatic or manual |
@@ -302,6 +314,7 @@ MacHunt can compare its version against the latest release tag on GitHub Release
 | i18n | 中文 / English |
 | Startup | Launch at login, silent mode, Dock and menu bar icon toggles |
 | Performance | EventID staleness detection, lazy dead-path cleanup |
+| Diagnostics | Logging off by default; opt-in with an optional path scope and a size ceiling (10 files × 32 MiB) |
 | Privacy | Fully local index — files and searches stay on your machine |
 
 ## Comparison
@@ -373,11 +386,12 @@ mac_find/
 │       └── CustomSelect.tsx  # Styled dropdown
 ├── src-tauri/                # Tauri GUI backend
 │   ├── src/
+│   │   ├── main.rs           # Tauri entry point
 │   │   ├── lib.rs            # App setup, window lifecycle, command registration
 │   │   ├── commands/mod.rs   # Every #[tauri::command] handler
 │   │   ├── window.rs         # Show/hide, Liquid Glass backdrop, window appearance
 │   │   ├── settings.rs       # settings.json persistence (GuiSettings, AppState)
-│   │   ├── file_ops.rs       # Open / reveal / preview / clipboard / trash
+│   │   ├── file_ops.rs       # Open / reveal / preview / clipboard / drag session / trash
 │   │   ├── tray.rs           # Menu bar icon and its menu
 │   │   ├── menu.rs           # macOS application menu
 │   │   ├── startup.rs        # Launch at login (SMAppService + AppleScript fallback)
@@ -407,8 +421,11 @@ mac_find/
 | Path | Content |
 |------|---------|
 | `~/Library/Caches/MacHunt/index.db` | FTS5 search index |
-| `~/Library/Application Support/MacHunt/settings.json` | GUI settings |
-| `~/Library/Caches/MacHunt/logs/` | Debug logs |
+| `~/Library/Application Support/MacHunt/settings.json` | GUI settings (including the theme preference) |
+| `~/Library/Caches/MacHunt/logs/` | Diagnostics log. **No files are created by default**; once enabled it keeps at most 10 files of up to 32 MiB each |
+| `~/Library/Caches/MacHunt/watch-log-on` | The diagnostics switch. Its presence enables logging; its content may hold a path prefix to scope it |
+
+> Diagnostics logging is off by default, so normal use never accumulates log files. To investigate something like "a file never showed up in the index", enable it under Settings → Advanced → Diagnostics log — it takes effect without a restart.
 
 ## Why the Index Can Be Large
 
