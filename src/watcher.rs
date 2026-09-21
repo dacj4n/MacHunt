@@ -83,7 +83,22 @@ extern "C" {
 const FSEVENT_SINCE_NOW: u64 = u64::MAX;
 const KCF_STRING_ENCODING_UTF8: u32 = 0x08000100;
 
-const FLAG_HISTORY_DONE: u32 = 0x0000_2000;
+// Event flags, taken from CoreServices/FSEvents.framework/Headers/FSEvents.h.
+// A wrong bit here fails silently — the branch it guards simply never fires —
+// so every value is spelled out next to the constant it must equal.
+/// The daemon could not deliver every event and flagged the enclosing directory
+/// instead, expecting the client to rescan that subtree. `USER_DROPPED` /
+/// `KERNEL_DROPPED` say whose queue overflowed.
+const FLAG_MUST_SCAN_SUBDIRS: u32 = 0x0000_0001;
+const FLAG_USER_DROPPED: u32 = 0x0000_0002;
+const FLAG_KERNEL_DROPPED: u32 = 0x0000_0004;
+/// Event IDs wrapped around, so a stored resume ID is no longer meaningful.
+const FLAG_EVENT_IDS_WRAPPED: u32 = 0x0000_0008;
+/// End of the historical replay. This is 0x10. It used to be written as
+/// 0x2000, which is `kFSEventStreamEventFlagItemFinderInfoMod` — so the replay
+/// completion was never detected (and the event ID was never persisted at that
+/// point), while every Finder-info change looked like the end of a replay.
+const FLAG_HISTORY_DONE: u32 = 0x0000_0010;
 const FLAG_ITEM_CREATED: u32 = 0x0000_0100;
 const FLAG_ITEM_REMOVED: u32 = 0x0000_0200;
 const FLAG_ITEM_INODE_META_MOD: u32 = 0x0000_0400;
@@ -103,6 +118,10 @@ struct WatchContext {
     exclude_rules: Arc<ExcludeRules>,
     file_exclude_rules: Arc<FileExcludeRules>,
     history_done: std::sync::atomic::AtomicBool,
+    /// The roots the stream was created for. `reconcile_dir` needs them so a
+    /// drop notification that lands on a root does not turn into a rescan of an
+    /// entire volume from inside the event callback.
+    watch_roots: Arc<Vec<String>>,
 }
 
 #[derive(Default)]
@@ -270,6 +289,46 @@ fn index_directory(ctx: &WatchContext, root: &Path) {
     }
 }
 
+/// Re-scan a directory the event stream admits it did not fully report.
+///
+/// Called when FSEvents sets `MustScanSubDirs` / `UserDropped` /
+/// `KernelDropped` / `EventIdsWrapped`: the daemon coalesced or dropped events
+/// while a burst was happening (a Finder paste or drag of several files is
+/// exactly that) and expects the client to rescan the flagged subtree instead.
+///
+/// Skipping this does not just delay indexing — the dropped events are gone for
+/// good, so files created during the gap stay unindexed until the next full
+/// rebuild. That is why a batch copy could leave only some of its files
+/// searchable, with the missing ones changing from run to run.
+///
+/// The upsert pass is recursive; `clean_dead_in_dir` sweeps the flagged
+/// directory itself, which is the same one-level stale clean the rename path
+/// uses.
+fn reconcile_dir(ctx: &WatchContext, dir: &Path) {
+    if !dir.is_dir() {
+        return;
+    }
+    if should_skip_path(dir) || is_excluded(dir, true, &ctx.exclude_rules) {
+        return;
+    }
+    // Running a deep scan from inside the event callback blocks the stream,
+    // which is itself a way to cause more drops — a feedback loop. A drop
+    // flagged on a watch root would mean rescanning a whole volume, so that case
+    // is left to the app's own verification pass. Burst copies land in ordinary
+    // directories, and those are cheap enough to repair here.
+    if ctx.watch_roots.iter().any(|root| dir == Path::new(root)) {
+        if ctx.logger.enabled() {
+            ctx.logger.log(&format!(
+                "[!] {} is a watch root — not rescanning from the event callback",
+                dir.display()
+            ));
+        }
+        return;
+    }
+    index_directory(ctx, dir);
+    clean_dead_in_dir(ctx, dir);
+}
+
 unsafe extern "C" fn fsevent_callback(
     _stream_ref: FSEventStreamRef,
     client_info: *mut c_void,
@@ -323,6 +382,46 @@ unsafe extern "C" fn fsevent_callback(
         // must be silently dropped before any indexing or removal.
         let is_dir = flags & FLAG_ITEM_IS_FILE == 0;
         if is_excluded(path.as_path(), is_dir, &ctx.exclude_rules) {
+            // Files only: an excluded file is the other way a real file can
+            // silently never appear, and logging directories here would drown
+            // the log in system churn.
+            if !is_dir && ctx.logger.enabled() {
+                ctx.logger
+                    .log(&format!("[excl] flags=0x{:08x} path={}", flags, path_str));
+            }
+            continue;
+        }
+
+        // FSEvents says it could not report everything, and names the directory
+        // to rescan. Handled *before* the flag dispatch below, because a drop
+        // notification carries none of the CREATED/REMOVED/RENAMED/MODIFIED
+        // bits — it looks like an idle directory event, and the dispatch would
+        // swallow it silently.
+        if flags & (FLAG_MUST_SCAN_SUBDIRS
+            | FLAG_USER_DROPPED
+            | FLAG_KERNEL_DROPPED
+            | FLAG_EVENT_IDS_WRAPPED)
+            != 0
+        {
+            if ctx.logger.enabled() {
+                let mut cause = String::new();
+                if flags & FLAG_USER_DROPPED != 0 {
+                    cause.push_str(", user queue");
+                }
+                if flags & FLAG_KERNEL_DROPPED != 0 {
+                    cause.push_str(", kernel queue");
+                }
+                if flags & FLAG_EVENT_IDS_WRAPPED != 0 {
+                    cause.push_str(", ids wrapped");
+                }
+                ctx.logger.log(&format!(
+                    "[!] events dropped (flags=0x{:08x}{}) — rescanning {}",
+                    flags,
+                    cause,
+                    path_str
+                ));
+            }
+            reconcile_dir(ctx, path.as_path());
             continue;
         }
 
@@ -354,6 +453,16 @@ unsafe extern "C" fn fsevent_callback(
                 } else if path.exists() {
                     upsert_file(ctx, path.as_path(), None);
                 }
+            } else if flags & (FLAG_ITEM_INODE_META_MOD | FLAG_ITEM_XATTR_MOD) != 0
+                && ctx.logger.enabled()
+            {
+                // A metadata-only notification on a *directory*. This is the
+                // shape Finder's drag-and-drop copy leaves behind: the
+                // destination folder is touched, and no usable file event is
+                // sent for the file that was just created in it. Logged so the
+                // next test can confirm the flags actually observed.
+                ctx.logger
+                    .log(&format!("[dirmeta] flags=0x{:08x} path={}", flags, path_str));
             }
             continue;
         }
@@ -383,6 +492,12 @@ unsafe extern "C" fn fsevent_callback(
             }
         } else if flags & (FLAG_ITEM_INODE_META_MOD | FLAG_ITEM_XATTR_MOD) != 0 {
             refresh_file_metadata(ctx, path.as_path());
+        } else if ctx.logger.enabled() {
+            // Nothing recognised this event. A file that never reaches the index
+            // hides exactly here, so record the flags FSEvents actually sent —
+            // with logging off this costs one branch, nothing more.
+            ctx.logger
+                .log(&format!("[skip] flags=0x{:08x} path={}", flags, path_str));
         }
     }
 }
@@ -410,6 +525,7 @@ pub fn start_watch(
 
     let since = since_event_id.unwrap_or(FSEVENT_SINCE_NOW);
     thread::spawn(move || unsafe {
+        let roots_for_reconcile: Arc<Vec<String>> = Arc::new(watch_roots.clone());
         let mut c_paths = Vec::new();
         for root in watch_roots {
             if let Ok(c) = std::ffi::CString::new(root) {
@@ -447,6 +563,7 @@ pub fn start_watch(
             exclude_rules,
             file_exclude_rules,
             history_done: std::sync::atomic::AtomicBool::new(false),
+            watch_roots: roots_for_reconcile,
         });
         let ctx_ptr = Box::into_raw(ctx);
         let mut fsevent_ctx = FSEventStreamContext {
