@@ -6,7 +6,7 @@ use crate::filters::{
 };
 use crate::model::{FileEntry, SearchMode, SearchOptions, SortKey, VolumeEvent};
 use crate::search;
-use crate::utils::{get_root_directories, Logger};
+use crate::utils::{get_root_directories, LogSettings, Logger};
 use crate::watcher;
 use crossbeam::channel::Sender;
 use std::path::{Path, PathBuf};
@@ -31,14 +31,14 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(logs_enabled: bool) -> Self {
+    pub fn new(logs: LogSettings) -> Self {
         let db = Db::init_default();
         // Ensure FTS5 index is in sync. Batch-mode avoids long locks.
         let synced = db.sync_fts_batched(50_000);
         if synced > 0 {
             println!("[sync_fts] indexed {} new rows", synced);
         }
-        let logger = Logger::new(logs_enabled);
+        let logger = Logger::new(logs);
         let last_event_id = Arc::new(AtomicU64::new(0));
         let include_dirs = Arc::new(AtomicBool::new(db.load_include_dirs().unwrap_or(true)));
         let exclude_exact_dirs = Arc::new(Mutex::new(db.load_exclude_exact_dirs()));
@@ -369,7 +369,10 @@ impl Engine {
                         if !std::path::Path::new(path_str).exists() {
                             db.delete(std::path::Path::new(path_str));
                             if logger.enabled() {
-                                logger.log(&format!("[gc] {}", path_str));
+                                logger.log_path(
+                                    std::path::Path::new(path_str),
+                                    &format!("[gc] {}", path_str),
+                                );
                             }
                             total_removed += 1;
                         }
@@ -746,7 +749,7 @@ impl Engine {
             for path in &dead {
                 db.delete(path.as_path());
                 if logger.enabled() {
-                    logger.log(&format!("[-] {}", path.display()));
+                    logger.log_path(path.as_path(), &format!("[-] {}", path.display()));
                 }
                 removed += 1;
             }

@@ -165,7 +165,7 @@ pub fn normalize_theme(theme: Option<&str>) -> Option<String> {
 impl AppState {
     pub fn new() -> Self {
         let mut settings = load_gui_settings();
-        let engine = machunt::Engine::new(false);
+        let engine = machunt::Engine::new(machunt::utils::log_settings());
         let (legacy_exact_dirs, legacy_pattern_dirs) = engine.get_exclude_dir_settings();
         if settings.exclude_exact_dirs.is_empty()
             && settings.exclude_pattern_dirs.is_empty()

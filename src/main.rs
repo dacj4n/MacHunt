@@ -73,7 +73,7 @@ enum Commands {
 
 fn main() {
     let cli = Cli::parse();
-    let engine = Engine::new(false);
+    let engine = Engine::new(machunt::utils::log_settings());
 
     match cli.command {
         Commands::Search {

@@ -191,14 +191,16 @@ fn upsert_file(ctx: &WatchContext, path: &Path, meta: Option<&std::fs::Metadata>
         ctx.db.insert_fts(rowid, &file_name_lower);
     }
     if ctx.logger.enabled() {
-        ctx.logger.log(&format!("[+] {}", path.display()));
+        ctx.logger
+            .log_path(path, &format!("[+] {}", path.display()));
     }
 }
 
 fn remove_file(ctx: &WatchContext, path: &Path) {
     ctx.db.delete(path);
     if ctx.logger.enabled() {
-        ctx.logger.log(&format!("[-] {}", path.display()));
+        ctx.logger
+            .log_path(path, &format!("[-] {}", path.display()));
     }
 }
 
@@ -229,18 +231,18 @@ fn refresh_file_metadata(ctx: &WatchContext, path: &Path) {
         .and_then(|d| u64::try_from(d.as_millis()).ok());
 
     if ctx.db.refresh_metadata(path, size_bytes, modified_ms) && ctx.logger.enabled() {
-        ctx.logger.log(&format!(
-            "[~] {} ({} bytes)",
-            path.display(),
-            meta.len()
-        ));
+        ctx.logger.log_path(
+            path,
+            &format!("[~] {} ({} bytes)", path.display(), meta.len()),
+        );
     }
 }
 
 fn remove_tree(ctx: &WatchContext, root: &Path) {
     ctx.db.delete_under_root(root);
     if ctx.logger.enabled() {
-        ctx.logger.log(&format!("[-] tree {}", root.display()));
+        ctx.logger
+            .log_path(root, &format!("[-] tree {}", root.display()));
     }
 }
 
@@ -254,7 +256,10 @@ fn clean_dead_in_dir(ctx: &WatchContext, dir: &Path) {
         if !p.exists() {
             ctx.db.delete_by_dir_and_name(&dir_str, &name);
             if ctx.logger.enabled() {
-                ctx.logger.log(&format!("[-] stale rename {}", full_path));
+                ctx.logger.log_path(
+                    Path::new(&full_path),
+                    &format!("[-] stale rename {}", full_path),
+                );
             }
         }
     }
@@ -318,10 +323,13 @@ fn reconcile_dir(ctx: &WatchContext, dir: &Path) {
     // directories, and those are cheap enough to repair here.
     if ctx.watch_roots.iter().any(|root| dir == Path::new(root)) {
         if ctx.logger.enabled() {
-            ctx.logger.log(&format!(
-                "[!] {} is a watch root — not rescanning from the event callback",
-                dir.display()
-            ));
+            ctx.logger.log_path(
+                dir,
+                &format!(
+                    "[!] {} is a watch root — not rescanning from the event callback",
+                    dir.display()
+                ),
+            );
         }
         return;
     }
@@ -386,8 +394,10 @@ unsafe extern "C" fn fsevent_callback(
             // silently never appear, and logging directories here would drown
             // the log in system churn.
             if !is_dir && ctx.logger.enabled() {
-                ctx.logger
-                    .log(&format!("[excl] flags=0x{:08x} path={}", flags, path_str));
+                ctx.logger.log_path(
+                    path.as_path(),
+                    &format!("[excl] flags=0x{:08x} path={}", flags, path_str),
+                );
             }
             continue;
         }
@@ -414,12 +424,13 @@ unsafe extern "C" fn fsevent_callback(
                 if flags & FLAG_EVENT_IDS_WRAPPED != 0 {
                     cause.push_str(", ids wrapped");
                 }
-                ctx.logger.log(&format!(
-                    "[!] events dropped (flags=0x{:08x}{}) — rescanning {}",
-                    flags,
-                    cause,
-                    path_str
-                ));
+                ctx.logger.log_path(
+                    path.as_path(),
+                    &format!(
+                        "[!] events dropped (flags=0x{:08x}{}) — rescanning {}",
+                        flags, cause, path_str
+                    ),
+                );
             }
             reconcile_dir(ctx, path.as_path());
             continue;
@@ -461,8 +472,10 @@ unsafe extern "C" fn fsevent_callback(
                 // destination folder is touched, and no usable file event is
                 // sent for the file that was just created in it. Logged so the
                 // next test can confirm the flags actually observed.
-                ctx.logger
-                    .log(&format!("[dirmeta] flags=0x{:08x} path={}", flags, path_str));
+                ctx.logger.log_path(
+                    path.as_path(),
+                    &format!("[dirmeta] flags=0x{:08x} path={}", flags, path_str),
+                );
             }
             continue;
         }
@@ -496,8 +509,10 @@ unsafe extern "C" fn fsevent_callback(
             // Nothing recognised this event. A file that never reaches the index
             // hides exactly here, so record the flags FSEvents actually sent —
             // with logging off this costs one branch, nothing more.
-            ctx.logger
-                .log(&format!("[skip] flags=0x{:08x} path={}", flags, path_str));
+            ctx.logger.log_path(
+                path.as_path(),
+                &format!("[skip] flags=0x{:08x} path={}", flags, path_str),
+            );
         }
     }
 }
