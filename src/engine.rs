@@ -65,6 +65,15 @@ impl Engine {
         }
     }
 
+    /// Re-read the diagnostics-log opt-in and apply it to the live logger.
+    ///
+    /// The settings toggle rewrites the flag file; this makes the change visible
+    /// straight away rather than at the next launch. Every holder of the logger
+    /// sees it, the watcher included, because they share one state.
+    pub fn refresh_logging(&self) {
+        self.logger.refresh();
+    }
+
     pub fn load_index_from_db(&self) -> usize {
         if !self.db.path().exists() {
             return 0;

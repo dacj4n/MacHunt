@@ -51,6 +51,12 @@ export interface SettingsViewProps {
   isAutoVacuumSettingsSaving: boolean;
   autoVacuumSettingsStatus: string;
   applyAutoVacuumSettings: (v: boolean) => Promise<void>;
+  loggingEnabled: boolean;
+  loggingScope: string;
+  setLoggingScope: (v: string) => void;
+  isLoggingSaving: boolean;
+  loggingStatus: string;
+  applyLoggingSettings: (enabled: boolean, scope: string) => Promise<void>;
   watchRootDraft: string;
   setWatchRootDraft: (v: string) => void;
   watchRoots: string[];
@@ -111,6 +117,8 @@ export function SettingsView(props: SettingsViewProps) {
     applyFileManagerSettings, pickApp,
     autoVacuumOnRebuild, isAutoVacuumSettingsSaving, autoVacuumSettingsStatus,
     applyAutoVacuumSettings,
+    loggingEnabled, loggingScope, setLoggingScope, isLoggingSaving, loggingStatus,
+    applyLoggingSettings,
     watchRootDraft, setWatchRootDraft, watchRoots, isWatchRootSaving, watchRootStatus,
     addWatchRoot, removeWatchRoot, pickWatchRoot,
     excludeRuleType, setExcludeRuleType, excludeRuleDraft, setExcludeRuleDraft,
@@ -592,6 +600,57 @@ export function SettingsView(props: SettingsViewProps) {
                     </button>
                   </label>
                   {autoVacuumSettingsStatus && <div className="status-msg">{autoVacuumSettingsStatus}</div>}
+                </div>
+
+                {/* Diagnostics log */}
+                <div className="rule-section">
+                  <div className="rule-section-title">{t.loggingTitle}</div>
+                  <p className="set-card-desc">{t.loggingDesc}</p>
+
+                  <label className="toggle-card">
+                    <div className="toggle-card-copy">
+                      <div className="toggle-card-title">{t.loggingEnableTitle}</div>
+                      <div className="toggle-card-desc">{t.loggingEnableDesc}</div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={loggingEnabled}
+                      aria-label={t.loggingEnableTitle}
+                      className={loggingEnabled ? "ns-switch on" : "ns-switch"}
+                      disabled={isLoggingSaving}
+                      onClick={() => void applyLoggingSettings(!loggingEnabled, loggingScope)}
+                    >
+                      <span className="ns-switch-knob" />
+                    </button>
+                  </label>
+
+                  {/* The scope lives inside the same flag file as the on/off
+                      state, so it has to be editable here — otherwise switching
+                      the log off and on again would silently widen it from a
+                      narrow subtree to the entire volume. */}
+                  <div className="form-row" style={{ marginTop: 12 }}>
+                    <input
+                      className="form-input"
+                      value={loggingScope}
+                      placeholder={t.loggingScopePlaceholder}
+                      disabled={isLoggingSaving}
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      onChange={(event) => setLoggingScope(event.target.value)}
+                      onBlur={(event) => void applyLoggingSettings(loggingEnabled, event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void applyLoggingSettings(loggingEnabled, event.currentTarget.value);
+                        }
+                      }}
+                    />
+                  </div>
+                  <p className="set-card-hint">{t.loggingScopeHint}</p>
+                  {loggingStatus && <div className="status-msg">{loggingStatus}</div>}
                 </div>
 
                 {/* Watch Roots */}

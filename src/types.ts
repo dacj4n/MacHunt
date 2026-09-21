@@ -63,6 +63,12 @@ export interface AutoVacuumSettingsResponse {
   autoVacuumOnRebuild: boolean;
 }
 
+export interface LoggingSettingsResponse {
+  enabled: boolean;
+  /** Path prefix the log is limited to. Empty means "record everything". */
+  scope: string;
+}
+
 export interface ExcludeDirSettingsResponse {
   exactDirs: string[];
   patternDirs: string[];

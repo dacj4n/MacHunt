@@ -11,6 +11,7 @@ import type {
   SearchResponse, InitResponse, BuildResponse, BuildEvent, WatchResponse,
   LaunchSettingsResponse, AutoVacuumSettingsResponse, ExcludeDirSettingsResponse,
   ExcludeFileSettingsResponse, WatchRootsSettingsResponse, FileManagerSettingsResponse,
+  LoggingSettingsResponse,
 } from "./types";
 import {
   DEFAULT_WINDOW_TOGGLE_SHORTCUT, DEFAULT_COLUMN_WIDTHS, COLUMN_KEYS,
@@ -64,6 +65,15 @@ function App() {
   const [autoVacuumOnRebuild, setAutoVacuumOnRebuild] = useState(true);
   const [isAutoVacuumSettingsSaving, setIsAutoVacuumSettingsSaving] = useState(false);
   const [autoVacuumSettingsStatus, setAutoVacuumSettingsStatus] = useState("");
+
+  // ── watcher diagnostics log (off by default: no logs are produced) ──
+  const [loggingEnabled, setLoggingEnabled] = useState(false);
+  // The saved scope and the text being edited are kept apart on purpose: the
+  // field writes only the draft, so a no-op blur can be told from a real edit.
+  const [loggingScopeSaved, setLoggingScopeSaved] = useState("");
+  const [loggingScopeDraft, setLoggingScopeDraft] = useState("");
+  const [isLoggingSaving, setIsLoggingSaving] = useState(false);
+  const [loggingStatus, setLoggingStatus] = useState("");
 
   // ── update check ──
   const [autoCheckUpdate, setAutoCheckUpdate] = useState(true);
@@ -621,6 +631,19 @@ function App() {
     } catch (err) { setAutoVacuumSettingsStatus(t.autoVacuumSaveFailed); setError(String(err)); }
     finally { setIsAutoVacuumSettingsSaving(false); }
   };
+  const applyLoggingSettings = async (nextEnabled: boolean, nextScope: string) => {
+    if (isLoggingSaving) return;
+    // Fires on every blur of the scope field, including ones that changed
+    // nothing; skip the round trip and the misleading "saved" flash.
+    if (nextEnabled === loggingEnabled && nextScope.trim() === loggingScopeSaved.trim()) return;
+    setIsLoggingSaving(true); setLoggingStatus(t.loggingSaving); setError(null);
+    try {
+      const saved = await invoke<LoggingSettingsResponse>("set_logging_settings", { enabled: nextEnabled, scope: nextScope });
+      setLoggingEnabled(saved.enabled); setLoggingScopeSaved(saved.scope); setLoggingScopeDraft(saved.scope);
+      setLoggingStatus(t.loggingSaved);
+    } catch (err) { setLoggingStatus(t.loggingSaveFailed); setError(String(err)); }
+    finally { setIsLoggingSaving(false); }
+  };
   const applyAutoCheckUpdate = async (next: boolean) => {
     if (isAutoCheckSaving) return;
     setIsAutoCheckSaving(true); setAutoCheckStatus(""); setError(null);
@@ -892,6 +915,10 @@ function App() {
   }, []);
   useEffect(() => {
     let m = true; const load = async () => { try { const s = await invoke<AutoVacuumSettingsResponse>("get_auto_vacuum_settings"); if (m) setAutoVacuumOnRebuild(s.autoVacuumOnRebuild); } catch (e) { if (m) setError(String(e)); } };
+    void load(); return () => { m = false; };
+  }, []);
+  useEffect(() => {
+    let m = true; const load = async () => { try { const s = await invoke<LoggingSettingsResponse>("get_logging_settings"); if (m) { setLoggingEnabled(s.enabled); setLoggingScopeSaved(s.scope); setLoggingScopeDraft(s.scope); } } catch {} };
     void load(); return () => { m = false; };
   }, []);
   useEffect(() => {
@@ -1390,6 +1417,9 @@ function App() {
           autoVacuumOnRebuild={autoVacuumOnRebuild}
           isAutoVacuumSettingsSaving={isAutoVacuumSettingsSaving} autoVacuumSettingsStatus={autoVacuumSettingsStatus}
           applyAutoVacuumSettings={applyAutoVacuumSettings}
+          loggingEnabled={loggingEnabled} loggingScope={loggingScopeDraft} setLoggingScope={setLoggingScopeDraft}
+          isLoggingSaving={isLoggingSaving} loggingStatus={loggingStatus}
+          applyLoggingSettings={applyLoggingSettings}
           watchRootDraft={watchRootDraft} setWatchRootDraft={setWatchRootDraft}
           watchRoots={watchRoots} isWatchRootSaving={isWatchRootSaving} watchRootStatus={watchRootStatus}
           addWatchRoot={addWatchRoot} removeWatchRoot={removeWatchRoot} pickWatchRoot={pickWatchRoot}

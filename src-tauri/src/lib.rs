@@ -163,6 +163,8 @@ pub fn run() {
             commands::group_results_by_app,
             commands::get_theme,
             commands::set_theme,
+            commands::get_logging_settings,
+            commands::set_logging_settings,
             window::start_dragging,
         ])
         .build(tauri::generate_context!())

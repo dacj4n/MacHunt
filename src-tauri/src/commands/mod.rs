@@ -106,6 +106,14 @@ pub struct FileManagerSettingsResponse {
     pub custom_terminal_app: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoggingSettingsResponse {
+    pub enabled: bool,
+    /// Path prefix the log is limited to. Empty means "record everything".
+    pub scope: String,
+}
+
 // ── Simple getter/setters using macro ──
 simple_getter_setter!(
     get_auto_vacuum_settings, set_auto_vacuum_settings,
@@ -757,6 +765,39 @@ pub fn set_theme(
         window::apply_window_theme(&window, normalized.as_deref())?;
     }
     Ok(())
+}
+
+/// Whether watcher diagnostics are being recorded, and what they are scoped to.
+#[tauri::command]
+pub fn get_logging_settings() -> Result<LoggingSettingsResponse, String> {
+    let settings = machunt::utils::log_settings();
+    Ok(LoggingSettingsResponse {
+        enabled: settings.enabled,
+        scope: settings
+            .scope
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    })
+}
+
+/// Turn watcher diagnostics on or off, optionally scoped to `scope` (an empty
+/// string records everything).
+///
+/// The flag file is the only source of truth, so this writes it and then has the
+/// engine re-read it. That means the change applies to the running app instead
+/// of the next launch — the watcher holds a clone of the same logger, so it
+/// starts or stops recording straight away. Off by default, and disabling
+/// deletes the file rather than leaving an empty one, so a build that has never
+/// been asked for logs never creates one.
+#[tauri::command]
+pub fn set_logging_settings(
+    enabled: bool,
+    scope: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<LoggingSettingsResponse, String> {
+    machunt::utils::write_log_settings(enabled, &scope).map_err(|err| err.to_string())?;
+    state.engine.refresh_logging();
+    get_logging_settings()
 }
 
 #[tauri::command]

@@ -2,6 +2,7 @@ use parking_lot::Mutex;
 use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -102,44 +103,99 @@ struct LogSink {
     capped: bool,
 }
 
+/// Persist the logging choice, keeping the flag file the single source of truth
+/// that [`log_settings`] reads — so the CLI, the GUI and the logger itself can
+/// never disagree. An empty file means "on, no scope".
+pub fn write_log_settings(enabled: bool, scope: &str) -> std::io::Result<()> {
+    let flag = cache_dir().join("watch-log-on");
+    if !enabled {
+        return match fs::remove_file(&flag) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        };
+    }
+    fs::create_dir_all(cache_dir())?;
+    fs::write(&flag, scope.trim())
+}
+
+/// Shared mutable half of a logger.
+///
+/// Behind one `Arc` so every clone — the engine holds one, the watcher context
+/// holds another — sees a settings change immediately instead of having to
+/// restart the app.
+struct LoggerState {
+    /// Fast path, read before any lock is taken.
+    enabled: AtomicBool,
+    /// `Some(prefix)` while the log is scoped to a subtree.
+    scope: Mutex<Option<PathBuf>>,
+    /// Opened on demand so logging can be switched on at runtime.
+    sink: Mutex<Option<LogSink>>,
+}
+
 #[derive(Clone)]
 pub struct Logger {
-    enabled: bool,
-    /// When set, [`Logger::log_path`] records only paths inside it.
-    scope: Option<PathBuf>,
-    sink: Option<Arc<Mutex<LogSink>>>,
+    state: Arc<LoggerState>,
+}
+
+/// Open a fresh log file, pruning older ones first so the directory stays
+/// bounded. `None` on any I/O failure — logging degrades to off rather than
+/// taking the app down.
+fn open_sink() -> Option<LogSink> {
+    let logs_dir = cache_dir().join("logs");
+    fs::create_dir_all(&logs_dir).ok()?;
+    prune_old_logs(&logs_dir);
+
+    let log_file = logs_dir.join(format!("machunt_{}.log", timestamp_secs()));
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file)
+        .ok()?;
+
+    Some(LogSink {
+        writer: BufWriter::new(file),
+        written: 0,
+        capped: false,
+    })
 }
 
 impl Logger {
     pub fn new(settings: LogSettings) -> Self {
+        let logger = Self {
+            state: Arc::new(LoggerState {
+                enabled: AtomicBool::new(false),
+                scope: Mutex::new(None),
+                sink: Mutex::new(None),
+            }),
+        };
+        logger.apply(settings);
+        logger
+    }
+
+    /// Re-read the opt-in from disk so a settings toggle takes effect at once.
+    pub fn refresh(&self) {
+        self.apply(log_settings());
+    }
+
+    fn apply(&self, settings: LogSettings) {
         if !settings.enabled {
-            return Self {
-                enabled: false,
-                scope: None,
-                sink: None,
-            };
+            // Stop accepting writes *before* dropping the sink, so a concurrent
+            // writer cannot end up appending to a file that is being closed.
+            self.state.enabled.store(false, Ordering::Relaxed);
+            *self.state.sink.lock() = None; // dropping flushes and closes
+            *self.state.scope.lock() = None;
+            return;
         }
 
-        let logs_dir = cache_dir().join("logs");
-        let _ = fs::create_dir_all(&logs_dir);
-        prune_old_logs(&logs_dir);
-
-        let log_file = logs_dir.join(format!("machunt_{}.log", timestamp_secs()));
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_file)
-            .unwrap();
-
-        Self {
-            enabled: true,
-            scope: settings.scope,
-            sink: Some(Arc::new(Mutex::new(LogSink {
-                writer: BufWriter::new(file),
-                written: 0,
-                capped: false,
-            }))),
+        *self.state.scope.lock() = settings.scope;
+        let mut sink = self.state.sink.lock();
+        if sink.is_none() {
+            *sink = open_sink();
         }
+        let opened = sink.is_some();
+        drop(sink);
+        self.state.enabled.store(opened, Ordering::Relaxed);
     }
 
     /// Record a line that is not about one particular path — the watcher
@@ -152,22 +208,23 @@ impl Logger {
     /// Record a line about `path`, skipped when the log is scoped to a prefix
     /// that does not contain it.
     pub fn log_path(&self, path: &Path, message: &str) {
-        if let Some(scope) = &self.scope {
-            if !path.starts_with(scope) {
-                return;
-            }
+        let in_scope = match self.state.scope.lock().as_ref() {
+            Some(scope) => path.starts_with(scope),
+            None => true,
+        };
+        if in_scope {
+            self.write(message);
         }
-        self.write(message);
     }
 
     fn write(&self, message: &str) {
-        if !self.enabled {
+        if !self.state.enabled.load(Ordering::Relaxed) {
             return;
         }
-        let Some(sink) = &self.sink else {
+        let mut guard = self.state.sink.lock();
+        let Some(sink) = guard.as_mut() else {
             return;
         };
-        let mut sink = sink.lock();
 
         if sink.written >= MAX_LOG_BYTES {
             if !sink.capped {
@@ -191,7 +248,7 @@ impl Logger {
     }
 
     pub fn enabled(&self) -> bool {
-        self.enabled
+        self.state.enabled.load(Ordering::Relaxed)
     }
 }
 
