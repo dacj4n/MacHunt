@@ -86,8 +86,10 @@ const KCF_STRING_ENCODING_UTF8: u32 = 0x08000100;
 const FLAG_HISTORY_DONE: u32 = 0x0000_2000;
 const FLAG_ITEM_CREATED: u32 = 0x0000_0100;
 const FLAG_ITEM_REMOVED: u32 = 0x0000_0200;
+const FLAG_ITEM_INODE_META_MOD: u32 = 0x0000_0400;
 const FLAG_ITEM_RENAMED: u32 = 0x0000_0800;
 const FLAG_ITEM_MODIFIED: u32 = 0x0000_1000;
+const FLAG_ITEM_XATTR_MOD: u32 = 0x0000_8000;
 const FLAG_ITEM_IS_FILE: u32 = 0x0001_0000;
 
 const STREAM_FLAG_FILE_EVENTS: u32 = 0x0000_0010;
@@ -121,11 +123,26 @@ fn lock_watch_runtime() -> std::sync::MutexGuard<'static, WatchRuntime> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn upsert_file(ctx: &WatchContext, path: &Path) {
+fn upsert_file(ctx: &WatchContext, path: &Path, meta: Option<&std::fs::Metadata>) {
     if should_skip_path(path) {
         return;
     }
-    let is_dir = path.is_dir();
+
+    // Only stat when the caller could not hand metadata over: the directory walk
+    // already has it, and an FSEvents callback is per file (low frequency, so one
+    // stat each is a fair price for keeping size/mtime accurate).
+    let fallback = match meta {
+        Some(_) => None,
+        None => std::fs::metadata(path).ok(),
+    };
+    let meta = match meta.or(fallback.as_ref()) {
+        Some(m) => m,
+        // The path is already gone (vanished between the event and now). Do not
+        // create a row for something that is not there.
+        None => return,
+    };
+
+    let is_dir = meta.is_dir();
     if is_excluded(path, is_dir, &ctx.exclude_rules) {
         return;
     }
@@ -139,8 +156,19 @@ fn upsert_file(ctx: &WatchContext, path: &Path) {
         Some(name) => name.to_lowercase(),
         None => return,
     };
+
+    // Store the real metadata. Without it a freshly indexed file would be NULL
+    // in the DB, which makes the client-side size/time filters drop it and the
+    // size/time sorts treat it as 0.
+    let size_bytes = if meta.is_file() { Some(meta.len()) } else { None };
+    let modified_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|d| u64::try_from(d.as_millis()).ok());
+
     // Direct DB insert — UNIQUE constraint handles dedup.
-    if let Some(rowid) = ctx.db.insert(&file_name_lower, path, path.is_dir()) {
+    if let Some(rowid) = ctx.db.insert(&file_name_lower, path, is_dir, size_bytes, modified_ms) {
         ctx.db.insert_fts(rowid, &file_name_lower);
     }
     if ctx.logger.enabled() {
@@ -152,6 +180,41 @@ fn remove_file(ctx: &WatchContext, path: &Path) {
     ctx.db.delete(path);
     if ctx.logger.enabled() {
         ctx.logger.log(&format!("[-] {}", path.display()));
+    }
+}
+
+/// Re-read size/mtime for a path that is already indexed.
+///
+/// A file created by a copy is indexed the instant it appears — before any data
+/// has been written — so it lands with size 0 and the current time. Finishing a
+/// copy then restores mtime (and xattrs) from the source, which FSEvents reports
+/// as a metadata notification rather than a MODIFIED one. Ignoring those left the
+/// 0-byte metadata in place permanently, which is why a copied file could show no
+/// size at all.
+///
+/// This deliberately never creates rows: metadata notifications can be frequent
+/// (Spotlight, backups, sync clients), and they must not grow the index.
+fn refresh_file_metadata(ctx: &WatchContext, path: &Path) {
+    if !path.is_file() {
+        return;
+    }
+    let meta = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+    let size_bytes = Some(meta.len());
+    let modified_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .and_then(|d| u64::try_from(d.as_millis()).ok());
+
+    if ctx.db.refresh_metadata(path, size_bytes, modified_ms) && ctx.logger.enabled() {
+        ctx.logger.log(&format!(
+            "[~] {} ({} bytes)",
+            path.display(),
+            meta.len()
+        ));
     }
 }
 
@@ -200,7 +263,10 @@ fn index_directory(ctx: &WatchContext, root: &Path) {
         if !ctx.include_dirs && entry.file_type().is_dir() {
             continue;
         }
-        upsert_file(ctx, entry.path());
+        // WalkDir already stat'ed this entry — pass the metadata through instead
+        // of making `upsert_file` stat the same path a second time.
+        let meta = entry.metadata().ok();
+        upsert_file(ctx, entry.path(), meta.as_ref());
     }
 }
 
@@ -275,7 +341,7 @@ unsafe extern "C" fn fsevent_callback(
                 if path.is_dir() {
                     index_directory(ctx, path.as_path());
                 } else if path.exists() {
-                    upsert_file(ctx, path.as_path());
+                    upsert_file(ctx, path.as_path(), None);
                 }
             } else if flags & FLAG_ITEM_RENAMED != 0 {
                 // Renamed directory: clean stale entries in parent,
@@ -286,7 +352,7 @@ unsafe extern "C" fn fsevent_callback(
                 if path.is_dir() {
                     index_directory(ctx, path.as_path());
                 } else if path.exists() {
-                    upsert_file(ctx, path.as_path());
+                    upsert_file(ctx, path.as_path(), None);
                 }
             }
             continue;
@@ -311,10 +377,12 @@ unsafe extern "C" fn fsevent_callback(
 
         if flags & (FLAG_ITEM_CREATED | FLAG_ITEM_RENAMED | FLAG_ITEM_MODIFIED) != 0 {
             if path.is_file() {
-                upsert_file(ctx, path.as_path());
+                upsert_file(ctx, path.as_path(), None);
             } else {
                 remove_file(ctx, path.as_path());
             }
+        } else if flags & (FLAG_ITEM_INODE_META_MOD | FLAG_ITEM_XATTR_MOD) != 0 {
+            refresh_file_metadata(ctx, path.as_path());
         }
     }
 }

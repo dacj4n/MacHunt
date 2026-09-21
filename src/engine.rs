@@ -138,10 +138,15 @@ impl Engine {
         let count = builder::build_index(&self.db, path, !is_incremental, &filters);
 
         if !is_incremental {
+            // Populate the FTS index *before* the temp database is promoted. The
+            // build path only fills `files` (builder.rs), so promoting first makes
+            // the app serve searches against an index whose FTS table is still
+            // empty: every FTS-backed query silently returns nothing until
+            // rebuild_fts() has scanned millions of rows a few seconds later.
+            self.db.rebuild_fts();
             if let Err(e) = self.db.finish_rebuild() {
                 eprintln!("finish_rebuild failed: {}", e);
             }
-            self.db.rebuild_fts();
         } else {
             self.db.checkpoint_truncate();
         }

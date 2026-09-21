@@ -352,33 +352,89 @@ impl Db {
     pub fn finish_rebuild(&self) -> Result<(), String> {
         let temp_path = self.path.with_extension("db.new");
 
-        // Checkpoint + close temp connection.
-        {
-            let mut guard = self.conn.lock();
-            guard
-                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-                .map_err(|e| e.to_string())?;
-            let _temp = std::mem::replace(&mut *guard, Connection::open_in_memory().unwrap());
-        }
+        // The connection lock is held for the whole swap on purpose. Releasing it
+        // in the middle (as this used to) opens a window in which another thread
+        // — the FSEvents watcher, typically — grabs the lock and writes into a
+        // throwaway in-memory database. Those writes report success, are never
+        // retried, and FSEvents will not deliver the event again, so the file
+        // silently never reaches the index. Blocking for the few milliseconds the
+        // rename takes is strictly better than losing data.
+        let mut guard = self.conn.lock();
+
+        guard
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .map_err(|e| e.to_string())?;
+
+        // Move the temp connection out so its file handle is closed before the
+        // rename. The placeholder is only ever observed by this thread, because
+        // the lock is still held here.
+        let temp_conn = std::mem::replace(&mut *guard, Connection::open_in_memory().unwrap());
+        drop(temp_conn);
 
         // Atomic swap on APFS (same volume).
-        if temp_path.exists() {
+        let rename_result = if temp_path.exists() {
             let _ = fs::remove_file(self.path.with_extension("db-wal"));
             let _ = fs::remove_file(self.path.with_extension("db-shm"));
-            fs::rename(&temp_path, &self.path).map_err(|e| e.to_string())?;
-        }
+            fs::rename(&temp_path, &self.path)
+        } else {
+            Ok(())
+        };
 
-        // Reopen main connection.
+        // Reopen under the same guard: either the promoted temp DB, or the
+        // untouched old one if the rename failed. Never leave the placeholder in
+        // place — that would send every later write to a database nobody reads.
         let new_conn = Connection::open(&self.path).map_err(|e| e.to_string())?;
         Self::apply_pragmas(&new_conn);
-
-        let mut guard = self.conn.lock();
         *guard = new_conn;
 
-        Ok(())
+        rename_result.map_err(|e| e.to_string())
     }
 
-    pub fn insert(&self, fallback_name: &str, path: &Path, is_dir: bool) -> Option<i64> {
+    /// Update the stored size/mtime of an already indexed path.
+    ///
+    /// Returns whether a row was updated. A path that is not indexed is left
+    /// alone on purpose: metadata-only notifications can be frequent (Spotlight,
+    /// backups and sync clients touch xattrs), and they must not grow the index.
+    pub fn refresh_metadata(
+        &self,
+        path: &Path,
+        size_bytes: Option<u64>,
+        modified_ms: Option<u64>,
+    ) -> bool {
+        let conn = self.conn.lock();
+        let dir_path = Self::parent_key(path);
+        let file_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name,
+            None => return false,
+        };
+        let size = size_bytes.map(|s| s as i64).unwrap_or(-1i64);
+        let mtime = modified_ms.map(|m| m as i64).unwrap_or(-1i64);
+
+        conn.execute(
+            "UPDATE files SET size = ?1, mtime_ms = ?2
+             WHERE name = ?3
+               AND dir_id = (SELECT id FROM dirs WHERE path = ?4)",
+            params![size, mtime, file_name, dir_path.as_str()],
+        )
+        .map(|changed| changed > 0)
+        .unwrap_or(false)
+    }
+
+    /// Insert a single entry, or refresh it when the path is already indexed.
+    ///
+    /// `size_bytes` / `modified_ms` are `None` when they are not meaningful (a
+    /// directory, or a path that vanished); they are then stored as `-1`, which
+    /// is the same sentinel `insert_batch` uses for the build path — otherwise a
+    /// size filter would treat build-indexed and watcher-indexed entries
+    /// differently.
+    pub fn insert(
+        &self,
+        fallback_name: &str,
+        path: &Path,
+        is_dir: bool,
+        size_bytes: Option<u64>,
+        modified_ms: Option<u64>,
+    ) -> Option<i64> {
         let conn = self.conn.lock();
         let dir_path = Self::parent_key(path);
         let stored_name = Self::derive_name(path, fallback_name);
@@ -390,6 +446,9 @@ impl Db {
         if stored_name.is_empty() {
             return None;
         }
+
+        let size = size_bytes.map(|s| s as i64).unwrap_or(-1i64);
+        let mtime = modified_ms.map(|m| m as i64).unwrap_or(-1i64);
 
         let _ = conn.execute(
             "INSERT OR IGNORE INTO dirs (path) VALUES (?1)",
@@ -407,14 +466,30 @@ impl Db {
         if let Some(dir_id) = dir_id {
             let changed = conn
                 .execute(
-                    "INSERT OR IGNORE INTO files (name, name_lower, dir_id, is_dir) VALUES (?1, ?2, ?3, ?4)",
-                    params![stored_name, stored_name_lower, dir_id, is_dir as i32],
+                    "INSERT OR IGNORE INTO files (name, name_lower, dir_id, is_dir, size, mtime_ms) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        stored_name,
+                        stored_name_lower,
+                        dir_id,
+                        is_dir as i32,
+                        size,
+                        mtime
+                    ],
                 )
                 .unwrap_or(0);
             if changed > 0 {
                 return Some(conn.last_insert_rowid());
             }
-            // Already exists — return existing rowid for FTS sync.
+            // Already indexed: this is a modification, so refresh the metadata
+            // before reporting the existing rowid for FTS sync. Without this a
+            // file edited after indexing would keep a stale size/mtime forever,
+            // and size/time filters and sorting would be wrong for it.
+            let _ = conn.execute(
+                "UPDATE files SET size = ?1, mtime_ms = ?2, is_dir = ?3 \
+                 WHERE name = ?4 AND dir_id = ?5",
+                params![size, mtime, is_dir as i32, stored_name.as_str(), dir_id],
+            );
             return conn
                 .query_row(
                     "SELECT id FROM files WHERE name = ?1 AND dir_id = ?2",
