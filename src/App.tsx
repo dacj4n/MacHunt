@@ -499,6 +499,22 @@ function App() {
     // Inline row buttons (terminal, pin) keep their own behaviour.
     if ((event.target as HTMLElement).closest("button")) return;
 
+    // A modifier press belongs to `handleRowClick`, which owns the Cmd/Shift
+    // semantics. This runs first (mousedown), the click handler runs after, and
+    // touching the selection here corrupts the state it reads:
+    //   * Cmd-clicking an unselected row would mark it selected, so the click
+    //     would then see it as "already selected" and toggle it straight off;
+    //   * Shift-clicking would move the anchor to the pressed row, collapsing
+    //     the range to that single row.
+    // So only arm the drag, using what is highlighted right now.
+    if (event.metaKey || event.ctrlKey || event.shiftKey) {
+      const paths = selectedItemPathSet.has(item.path) ? selectedPathsInOrder : [item.path];
+      if (paths.length > 0) {
+        rowDragRef.current = { x: event.clientX, y: event.clientY, paths, started: false };
+      }
+      return;
+    }
+
     // Pressing an unselected row selects it first, so the drag carries exactly
     // what is highlighted — the same rule Finder uses.
     const inSelection = selectedItemPathSet.has(item.path);
