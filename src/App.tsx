@@ -1035,6 +1035,18 @@ function App() {
     return () => { if (unlisten) unlisten(); };
   }, []);
 
+  // The build buttons are disabled while a build runs, so the status line has to
+  // say why. A build is not always started by `runBuild`: on launch the backend
+  // can decide by itself that its FSEvents position is too far behind and rebuild
+  // in the background — after a reinstall, typically. Without this the buttons
+  // simply go grey with nothing explaining it.
+  //
+  // Filling in only when the line is empty leaves the more specific wording that
+  // `runBuild` already set ("正在重建索引..." vs "正在构建索引...") intact.
+  useEffect(() => {
+    if (isBuilding) setBuildStatus((current) => current || t.buildStatusBuilding);
+  }, [isBuilding, t]);
+
   // Volume events
   const volumeMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -1435,7 +1447,7 @@ function App() {
           excludeFilePatternDraft={excludeFilePatternDraft} setExcludeFilePatternDraft={setExcludeFilePatternDraft}
           excludeFileStatus={excludeFileStatus} isExcludeFileSaving={isExcludeFileSaving}
           addExcludeFilePattern={addExcludeFilePattern} removeExcludeFilePattern={removeExcludeFilePattern}
-          runBuild={runBuild} isBuilding={isBuilding}
+          runBuild={runBuild} isBuilding={isBuilding} buildStatus={buildStatus}
           isWatchRunning={isWatchRunning} isWatchPending={isWatchPending} toggleWatch={toggleWatch}
           handleScrollbarScroll={handleScrollbarScroll}
         />

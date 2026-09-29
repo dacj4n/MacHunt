@@ -88,6 +88,7 @@ export interface SettingsViewProps {
   removeExcludeFilePattern: (pattern: string) => Promise<void>;
   runBuild: (rebuild: boolean) => Promise<void>;
   isBuilding: boolean;
+  buildStatus: string;
   isWatchRunning: boolean;
   isWatchPending: boolean;
   toggleWatch: () => Promise<void>;
@@ -129,7 +130,7 @@ export function SettingsView(props: SettingsViewProps) {
     excludeFilePatterns, excludeFilePatternDraft, setExcludeFilePatternDraft,
     excludeFileStatus, isExcludeFileSaving,
     addExcludeFilePattern, removeExcludeFilePattern,
-    runBuild, isBuilding, isWatchRunning, isWatchPending, toggleWatch, handleScrollbarScroll,
+    runBuild, isBuilding, buildStatus, isWatchRunning, isWatchPending, toggleWatch, handleScrollbarScroll,
   } = props;
 
   const settingsLanguageOptions: Array<{ code: Language; title: string; description: string }> = [
@@ -581,6 +582,15 @@ export function SettingsView(props: SettingsViewProps) {
                       {isWatchPending ? (isWatchRunning ? t.stopping : t.starting) : isWatchRunning ? t.stopWatch : t.startWatch}
                     </button>
                   </div>
+                  {/* Both build buttons above are disabled while a build runs, and the
+                      build is not always one the user started: on launch the backend
+                      can decide on its own to rebuild in the background (its FSEvents
+                      position too far behind, which is what a reinstall looks like).
+                      Say so here, where the buttons are, instead of only in the
+                      search view's status line. */}
+                  {isBuilding && buildStatus ? (
+                    <div className="status-highlight" style={{ marginBottom: 12 }}>{buildStatus}</div>
+                  ) : null}
 
                   <label className="toggle-card">
                     <div className="toggle-card-copy">
