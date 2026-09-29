@@ -54,6 +54,38 @@ pub fn is_own_data_path(path: &str) -> bool {
         || path.contains("/Library/Application Support/MacHunt")
 }
 
+/// Whether `path` is a symlink, judged by the link itself rather than by what it
+/// points at — the distinction `Path::is_dir` and `Path::is_file` silently
+/// resolve away.
+pub fn is_symlink(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+/// Whether `path` is a directory in its own right and not reached through a
+/// symlink.
+///
+/// This is the check that keeps a directory-shaped symlink from being walked as
+/// if it were the directory. Walking one indexes the entire target tree a second
+/// time under the link's path, and a tool that keeps one link per process — `fnm`
+/// does exactly that — multiplies the index by the number of links.
+pub fn is_real_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|meta| meta.is_dir())
+        .unwrap_or(false)
+}
+
+/// Per-process alias farms.
+///
+/// `fnm` keeps one symlink per shell under `fnm_multishells`, all pointing at
+/// the same Node install, creating and deleting them as shells come and go.
+/// Every entry aliases content that is already indexed at its real path, so the
+/// farm is churn rather than data and is skipped outright.
+pub fn is_alias_farm_path(path: &str) -> bool {
+    path.contains("/fnm_multishells/") || path.ends_with("/fnm_multishells")
+}
+
 /// Whether to record diagnostics, and optionally what subtree to restrict them
 /// to.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -331,5 +363,6 @@ pub fn should_skip_path(path: &Path) -> bool {
     ) || path_str.contains("/.Spotlight-V100")
         || path_str.contains("/.fseventsd")
         || is_own_data_path(path_str.as_ref())
+        || is_alias_farm_path(path_str.as_ref())
 }
 

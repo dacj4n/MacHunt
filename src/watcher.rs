@@ -266,6 +266,12 @@ fn clean_dead_in_dir(ctx: &WatchContext, dir: &Path) {
 }
 
 fn index_directory(ctx: &WatchContext, root: &Path) {
+    // Never walk a symlink. `WalkDir` resolves the root it is given, so starting
+    // a walk at a directory-shaped link would index the entire target tree a
+    // second time under the link's path — see `utils::is_real_dir`.
+    if !crate::utils::is_real_dir(root) {
+        return;
+    }
     if should_skip_path(root) {
         return;
     }
@@ -285,6 +291,15 @@ fn index_directory(ctx: &WatchContext, root: &Path) {
         .filter_map(Result::ok)
     {
         if !ctx.include_dirs && entry.file_type().is_dir() {
+            continue;
+        }
+        // Symlinks are skipped, matching how a scan treats them: with
+        // `follow_links(false)` a symlink is neither a file nor a directory as
+        // itself, so `builder.rs` never records one. Recording them here would
+        // make the index depend on whether a path arrived as an event or as part
+        // of a walk. `file_type` comes from the directory entry, so this costs
+        // no extra syscall.
+        if entry.file_type().is_symlink() {
             continue;
         }
         // WalkDir already stat'ed this entry — pass the metadata through instead
@@ -310,7 +325,7 @@ fn index_directory(ctx: &WatchContext, root: &Path) {
 /// directory itself, which is the same one-level stale clean the rename path
 /// uses.
 fn reconcile_dir(ctx: &WatchContext, dir: &Path) {
-    if !dir.is_dir() {
+    if !crate::utils::is_real_dir(dir) {
         return;
     }
     if should_skip_path(dir) || is_excluded(dir, true, &ctx.exclude_rules) {
@@ -375,6 +390,7 @@ unsafe extern "C" fn fsevent_callback(
         if path_str.contains("/.Spotlight-V100")
             || path_str.contains("/.fseventsd")
             || crate::utils::is_own_data_path(path_str)
+            || crate::utils::is_alias_farm_path(path_str)
         {
             continue;
         }
@@ -382,6 +398,15 @@ unsafe extern "C" fn fsevent_callback(
         let path = PathBuf::from(path_str);
 
         if should_skip_path(path.as_path()) {
+            continue;
+        }
+
+        // Symlinks are ignored entirely — neither recorded nor followed, which
+        // is what a scan does with them too. The case that matters is a
+        // directory-shaped link: `Path::is_dir` resolves it, so the branch below
+        // would read it as a newly created directory and walk the whole target
+        // tree under the link's path.
+        if crate::utils::is_symlink(path.as_path()) {
             continue;
         }
 

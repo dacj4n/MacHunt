@@ -2,7 +2,7 @@ use crate::db::Db;
 use crate::filters::{compile_exclude_rules, is_excluded, is_file_excluded, ExcludeRules, FileExcludeRules};
 use crate::utils::{get_root_directories, normalize_path_for_index, should_skip_path};
 use crossbeam::channel::Sender;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
@@ -77,12 +77,33 @@ fn scan_root(
     }
 }
 
+/// The directory a build root actually names.
+///
+/// `WalkDir` resolves the root it is handed, so handing it a symlink would index
+/// the target's entire tree under the link's path — the same files, a second
+/// time, once per link. Resolving up front indexes the target at its real path
+/// instead: nothing is duplicated, and nothing is dropped either, which matters
+/// because a link can be the only route to a tree. This is the ordinary case
+/// rather than an exotic one — `/Volumes/Macintosh HD` is a symlink on every Mac,
+/// and so are `/var`, `/etc` and `/tmp`.
+fn resolve_root(root: &Path) -> PathBuf {
+    if crate::utils::is_symlink(root) {
+        std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf())
+    } else {
+        root.to_path_buf()
+    }
+}
+
 pub fn build_index(
     db: &Db,
     path: Option<String>,
     rebuild: bool,
     filters: &BuildFilterSettings,
 ) -> usize {
+    // Resolve once, up front, so the pre-scan cleanup below and the scan itself
+    // cannot disagree about which path they mean.
+    let path = path.map(|p| resolve_root(Path::new(&p)).to_string_lossy().into_owned());
+
     if !rebuild {
         if let Some(ref p) = path {
             let root = PathBuf::from(p);
