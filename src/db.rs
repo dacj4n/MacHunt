@@ -969,7 +969,33 @@ impl Db {
         let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     }
 
-    pub fn maybe_vacuum_after_rebuild(
+    /// VACUUM rewrites the entire file while holding the write lock, so it only
+    /// pays off once enough pages are actually free. Below any of these bounds
+    /// the reclaimable space is not worth stalling readers for.
+    const VACUUM_MIN_FILE_BYTES: u64 = 32 * 1024 * 1024;
+    const VACUUM_MIN_FREE_PAGES: u64 = 2_000;
+    const VACUUM_MIN_FREE_RATIO: f64 = 0.15;
+
+    /// Reclaim free pages if the database has grown well past what it holds.
+    ///
+    /// Deleting rows only moves their pages onto the freelist: SQLite reuses that
+    /// space for later inserts, but the file itself never shrinks, so a database
+    /// that has had a lot removed stays at its high-water mark. `VACUUM` rewrites
+    /// it down to size, and that needs the write lock for the whole rewrite —
+    /// which is why it is gated on how much would actually be reclaimed.
+    ///
+    /// Returns whether it ran.
+    pub fn maybe_vacuum(&self) -> bool {
+        self.vacuum_if_worthwhile(
+            Self::VACUUM_MIN_FILE_BYTES,
+            Self::VACUUM_MIN_FREE_PAGES,
+            Self::VACUUM_MIN_FREE_RATIO,
+        )
+    }
+
+    /// `maybe_vacuum` with the thresholds spelled out, so the reclaim path can be
+    /// exercised without first building a 32 MiB database.
+    pub(crate) fn vacuum_if_worthwhile(
         &self,
         min_file_bytes: u64,
         min_free_pages: u64,
@@ -1013,6 +1039,9 @@ impl Db {
     pub fn vacuum(&self) {
         let conn = self.conn.lock();
         let _ = conn.execute_batch("VACUUM;");
+        // The rewrite lands in the WAL, so the file only actually shrinks once
+        // the WAL is checkpointed back into it.
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     }
 
     // ── FTS5 trigram search ──

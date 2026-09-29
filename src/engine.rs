@@ -190,6 +190,12 @@ impl Engine {
             // empty: every FTS-backed query silently returns nothing until
             // rebuild_fts() has scanned millions of rows a few seconds later.
             self.db.rebuild_fts();
+            // Compact the temp database *before* promoting it. VACUUM needs the
+            // write lock for a full rewrite, so doing it here costs the running
+            // app nothing: the file that gets promoted is simply already compact.
+            if self.db.maybe_vacuum() {
+                println!("[rebuild] compacted the new index before promoting it");
+            }
             if let Err(e) = self.db.finish_rebuild() {
                 eprintln!("finish_rebuild failed: {}", e);
             }
@@ -382,9 +388,47 @@ impl Engine {
     /// Spawn a low-frequency background thread that cleans dead paths.
     /// Processes paths in batches to avoid loading millions of rows into
     /// a single Vec (which would consume 300+ MB per GC cycle).
+    /// Remove index rows whose paths no longer exist, in id-ordered batches.
+    ///
+    /// The batching is the point: one `SELECT` of every path costs 300+ MB of
+    /// memory at a few million files, which is a spike this app has no reason to
+    /// take. Deleting rows behind the cursor cannot disturb the walk, because
+    /// every later batch is strictly ahead of the last id seen.
+    ///
+    /// Returns how many rows were removed.
+    fn sweep_dead_paths(&self) -> usize {
+        const BATCH: usize = 10_000;
+        let mut last_id: u64 = 0;
+        let mut removed = 0usize;
+        loop {
+            let rows = self.db.list_paths_after_id(last_id, BATCH);
+            if rows.is_empty() {
+                break;
+            }
+            last_id = rows.last().map(|(id, _)| *id as u64).unwrap_or(0);
+            for (_, path_str) in &rows {
+                let path = std::path::Path::new(path_str);
+                if !path.exists() {
+                    self.db.delete(path);
+                    if self.logger.enabled() {
+                        self.logger.log_path(path, &format!("[gc] {}", path_str));
+                    }
+                    removed += 1;
+                }
+            }
+        }
+        if removed > 0 {
+            // The rows are gone, but their pages only moved onto the freelist, so
+            // the file keeps its size until something reclaims them.
+            if self.db.maybe_vacuum() {
+                println!("[gc] reclaimed free pages with VACUUM");
+            }
+        }
+        removed
+    }
+
     fn start_lazy_gc(&self) {
-        let db = self.db.clone();
-        let logger = self.logger.clone();
+        let this = self.clone();
         let cleanup_running = self.cleanup_running.clone();
 
         thread::spawn(move || {
@@ -400,32 +444,9 @@ impl Engine {
                     thread::sleep(std::time::Duration::from_secs(3600));
                     continue;
                 }
-                // Process in 10K-row batches — each batch ~1 MB, vs
-                // 300+ MB if loaded all at once for 3M+ files.
-                const BATCH: usize = 10_000;
-                let mut last_id: u64 = 0;
-                let mut total_removed = 0usize;
-                loop {
-                    let rows = db.list_paths_after_id(last_id, BATCH);
-                    if rows.is_empty() {
-                        break;
-                    }
-                    last_id = rows.last().map(|(id, _)| *id as u64).unwrap_or(0);
-                    for (_, path_str) in &rows {
-                        if !std::path::Path::new(path_str).exists() {
-                            db.delete(std::path::Path::new(path_str));
-                            if logger.enabled() {
-                                logger.log_path(
-                                    std::path::Path::new(path_str),
-                                    &format!("[gc] {}", path_str),
-                                );
-                            }
-                            total_removed += 1;
-                        }
-                    }
-                }
-                if total_removed > 0 {
-                    println!("[GC] removed {} dead paths", total_removed);
+                let removed = this.sweep_dead_paths();
+                if removed > 0 {
+                    println!("[GC] removed {} dead paths", removed);
                 }
                 cleanup_running.store(false, Ordering::SeqCst);
                 thread::sleep(std::time::Duration::from_secs(7200));
@@ -775,31 +796,10 @@ impl Engine {
             return;
         }
 
-        let db = self.db.clone();
-        let logger = self.logger.clone();
-        let running = self.cleanup_running.clone();
-
+        let this = self.clone();
         thread::spawn(move || {
             let start = Instant::now();
-            let rows = db.list_all_paths();
-            let mut removed = 0usize;
-
-            let dead: Vec<PathBuf> = rows
-                .into_iter()
-                .filter_map(|(_, path_str)| {
-                    let p = PathBuf::from(path_str);
-                    if !p.exists() { Some(p) } else { None }
-                })
-                .collect();
-
-            for path in &dead {
-                db.delete(path.as_path());
-                if logger.enabled() {
-                    logger.log_path(path.as_path(), &format!("[-] {}", path.display()));
-                }
-                removed += 1;
-            }
-
+            let removed = this.sweep_dead_paths();
             if removed > 0 {
                 println!(
                     "[Startup Validation] Cleaned up {} dead paths, took {:?}",
@@ -807,7 +807,7 @@ impl Engine {
                     start.elapsed()
                 );
             }
-            running.store(false, Ordering::SeqCst);
+            this.cleanup_running.store(false, Ordering::SeqCst);
         });
     }
 }
@@ -863,6 +863,21 @@ fn extract_literal(pattern: &str) -> String {
 mod tests {
     use super::*;
 
+    /// `HOME` is process-global and every test here redirects it, so they must not
+    /// run concurrently.
+    static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_home() -> std::sync::MutexGuard<'static, ()> {
+        HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// The index file a sandboxed `HOME` would use.
+    fn index_path(home: &std::path::Path) -> std::path::PathBuf {
+        home.join("Library/Application Support/MacHunt/Data/index.db")
+    }
+
     /// A second build has to back off rather than start.
     ///
     /// Overlapping builds share one temp database and `begin_rebuild` unlinks it,
@@ -872,6 +887,7 @@ mod tests {
     /// so this is not a hypothetical race.
     #[test]
     fn overlapping_build_is_refused_not_started() {
+        let _home = lock_home();
         let root = std::env::temp_dir().join("machunt-build-guard-test");
         let _ = std::fs::remove_dir_all(&root);
         let (home, tree) = (root.join("home"), root.join("tree"));
@@ -907,6 +923,95 @@ mod tests {
         assert!(
             engine.build_running.load(Ordering::SeqCst),
             "a refused build must not clear a flag it never set"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The sweep must drop rows for files that are gone and keep the rest. It
+    /// walks the table in id-ordered batches, so this also pins the cursor
+    /// handling: get that wrong and the walk stops early, leaving dead rows behind
+    /// without any error.
+    #[test]
+    fn sweep_removes_dead_rows_and_keeps_live_ones() {
+        let _home = lock_home();
+        let root = std::env::temp_dir().join("machunt-sweep-test");
+        let _ = std::fs::remove_dir_all(&root);
+        let (home, tree) = (root.join("home"), root.join("tree"));
+        std::fs::create_dir_all(&tree).unwrap();
+        for name in ["keep.txt", "gone.txt"] {
+            std::fs::write(tree.join(name), b"x").unwrap();
+        }
+        std::env::set_var("HOME", &home);
+
+        let engine = Engine::new(LogSettings::default());
+        assert_eq!(
+            engine.build_index(Some(tree.to_string_lossy().into_owned()), false, true, false),
+            2
+        );
+
+        std::fs::remove_file(tree.join("gone.txt")).unwrap();
+        assert_eq!(
+            engine.sweep_dead_paths(),
+            1,
+            "only the deleted file should be swept"
+        );
+        assert_eq!(engine.db.count_files(), 1);
+        assert!(
+            engine
+                .db
+                .list_all_paths()
+                .iter()
+                .any(|(_, path)| path.ends_with("keep.txt")),
+            "the surviving row must be the live file"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Deleting rows only frees pages onto the freelist; the file itself shrinks
+    /// only when something vacuums. The thresholds are forced low here so the
+    /// reclaim path actually runs without building a 32 MiB database first.
+    #[test]
+    fn vacuum_reclaims_free_pages() {
+        let _home = lock_home();
+        let root = std::env::temp_dir().join("machunt-vacuum-test");
+        let _ = std::fs::remove_dir_all(&root);
+        let (home, tree) = (root.join("home"), root.join("tree"));
+        std::fs::create_dir_all(&tree).unwrap();
+        for i in 0..3000 {
+            std::fs::write(tree.join(format!("f{:04}.txt", i)), vec![b'x'; 1024]).unwrap();
+        }
+        std::env::set_var("HOME", &home);
+
+        let engine = Engine::new(LogSettings::default());
+        assert!(
+            engine.build_index(Some(tree.to_string_lossy().into_owned()), false, true, false)
+                >= 3000,
+            "the tree should have been indexed"
+        );
+
+        // Remove most of the tree and let the sweep delete those rows. With the
+        // real thresholds nothing would be reclaimed at this size, which is why
+        // the reclaim is forced below.
+        for i in 0..2400 {
+            std::fs::remove_file(tree.join(format!("f{:04}.txt", i))).unwrap();
+        }
+        engine.sweep_dead_paths();
+
+        let db_path = index_path(&home);
+        let size_before = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+        assert!(
+            engine.db.vacuum_if_worthwhile(0, 1, 0.0),
+            "with the thresholds forced low the reclaim must run"
+        );
+        let size_after = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+
+        assert!(
+            size_after < size_before,
+            "vacuum should shrink the file: {} -> {} bytes",
+            size_before,
+            size_after
         );
 
         let _ = std::fs::remove_dir_all(&root);
