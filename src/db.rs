@@ -15,12 +15,16 @@ pub struct Db {
 
 impl Db {
     pub fn init_default() -> Self {
-        let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let data_dir = PathBuf::from(home_dir)
-            .join("Library")
-            .join("Caches")
-            .join("MacHunt");
+        let data_dir = crate::utils::data_dir();
+        // A directory we have to create is one Time Machine has never seen, so
+        // this is the moment to mark it excluded — before any bulk data lands in
+        // it. Existing users hit this on the upgrade that moves the index.
+        let fresh_dir = !data_dir.exists();
         let _ = fs::create_dir_all(&data_dir);
+        Self::migrate_out_of_caches(&data_dir);
+        if fresh_dir {
+            Self::exclude_from_backup(&data_dir);
+        }
         let db_path = data_dir.join("index.db");
 
         let mut conn = Connection::open(&db_path).unwrap();
@@ -30,6 +34,70 @@ impl Db {
         Self {
             path: db_path,
             conn: Arc::new(Mutex::new(conn)),
+        }
+    }
+
+    /// Move the index out of `~/Library/Caches/MacHunt`, where it lived up to
+    /// 0.6.7.
+    ///
+    /// The index is persistent data with a real rebuild cost — a full filesystem
+    /// scan — so it does not belong in a directory macOS may purge whenever it
+    /// wants space back. Moving the files preserves an existing index instead of
+    /// throwing away hundreds of megabytes of work.
+    ///
+    /// The SQLite sidecars have to travel with the database: a `-wal` left
+    /// behind strands committed transactions that were never checkpointed into
+    /// the main file, and `-shm` is the shared-memory index that `-wal` needs.
+    fn migrate_out_of_caches(data_dir: &Path) {
+        let legacy_dir = crate::utils::cache_dir();
+        let legacy_db = legacy_dir.join("index.db");
+        // An index already in place wins — never overwrite it with an older one.
+        if data_dir.join("index.db").exists() || !legacy_db.exists() {
+            return;
+        }
+
+        // Sidecars first, database last: if this is interrupted, a database that
+        // has not arrived yet is an empty index that the next scan refills,
+        // whereas a database that arrived without its WAL would be missing
+        // committed transactions.
+        for suffix in ["-wal", "-shm", ""] {
+            let from = legacy_dir.join(format!("index.db{suffix}"));
+            if !from.exists() {
+                continue;
+            }
+            let to = data_dir.join(format!("index.db{suffix}"));
+            match fs::rename(&from, &to) {
+                Ok(()) => println!("Moved index to {}", to.display()),
+                // A partial move stays usable: the schema is recreated and any
+                // missing rows come back on the next scan, so keep going rather
+                // than abort the migration over one sidecar.
+                Err(err) => eprintln!("Failed to move {}: {}", from.display(), err),
+            }
+        }
+        // `index.db.new` is the rebuild scratch file. A leftover one is an
+        // unfinished database, so it is deliberately not carried across.
+    }
+
+    /// Keep the index out of Time Machine.
+    ///
+    /// `~/Library/Caches` is on macOS's default backup-exclusion list, so the
+    /// index was never backed up there. `Application Support` is included by
+    /// default, and a 750 MB file that is rewritten continuously would put a
+    /// large payload in every backup. `tmutil` is Apple's own tool for this, so
+    /// the marker stays correct instead of hardcoding the xattr payload.
+    fn exclude_from_backup(dir: &Path) {
+        match std::process::Command::new("/usr/bin/tmutil")
+            .arg("addexclusion")
+            .arg(dir)
+            .status()
+        {
+            Ok(status) if status.success() => {}
+            Ok(status) => eprintln!(
+                "tmutil addexclusion {} exited with {}",
+                dir.display(),
+                status
+            ),
+            Err(err) => eprintln!("Could not exclude {} from backups: {}", dir.display(), err),
         }
     }
 

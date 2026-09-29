@@ -374,7 +374,7 @@ unsafe extern "C" fn fsevent_callback(
         // of self-events that must be discarded cheaply.
         if path_str.contains("/.Spotlight-V100")
             || path_str.contains("/.fseventsd")
-            || path_str.contains("/Library/Caches/MacHunt")
+            || crate::utils::is_own_data_path(path_str)
         {
             continue;
         }

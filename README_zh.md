@@ -420,10 +420,13 @@ mac_find/
 
 | 路径 | 内容 |
 |------|------|
-| `~/Library/Caches/MacHunt/index.db` | FTS5 搜索索引 |
 | `~/Library/Application Support/MacHunt/settings.json` | GUI 配置（含主题偏好） |
+| `~/Library/Application Support/MacHunt/Data/index.db` | FTS5 搜索索引，连同 `-wal` / `-shm` 边车文件 |
 | `~/Library/Caches/MacHunt/logs/` | 诊断日志。默认**不产生任何文件**；开启后最多保留 10 个、单个上限 32 MiB |
 | `~/Library/Caches/MacHunt/watch-log-on` | 诊断日志的开关标记。存在即开启，内容可写一个路径前缀以限定记录范围 |
+
+> 索引放在 `Application Support` 而不是 `Caches`：它是重建成本很高的持久化数据（一次全盘扫描），而 `Caches` 正是系统在磁盘紧张时可以随时清理的目录。该目录在首次创建时会被标记为**排除 Time Machine 备份**——`Caches` 本来就在系统默认排除列表里，`Application Support` 不在。
+> 从 0.6.7 及更早版本升级时，旧位置 `~/Library/Caches/MacHunt/index.db` 会在首次启动时被**移入**新位置（含 `-wal` / `-shm`），因此无需重建索引。
 
 > 诊断日志默认关闭，因此正常使用不会积累任何日志文件。需要排查「文件没有被索引」这类问题时，可在「设置 → 高级功能 → 诊断日志」中开启，无需重启即可生效。
 

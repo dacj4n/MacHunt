@@ -6,14 +6,52 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// `~/Library/Caches/MacHunt` — the index, the GUI settings and the logs all
-/// live here.
-pub fn cache_dir() -> PathBuf {
-    let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home_dir)
+fn home_dir() -> PathBuf {
+    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+}
+
+/// `~/Library/Application Support/MacHunt` — persistent application data.
+///
+/// Unlike `Caches`, the system does not purge this under disk pressure, which
+/// is what an index that costs a full filesystem scan to build requires. It is
+/// also included in Time Machine by default, so bulk data placed here is marked
+/// excluded from backup when it is first created
+/// (see `Db::exclude_from_backup`).
+pub fn support_dir() -> PathBuf {
+    home_dir()
         .join("Library")
-        .join("Caches")
+        .join("Application Support")
         .join("MacHunt")
+}
+
+/// `~/Library/Application Support/MacHunt/Data` — the index and its SQLite
+/// sidecars.
+///
+/// Kept in its own subdirectory so settings and bulk data can evolve
+/// independently: a second database, a versioned index or a migration marker
+/// needs no further change to the layout.
+pub fn data_dir() -> PathBuf {
+    support_dir().join("Data")
+}
+
+/// `~/Library/Caches/MacHunt` — regenerable data only: the diagnostics logs and
+/// the switch that turns them on.
+///
+/// This held the index too before 0.6.8; [`crate::db`] migrates it out on first
+/// run.
+pub fn cache_dir() -> PathBuf {
+    home_dir().join("Library").join("Caches").join("MacHunt")
+}
+
+/// Whether a raw path belongs to MacHunt itself.
+///
+/// Indexing our own files makes the index feed on its own writes: during a
+/// rebuild the WAL grows continuously, and the resulting event storm is both
+/// pointless and expensive. Both locations are covered because the index has
+/// lived in each of them.
+pub fn is_own_data_path(path: &str) -> bool {
+    path.contains("/Library/Caches/MacHunt")
+        || path.contains("/Library/Application Support/MacHunt")
 }
 
 /// Whether to record diagnostics, and optionally what subtree to restrict them
@@ -322,6 +360,6 @@ pub fn should_skip_path(path: &Path) -> bool {
             | "/Volumes/Macintosh HD"
     ) || path_str.contains("/.Spotlight-V100")
         || path_str.contains("/.fseventsd")
-        || path_str.contains("/Library/Caches/MacHunt")
+        || is_own_data_path(path_str.as_ref())
 }
 
