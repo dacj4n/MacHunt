@@ -65,13 +65,14 @@ impl Engine {
         }
     }
 
-    /// Re-read the diagnostics-log opt-in and apply it to the live logger.
+    /// Apply a diagnostics-log configuration to the live logger.
     ///
-    /// The settings toggle rewrites the flag file; this makes the change visible
-    /// straight away rather than at the next launch. Every holder of the logger
-    /// sees it, the watcher included, because they share one state.
-    pub fn refresh_logging(&self) {
-        self.logger.refresh();
+    /// The GUI keeps the switch in `settings.json` and pushes it in here, so the
+    /// change takes effect straight away rather than at the next launch. Every
+    /// holder of the logger sees it, the watcher included, because they share
+    /// one state.
+    pub fn set_logging(&self, settings: LogSettings) {
+        self.logger.set(settings);
     }
 
     pub fn load_index_from_db(&self) -> usize {

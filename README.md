@@ -420,10 +420,9 @@ mac_find/
 
 | Path | Content |
 |------|---------|
-| `~/Library/Application Support/MacHunt/settings.json` | GUI settings (including the theme preference) |
+| `~/Library/Application Support/MacHunt/settings.json` | GUI settings: theme, and the diagnostics log switch (`logging`: `0` off / `1` on) with its path scope |
 | `~/Library/Application Support/MacHunt/Data/index.db` | FTS5 search index, plus its `-wal` / `-shm` sidecars |
 | `~/Library/Caches/MacHunt/logs/` | Diagnostics log. **No files are created by default**; once enabled it keeps at most 10 files of up to 32 MiB each |
-| `~/Library/Caches/MacHunt/watch-log-on` | The diagnostics switch. Its presence enables logging; its content may hold a path prefix to scope it |
 
 > The index lives in Application Support rather than Caches because it is persistent data whose rebuild cost is a full filesystem scan, while Caches is exactly what macOS is free to purge when space runs short. That directory is marked **excluded from Time Machine** when it is first created — Caches is already on the system's default exclusion list, Application Support is not.
 > Upgrading from 0.6.7 or earlier **moves** the old `~/Library/Caches/MacHunt/index.db` into place on first launch (along with `-wal` / `-shm`), so no reindexing is needed.

@@ -63,6 +63,14 @@ pub struct GuiSettings {
     /// localStorage) so the native window can be styled *before* it is shown,
     /// which removes the launch flash entirely.
     pub theme: Option<String>,
+    /// Diagnostics logging: `0` off (the default), `1` on. A number rather than
+    /// a boolean so a coarser level — verbose, say — can be added later without
+    /// another field. Kept here rather than in a marker file so there is one
+    /// place that says what the app is configured to do.
+    pub logging: u8,
+    /// Optional path prefix the diagnostics log is limited to. Empty records
+    /// everything.
+    pub logging_scope: String,
 }
 
 impl Default for GuiSettings {
@@ -86,6 +94,8 @@ impl Default for GuiSettings {
             custom_terminal_app: String::new(),
             max_results: 500,
             theme: None,
+            logging: 0,
+            logging_scope: String::new(),
         }
     }
 }
@@ -148,6 +158,10 @@ pub struct AppState {
     /// `Some("light")` / `Some("dark")` when the user picked an explicit theme,
     /// `None` while the app follows the system appearance.
     pub theme: Mutex<Option<String>>,
+    /// Diagnostics logging: `0` off, `1` on. Mirrors `GuiSettings::logging`.
+    pub logging: Mutex<u8>,
+    /// Path prefix the diagnostics log is limited to; empty means everything.
+    pub logging_scope: Mutex<String>,
     pub is_quitting: AtomicBool,
 }
 
@@ -165,7 +179,18 @@ pub fn normalize_theme(theme: Option<&str>) -> Option<String> {
 impl AppState {
     pub fn new() -> Self {
         let mut settings = load_gui_settings();
-        let engine = machunt::Engine::new(machunt::utils::log_settings());
+        // The diagnostics switch lives in settings.json. `MACHUNT_LOG` still
+        // overrides it, so logging can be forced on from outside when the
+        // interesting moment is launch itself — before the settings file has
+        // been consulted.
+        let env_logs = machunt::utils::log_settings();
+        let settings_logs = machunt::utils::LogSettings {
+            enabled: settings.logging != 0,
+            scope: (!settings.logging_scope.trim().is_empty())
+                .then(|| PathBuf::from(settings.logging_scope.trim())),
+        };
+        let engine =
+            machunt::Engine::new(if env_logs.enabled { env_logs } else { settings_logs });
         let (legacy_exact_dirs, legacy_pattern_dirs) = engine.get_exclude_dir_settings();
         if settings.exclude_exact_dirs.is_empty()
             && settings.exclude_pattern_dirs.is_empty()
@@ -216,6 +241,8 @@ impl AppState {
             max_results: Mutex::new(settings.max_results),
             language: Mutex::new(String::from("zh")),
             theme: Mutex::new(normalize_theme(settings.theme.as_deref())),
+            logging: Mutex::new(settings.logging),
+            logging_scope: Mutex::new(settings.logging_scope),
             is_quitting: AtomicBool::new(false),
         }
     }
@@ -247,5 +274,7 @@ pub fn snapshot_gui_settings(state: &AppState) -> Result<GuiSettings, String> {
         custom_terminal_app: lock_get!(custom_terminal_app, String),
         max_results: *state.max_results.lock().map_err(|_| "Failed to access max_results setting".to_string())?,
         theme: lock_get!(theme, Option<String>),
+        logging: *state.logging.lock().map_err(|_| "Failed to access logging setting".to_string())?,
+        logging_scope: lock_get!(logging_scope, String),
     })
 }

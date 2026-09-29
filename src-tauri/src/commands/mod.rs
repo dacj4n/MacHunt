@@ -769,35 +769,57 @@ pub fn set_theme(
 
 /// Whether watcher diagnostics are being recorded, and what they are scoped to.
 #[tauri::command]
-pub fn get_logging_settings() -> Result<LoggingSettingsResponse, String> {
-    let settings = machunt::utils::log_settings();
-    Ok(LoggingSettingsResponse {
-        enabled: settings.enabled,
-        scope: settings
-            .scope
-            .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-    })
+pub fn get_logging_settings(
+    state: tauri::State<'_, AppState>,
+) -> Result<LoggingSettingsResponse, String> {
+    let enabled = *state
+        .logging
+        .lock()
+        .map_err(|_| "Failed to access logging setting".to_string())?
+        != 0;
+    let scope = state
+        .logging_scope
+        .lock()
+        .map_err(|_| "Failed to access logging scope".to_string())?
+        .clone();
+    Ok(LoggingSettingsResponse { enabled, scope })
 }
 
 /// Turn watcher diagnostics on or off, optionally scoped to `scope` (an empty
 /// string records everything).
 ///
-/// The flag file is the only source of truth, so this writes it and then has the
-/// engine re-read it. That means the change applies to the running app instead
-/// of the next launch — the watcher holds a clone of the same logger, so it
-/// starts or stops recording straight away. Off by default, and disabling
-/// deletes the file rather than leaving an empty one, so a build that has never
-/// been asked for logs never creates one.
+/// Stored in `settings.json` as `0` / `1` alongside the rest of the app's
+/// configuration, so there is no second source of truth to drift. The value is
+/// pushed to the running logger rather than re-read from disk, and because the
+/// watcher holds the same logger, recording starts or stops immediately —
+/// without a restart.
 #[tauri::command]
 pub fn set_logging_settings(
     enabled: bool,
     scope: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<LoggingSettingsResponse, String> {
-    machunt::utils::write_log_settings(enabled, &scope).map_err(|err| err.to_string())?;
-    state.engine.refresh_logging();
-    get_logging_settings()
+    *state
+        .logging
+        .lock()
+        .map_err(|_| "Failed to access logging setting".to_string())? = u8::from(enabled);
+    *state
+        .logging_scope
+        .lock()
+        .map_err(|_| "Failed to access logging scope".to_string())? = scope.trim().to_string();
+    save_gui_settings(&snapshot_gui_settings(&state)?)?;
+
+    let scope = state
+        .logging_scope
+        .lock()
+        .map_err(|_| "Failed to access logging scope".to_string())?
+        .clone();
+    state.engine.set_logging(machunt::utils::LogSettings {
+        enabled,
+        scope: (!scope.is_empty()).then(|| std::path::PathBuf::from(scope)),
+    });
+
+    get_logging_settings(state)
 }
 
 #[tauri::command]

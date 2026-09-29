@@ -63,44 +63,32 @@ pub struct LogSettings {
     pub scope: Option<PathBuf>,
 }
 
-/// Resolve the opt-in for diagnostics logging.
+/// Resolve the diagnostics-log opt-in from the environment.
 ///
-/// Off unless asked for, so a shipped build never grows a log file. Turn it on
-/// without rebuilding by either exporting `MACHUNT_LOG=1` or creating
-/// `~/Library/Caches/MacHunt/watch-log-on`; either one may hold a path to scope
-/// the log to.
+/// This is how the CLI turns logging on, and an override for the GUI, whose
+/// switch lives in `settings.json` — the GUI hands that value straight to
+/// [`Logger::set`] rather than having the logger read a second source of truth.
 ///
-/// The scope matters: the watcher watches `/`, and recording every file event on
-/// the volume would both bury the signal and slow the watcher thread down — and
-/// a slow callback is itself a way to cause the very event drops being
-/// investigated.
-///
-/// The flag file existed before this function and was read by nothing, so the
-/// watcher could not be observed in any build.
+/// Off unless asked for, so a shipped build never grows a log file.
+/// `MACHUNT_LOG` may hold `1` to record everything, or a path to scope the log
+/// to that subtree. The scope matters: the watcher watches `/`, and recording
+/// every file event on the volume would both bury the signal and slow the
+/// watcher thread down — and a slow callback is itself a way to cause the very
+/// event drops being investigated.
 pub fn log_settings() -> LogSettings {
-    if let Ok(raw) = std::env::var("MACHUNT_LOG") {
-        let value = raw.trim().to_string();
-        if matches!(
-            value.to_ascii_lowercase().as_str(),
-            "" | "0" | "false" | "off" | "no"
-        ) {
-            return LogSettings::default();
-        }
-        return LogSettings {
-            enabled: true,
-            scope: value.starts_with('/').then(|| PathBuf::from(&value)),
-        };
+    let Ok(raw) = std::env::var("MACHUNT_LOG") else {
+        return LogSettings::default();
+    };
+    let value = raw.trim().to_string();
+    if matches!(
+        value.to_ascii_lowercase().as_str(),
+        "" | "0" | "false" | "off" | "no"
+    ) {
+        return LogSettings::default();
     }
-
-    match fs::read_to_string(cache_dir().join("watch-log-on")) {
-        Ok(contents) => {
-            let trimmed = contents.trim();
-            LogSettings {
-                enabled: true,
-                scope: trimmed.starts_with('/').then(|| PathBuf::from(trimmed)),
-            }
-        }
-        Err(_) => LogSettings::default(),
+    LogSettings {
+        enabled: true,
+        scope: value.starts_with('/').then(|| PathBuf::from(&value)),
     }
 }
 
@@ -139,22 +127,6 @@ struct LogSink {
     writer: BufWriter<std::fs::File>,
     written: u64,
     capped: bool,
-}
-
-/// Persist the logging choice, keeping the flag file the single source of truth
-/// that [`log_settings`] reads — so the CLI, the GUI and the logger itself can
-/// never disagree. An empty file means "on, no scope".
-pub fn write_log_settings(enabled: bool, scope: &str) -> std::io::Result<()> {
-    let flag = cache_dir().join("watch-log-on");
-    if !enabled {
-        return match fs::remove_file(&flag) {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(err),
-        };
-    }
-    fs::create_dir_all(cache_dir())?;
-    fs::write(&flag, scope.trim())
 }
 
 /// Shared mutable half of a logger.
@@ -207,16 +179,14 @@ impl Logger {
                 sink: Mutex::new(None),
             }),
         };
-        logger.apply(settings);
+        logger.set(settings);
         logger
     }
 
-    /// Re-read the opt-in from disk so a settings toggle takes effect at once.
-    pub fn refresh(&self) {
-        self.apply(log_settings());
-    }
-
-    fn apply(&self, settings: LogSettings) {
+    /// Apply a configuration to a logger that may already be running, so a
+    /// settings change takes effect without a restart. Enabling opens the file
+    /// on demand; disabling closes it, flushing whatever was buffered.
+    pub fn set(&self, settings: LogSettings) {
         if !settings.enabled {
             // Stop accepting writes *before* dropping the sink, so a concurrent
             // writer cannot end up appending to a file that is being closed.
