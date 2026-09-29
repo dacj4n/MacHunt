@@ -27,7 +27,25 @@ pub struct Engine {
     exclude_file_patterns: Arc<Mutex<Vec<String>>>,
     watch_roots: Arc<Mutex<Vec<String>>>,
     cleanup_running: Arc<AtomicBool>,
+    /// Set while a build is in flight.
+    ///
+    /// Two builds must never overlap: `begin_rebuild` *unlinks* the temp
+    /// database, so a second build starting would pull that file out from under
+    /// the first one, whose memory-mapped pages then fault and take the process
+    /// down with SIGBUS. The GUI starts a full build on launch and its Rebuild
+    /// button stays enabled while that runs, which is exactly this case.
+    build_running: Arc<AtomicBool>,
     volume_event_tx: Arc<Mutex<Option<Sender<VolumeEvent>>>>,
+}
+
+/// Clears the build flag however `build_index` leaves its scope, panics
+/// included — a stuck flag would silently refuse every later build.
+struct BuildGuard(Arc<AtomicBool>);
+
+impl Drop for BuildGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 impl Engine {
@@ -61,6 +79,7 @@ impl Engine {
             exclude_file_patterns: Arc::new(Mutex::new(Vec::new())),
             watch_roots: Arc::new(Mutex::new(watch_roots)),
             cleanup_running: Arc::new(AtomicBool::new(false)),
+            build_running: Arc::new(AtomicBool::new(false)),
             volume_event_tx: Arc::new(Mutex::new(None)),
         }
     }
@@ -99,6 +118,23 @@ impl Engine {
         include_dirs: bool,
         auto_vacuum_on_rebuild: bool,
     ) -> usize {
+        // One build at a time, refused rather than queued: a queued rebuild
+        // would run against a filesystem that has moved on, and the caller
+        // (a button press) is better served by an immediate answer. Returning
+        // the current count keeps the response meaningful instead of reporting
+        // zero files indexed.
+        if self
+            .build_running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            println!("[build] a build is already running — ignoring this request");
+            self.logger
+                .log("[build] a build is already running — ignoring this request");
+            return self.db.count_files();
+        }
+        let _build_guard = BuildGuard(self.build_running.clone());
+
         self.include_dirs.store(include_dirs, Ordering::Relaxed);
         self.db.save_include_dirs(include_dirs);
         let exclude_exact_dirs = self
@@ -825,6 +861,57 @@ fn extract_literal(pattern: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// A second build has to back off rather than start.
+    ///
+    /// Overlapping builds share one temp database and `begin_rebuild` unlinks it,
+    /// so the second start pulls that file out from under the first — whose
+    /// memory-mapped pages then fault and kill the process with SIGBUS. The GUI
+    /// starts a full build at launch and leaves Rebuild clickable while it runs,
+    /// so this is not a hypothetical race.
+    #[test]
+    fn overlapping_build_is_refused_not_started() {
+        let root = std::env::temp_dir().join("machunt-build-guard-test");
+        let _ = std::fs::remove_dir_all(&root);
+        let (home, tree) = (root.join("home"), root.join("tree"));
+        std::fs::create_dir_all(&tree).unwrap();
+        std::fs::write(tree.join("a.txt"), b"a").unwrap();
+        let tree_arg = tree.to_string_lossy().into_owned();
+        // Point HOME at the sandbox so the test can never touch a real index.
+        std::env::set_var("HOME", &home);
+
+        let engine = Engine::new(LogSettings::default());
+        assert_eq!(
+            engine.build_index(Some(tree_arg.clone()), false, true, false),
+            1,
+            "the single file should be indexed"
+        );
+        assert!(
+            !engine.build_running.load(Ordering::SeqCst),
+            "the flag must be released when a build finishes"
+        );
+
+        // Pretend a build is in flight, the way the launch-time build is.
+        engine.build_running.store(true, Ordering::SeqCst);
+        // Anything that actually ran would pick this up; a refused call must not.
+        std::fs::write(tree.join("b.txt"), b"b").unwrap();
+
+        let refused = engine.build_index(Some(tree_arg), false, true, false);
+        assert_eq!(refused, 1, "a refused build reports the current count, not 0");
+        assert_eq!(
+            engine.db.count_files(),
+            1,
+            "a refused build must not index anything"
+        );
+        assert!(
+            engine.build_running.load(Ordering::SeqCst),
+            "a refused build must not clear a flag it never set"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn test_fuzzy_token_match() {
         // Simulate the fuzzy search token-matching logic.

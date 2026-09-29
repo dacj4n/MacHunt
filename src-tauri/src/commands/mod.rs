@@ -635,7 +635,35 @@ pub fn start_watch_auto(app: tauri::AppHandle, state: tauri::State<'_, AppState>
             let since = if stale {
                 let engine_bg = state.engine.clone();
                 let include_dirs = engine_bg.get_include_dirs();
-                std::thread::spawn(move || { engine_bg.build_index(None, false, include_dirs, false); });
+                // Announce this build. Without it the UI keeps `isBuilding` false
+                // and leaves Rebuild clickable for the minutes this takes — and
+                // pressing it started a second build, which unlinked the first
+                // one's temp database and faulted its mapped pages (SIGBUS). The
+                // engine refuses overlapping builds now, but the button should
+                // still show what is going on instead of silently doing nothing.
+                let _ = app.emit(
+                    "index://build-status",
+                    BuildEvent {
+                        phase: "started".to_string(),
+                        indexed: None,
+                        took_ms: None,
+                    },
+                );
+                let app_done = app.clone();
+                std::thread::spawn(move || {
+                    let started = std::time::Instant::now();
+                    let _ = engine_bg.build_index(None, false, include_dirs, false);
+                    let indexed = engine_bg.load_index_from_db();
+                    let took_ms = started.elapsed().as_millis() as u64;
+                    let _ = app_done.emit(
+                        "index://build-status",
+                        BuildEvent {
+                            phase: "finished".to_string(),
+                            indexed: Some(indexed),
+                            took_ms: Some(took_ms),
+                        },
+                    );
+                });
                 None
             } else { Some(id) };
             state.engine.start_watch(since);

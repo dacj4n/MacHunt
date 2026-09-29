@@ -108,7 +108,13 @@ impl Db {
             PRAGMA synchronous=NORMAL;
             PRAGMA cache_size=-8192;
             PRAGMA temp_store=MEMORY;
-            PRAGMA mmap_size=33554432;
+            -- Memory mapping is off on purpose. This application replaces and
+            -- unlinks its own database files at run time (begin_rebuild swaps in
+            -- a temp database, finish_rebuild renames over the live one), and a
+            -- page still mapped from a file that was swapped underneath faults
+            -- with SIGBUS. SQLite's own cache, sized below, serves the same
+            -- purpose without that failure mode.
+            PRAGMA mmap_size=0;
             PRAGMA foreign_keys=ON;
         ",
         )
